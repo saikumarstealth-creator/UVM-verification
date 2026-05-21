@@ -1,0 +1,59 @@
+// UVM Monitor for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_monitor extends uvm_monitor;
+  `uvm_component_utils({{ spec.design_name }}_monitor)
+  uvm_analysis_port #({{ spec.design_name }}_seq_item) item_collected_port;
+  virtual {{ spec.design_name }}_intf vif;
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+
+  function void build_phase(uvm_phase phase);
+    item_collected_port = new("item_collected_port", this);
+    if (!uvm_config_db#(virtual {{ spec.design_name }}_intf)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", "Virtual interface not set")
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    {{ spec.design_name }}_seq_item item = {{ spec.design_name }}_seq_item::type_id::create("item");
+    forever begin
+      @(vif.mon_cb);
+      {% if p == "axi4lite" %}
+      // Sample AXI4-Lite write address channel
+      if (vif.mon_cb.awvalid && vif.mon_cb.awready) begin
+        item.we   = 1;
+        item.addr = vif.mon_cb.awaddr;
+      end
+      // Sample write data
+      if (vif.mon_cb.wvalid && vif.mon_cb.wready) begin
+        item.data = vif.mon_cb.wdata;
+        item_collected_port.write(item);
+      end
+      // Sample read address
+      if (vif.mon_cb.arvalid && vif.mon_cb.arready) begin
+        item.we   = 0;
+        item.addr = vif.mon_cb.araddr;
+      end
+      // Sample read data
+      if (vif.mon_cb.rvalid && vif.mon_cb.rready) begin
+        item.data = vif.mon_cb.rdata;
+        item_collected_port.write(item);
+      end
+      {% elif p == "apb" %}
+      if (vif.mon_cb.psel && vif.mon_cb.penable && vif.mon_cb.pready) begin
+        item.we   = vif.mon_cb.pwrite;
+        item.addr = vif.mon_cb.paddr;
+        item.data = vif.mon_cb.pwrite ? vif.mon_cb.pwdata : vif.mon_cb.prdata;
+        item_collected_port.write(item);
+      end
+      {% else %}
+      // Wishbone / UART / SPI / I2C — single cycle protocol
+      if (vif.mon_cb.wb_cyc && vif.mon_cb.wb_stb && vif.mon_cb.wb_ack) begin
+        item.we   = vif.mon_cb.wb_we;
+        item.addr = vif.mon_cb.wb_addr;
+        item.data = vif.mon_cb.wb_we ? vif.mon_cb.wb_data_o : vif.mon_cb.wb_data_i;
+        item_collected_port.write(item);
+      end
+      {% endif %}
+    end
+  endtask
+endclass

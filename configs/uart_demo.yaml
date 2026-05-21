@@ -1,0 +1,31 @@
+design_name: uart
+clock_reset:
+  clock: clk
+  reset: rst_n
+  reset_active: 0
+
+interfaces:
+  - name: uart_if
+    signals:
+      - name: tx
+        direction: output
+      - name: rx
+        direction: input
+      - name: baud_tick
+        direction: input
+
+registers:
+  - name: ctrl
+    address: '0x00'
+    fields:
+      - name: enable
+        bits: '0'
+      - name: baud_div
+        bits: '7:2'
+  - name: status
+    address: '0x04'
+    fields:
+      - name: tx_full
+        bits: '0'
+      - name: rx_empty
+        bits: '1'

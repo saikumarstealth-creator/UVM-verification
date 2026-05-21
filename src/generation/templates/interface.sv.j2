@@ -1,0 +1,132 @@
+// Generated UVM Interface for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+interface {{ spec.design_name }}_intf (input logic clk, input logic rst_n);
+
+{% if p == "uart" %}
+  // Wishbone bus
+  logic       wb_cyc, wb_stb, wb_we;
+  logic [2:0] wb_addr;
+  logic [7:0] wb_data_o, wb_data_i;
+  logic       wb_ack;
+  // Serial
+  logic       uart_tx, uart_rx;
+  // Modem
+  logic       cts_n, rts_n, dsr_n, dtr_n, ri_n, dcd_n, out1_n, out2_n;
+  // Interrupt
+  logic       uart_intr;
+
+  clocking drv_cb @(posedge clk);
+    default input #1ns output #1ns;
+    output wb_cyc, wb_stb, wb_we, wb_addr, wb_data_o;
+    output uart_rx, cts_n, dsr_n, ri_n, dcd_n;
+    input  wb_ack, wb_data_i, uart_tx, uart_intr, rts_n, dtr_n, out1_n, out2_n;
+  endclocking
+
+{% elif p == "spi" %}
+  logic       wb_cyc, wb_stb, wb_we;
+  logic [2:0] wb_addr;
+  logic [7:0] wb_data_o, wb_data_i;
+  logic       wb_ack;
+  // SPI
+  logic       sclk, mosi, miso;
+  logic [3:0] ss_n;
+  logic       spi_intr;
+
+  clocking drv_cb @(posedge clk);
+    default input #1ns output #1ns;
+    output wb_cyc, wb_stb, wb_we, wb_addr, wb_data_o;
+    output miso;
+    input  wb_ack, wb_data_i, sclk, mosi, ss_n, spi_intr;
+  endclocking
+
+{% elif p == "i2c" %}
+  logic       wb_cyc, wb_stb, wb_we;
+  logic [2:0] wb_addr;
+  logic [7:0] wb_data_o, wb_data_i;
+  logic       wb_ack;
+  // I2C
+  logic       scl, sda;
+  logic       i2c_intr;
+
+  clocking drv_cb @(posedge clk);
+    default input #1ns output #1ns;
+    output wb_cyc, wb_stb, wb_we, wb_addr, wb_data_o;
+    output scl, sda;
+    input  wb_ack, wb_data_i, i2c_intr;
+  endclocking
+
+{% elif p == "axi4lite" %}
+  // AXI4-Lite channels
+  logic       awvalid, awready;
+  logic [2:0] awaddr;
+  logic       wvalid, wready;
+  logic [7:0] wdata;
+  logic       bvalid, bready;
+  logic [1:0] bresp;
+  logic       arvalid, arready;
+  logic [2:0] araddr;
+  logic       rvalid, rready;
+  logic [7:0] rdata;
+  logic [1:0] rresp;
+  logic       axi_intr;
+
+  clocking drv_cb @(posedge clk);
+    default input #1ns output #1ns;
+    output awvalid, awaddr, wvalid, wdata, bready, arvalid, araddr, rready;
+    input  awready, wready, bvalid, bresp, arready, rvalid, rdata, rresp, axi_intr;
+  endclocking
+
+{% elif p == "apb" %}
+  // APB
+  logic       psel, penable, pwrite;
+  logic [2:0] paddr;
+  logic [7:0] pwdata, prdata;
+  logic       pready, pslverr;
+  logic       apb_intr;
+
+  clocking drv_cb @(posedge clk);
+    default input #1ns output #1ns;
+    output psel, penable, pwrite, paddr, pwdata;
+    input  prdata, pready, pslverr, apb_intr;
+  endclocking
+
+{% else %}
+  // Wishbone
+  logic       wb_cyc, wb_stb, wb_we;
+  logic [2:0] wb_addr;
+  logic [7:0] wb_data_o, wb_data_i;
+  logic       wb_ack, wb_intr;
+
+  clocking drv_cb @(posedge clk);
+    default input #1ns output #1ns;
+    output wb_cyc, wb_stb, wb_we, wb_addr, wb_data_o;
+    input  wb_ack, wb_data_i, wb_intr;
+  endclocking
+{% endif %}
+
+  clocking mon_cb @(posedge clk);
+    default input #1ns;
+    input all;
+  endclocking
+
+  modport driver (clocking drv_cb, input clk, rst_n);
+  modport monitor (clocking mon_cb, input clk, rst_n);
+
+  // Protocol assertions — instantiate checker
+  {{ spec.design_name }}_protocol_checker checker_i(.clk(clk), .rst_n(rst_n)
+    {% if p == "uart" %}
+    ,.wb_stb(wb_stb), .wb_ack(wb_ack), .uart_tx(uart_tx)
+    {% elif p == "spi" %}
+    ,.ss_n(ss_n), .sclk(sclk)
+    {% elif p == "i2c" %}
+    ,.scl(scl), .sda(sda)
+    {% elif p == "axi4lite" %}
+    ,.awvalid(awvalid), .awready(awready), .arvalid(arvalid), .arready(arready),
+     .wvalid(wvalid), .wready(wready), .rvalid(rvalid), .rready(rready)
+    {% elif p == "apb" %}
+    ,.psel(psel), .penable(penable), .pready(pready)
+    {% else %}
+    ,.wb_stb(wb_stb), .wb_ack(wb_ack), .wb_we(wb_we), .wb_data_o(wb_data_o)
+    {% endif %}
+  );
+endinterface

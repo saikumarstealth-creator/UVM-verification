@@ -1,0 +1,57 @@
+# SPI Protocol Definition — UVM TB Generator
+protocol: spi
+description: Serial Peripheral Interface
+tags: [serial, synchronous, full-duplex, master-slave]
+
+interface_template:
+  signals:
+    - {name: sclk,  direction: input,  width: 1, description: Serial clock}
+    - {name: mosi,  direction: input,  width: 1, description: Master out slave in}
+    - {name: miso,  direction: output, width: 1, description: Master in slave out}
+    - {name: ss_n,  direction: input,  width: 1, description: Slave select (active-low)}
+
+config_parameters:
+  - {name: CPOL,       type: int, default: 0, enum: [0, 1],   description: Clock polarity}
+  - {name: CPHA,       type: int, default: 0, enum: [0, 1],   description: Clock phase}
+  - {name: DATA_WIDTH, type: int, default: 8, enum: [4, 8, 16, 32], description: Data width}
+  - {name: MSB_FIRST,  type: bool, default: true, description: MSB-first transfer}
+
+register_template:
+  - name: CR0     # Control Register 0
+    address: 0x00
+    access: rw
+    fields:
+      - {name: div,       bits: 7:0,  description: Clock divider}
+      - {name: cpol,      bits: 8,    description: Clock polarity}
+      - {name: cpha,      bits: 9,    description: Clock phase}
+      - {name: data_width,bits: 15:12,description: Data width minus 1}
+  - name: DR      # Data Register
+    address: 0x04
+    access: rw
+    fields:
+      - {name: data, bits: 15:0, description: SPI data}
+  - name: SR      # Status Register
+    address: 0x08
+    access: ro
+    fields:
+      - {name: busy,  bits: 0, description: Transfer in progress}
+      - {name: rxf,   bits: 1, description: RX FIFO full}
+      - {name: txe,   bits: 2, description: TX FIFO empty}
+
+sequence_template:
+  name: spi_sequence
+  body: |
+    // SPI transmit sequence
+    cr0 = {cpol, cpha, div};
+    drv.write_reg(CR0, cr0);
+    foreach (tx_data[i]) begin
+      drv.write_reg(DR, tx_data[i]);
+      drv.wait_for_field(SR, busy, 0);
+    end
+
+coverage_template:
+  - name: spi_cg
+    type: covergroup
+    items:
+      - {name: cg_mode,  type: coverpoint, expression: {cpol, cpha}}
+      - {name: cg_width, type: coverpoint, expression: data_width}

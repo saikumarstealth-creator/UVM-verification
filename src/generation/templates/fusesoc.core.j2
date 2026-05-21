@@ -1,0 +1,78 @@
+# FuseSoC .core file for {{ spec.design_name }} — generated
+name: {{ spec.design_name }}_uvm_tb
+description: UVM testbench for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+
+parameters:
+  CLK_FREQ:
+    datatype: int
+    default: 50000000
+    description: Clock frequency in Hz
+  BAUD_RATE:
+    datatype: int
+    default: 115200
+    description: Target baud rate for serial protocols
+  {% if p == "spi" %}
+  SPI_MODE:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  {% elif p == "i2c" %}
+  I2C_SPEED:
+    datatype: int
+    default: 100000
+    paramtype: vlogparam
+  {% endif %}
+
+filesets:
+  tb_src:
+    files:
+      - testbench.sv
+      - interface_{{ spec.design_name }}.sv
+      - sequence_item_{{ spec.design_name }}.sv
+      - driver_{{ spec.design_name }}.sv
+      - monitor_{{ spec.design_name }}.sv
+      - agent_{{ spec.design_name }}.sv
+      - scoreboard_{{ spec.design_name }}.sv
+      - coverage_collector_{{ spec.design_name }}.sv
+      - base_sequence_{{ spec.design_name }}.sv
+      - test_{{ spec.design_name }}.sv
+      - environment_{{ spec.design_name }}.sv
+      - protocol_checker_{{ spec.design_name }}.sv
+    file_type: systemVerilogSource
+
+  rtl_src:
+    files:
+      - rtl/protocol_core.v
+    file_type: verilogSource
+
+  sim_scripts:
+    files:
+      - compile.f
+    file_type: user
+
+targets:
+  default:
+    description: Simulation with Icarus Verilog
+    filesets: [tb_src, rtl_src]
+    tools:
+      icarus:
+        timescale: 1ns/1ps
+      vlog:
+        define:
+          UVM_NO_DPI: 1
+
+  questa:
+    description: Simulation with Siemens Questa
+    filesets: [tb_src, rtl_src]
+    tools:
+      questa:
+        vlog_options:
+          - +define+UVM_NO_DPI
+
+  verilator:
+    description: Lint with Verilator
+    filesets: [tb_src, rtl_src]
+    tools:
+      verilator:
+        mode: lint-only

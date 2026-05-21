@@ -1,0 +1,119 @@
+# UART Protocol Definition — UVM TB Generator
+# Reference: 16550 / NS16C550 compatible
+protocol: uart
+description: Universal Asynchronous Receiver-Transmitter
+tags: [serial, asynchronous, full-duplex]
+
+interface_template:
+  signals:
+    - {name: srx,     direction: input,  width: 1,  description: Serial receive}
+    - {name: stx,     direction: output, width: 1,  description: Serial transmit}
+    - {name: cts_n,   direction: input,  width: 1,  description: Clear to send (active-low)}
+    - {name: rts_n,   direction: output, width: 1,  description: Request to send (active-low)}
+
+baud_rates: [9600, 19200, 38400, 57600, 115200, 230400, 460800]
+
+config_parameters:
+  - {name: DATA_BITS, type: int, default: 8, enum: [5, 6, 7, 8]}
+  - {name: STOP_BITS, type: int, default: 1, enum: [1, 2]}
+  - {name: PARITY,    type: string, default: "none", enum: [none, even, odd, mark, space]}
+
+register_template:
+  - name: RBR     # Receiver Buffer Register
+    address: 0x00
+    access: ro
+    fields:
+      - {name: rbr_data, bits: 7:0, access: ro, description: Received data byte}
+  - name: THR     # Transmitter Holding Register
+    address: 0x00
+    access: wo
+    fields:
+      - {name: thr_data, bits: 7:0, access: wo, description: Transmit data byte}
+  - name: IER     # Interrupt Enable Register
+    address: 0x01
+    access: rw
+    fields:
+      - {name: erbfi, bits: 0, description: Enable RX data available interrupt}
+      - {name: etbei, bits: 1, description: Enable TX holding register empty interrupt}
+      - {name: elsi,  bits: 2, description: Enable RX line status interrupt}
+      - {name: edssi, bits: 3, description: Enable modem status interrupt}
+  - name: IIR     # Interrupt Identification Register
+    address: 0x02
+    access: ro
+    fields:
+      - {name: int_id,   bits: 3:0, description: Interrupt type identifier}
+      - {name: fifos_en, bits: 7:6, description: FIFO enable status}
+  - name: FCR     # FIFO Control Register
+    address: 0x02
+    access: wo
+    fields:
+      - {name: fifo_en,   bits: 0, description: Enable FIFOs}
+      - {name: rclr,      bits: 1, description: Clear RX FIFO}
+      - {name: tclr,      bits: 2, description: Clear TX FIFO}
+      - {name: dma_mode,  bits: 3, description: DMA mode select}
+      - {name: rx_trigger,bits: 7:6, description: RX FIFO trigger level}
+  - name: LCR     # Line Control Register
+    address: 0x03
+    access: rw
+    fields:
+      - {name: wls,  bits: 1:0, description: Word length select}
+      - {name: stb,  bits: 2,   description: Stop bits}
+      - {name: pen,  bits: 3,   description: Parity enable}
+      - {name: eps,  bits: 4,   description: Even parity select}
+      - {name: sp,   bits: 5,   description: Stick parity}
+      - {name: bc,   bits: 6,   description: Break control}
+      - {name: dlab, bits: 7,   description: Divisor latch access bit}
+  - name: MCR     # Modem Control Register
+    address: 0x04
+    access: rw
+    fields:
+      - {name: dtr,  bits: 0, description: Data Terminal Ready}
+      - {name: rts,  bits: 1, description: Request To Send}
+      - {name: out1, bits: 2, description: Output 1}
+      - {name: out2, bits: 3, description: Output 2}
+      - {name: loop, bits: 4, description: Loopback mode enable}
+  - name: LSR     # Line Status Register
+    address: 0x05
+    access: ro
+    fields:
+      - {name: dr,   bits: 0, description: Data Ready}
+      - {name: oe,   bits: 1, description: Overrun Error}
+      - {name: pe,   bits: 2, description: Parity Error}
+      - {name: fe,   bits: 3, description: Framing Error}
+      - {name: bi,   bits: 4, description: Break Interrupt}
+      - {name: thre, bits: 5, description: TX Holding Register Empty}
+      - {name: temt, bits: 6, description: Transmitter Empty}
+      - {name: err,  bits: 7, description: Error in RX FIFO}
+  - name: MSR     # Modem Status Register
+    address: 0x06
+    access: ro
+    fields:
+      - {name: dcts, bits: 0, description: Delta Clear To Send}
+      - {name: ddsr, bits: 1, description: Delta Data Set Ready}
+      - {name: teri, bits: 2, description: Trailing Edge Ring Indicator}
+      - {name: ddcd, bits: 3, description: Delta Data Carrier Detect}
+      - {name: cts,  bits: 4, description: Clear To Send}
+      - {name: dsr,  bits: 5, description: Data Set Ready}
+      - {name: ri,   bits: 6, description: Ring Indicator}
+      - {name: dcd,  bits: 7, description: Data Carrier Detect}
+  - name: SCR     # Scratch Register
+    address: 0x07
+    access: rw
+    fields:
+      - {name: scratch, bits: 7:0, description: Scratch value}
+
+sequence_template:
+  name: uart_sequence
+  body: |
+    // UART transmit sequence
+    repeat (num_bytes) begin
+      drv.write_reg(THR, data_q.pop_front());
+      drv.wait_for_field(LSR, thre, 1);
+    end
+
+coverage_template:
+  - name: uart_cg
+    type: covergroup
+    items:
+      - {name: cg_baud,   type: coverpoint, expression: baud_rate, bins: [9600, 19200, 115200]}
+      - {name: cg_frame,  type: coverpoint, expression: {data_bits, stop_bits, parity}}

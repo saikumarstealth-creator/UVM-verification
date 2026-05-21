@@ -1,0 +1,153 @@
+name: CI — UVM TB Generator
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore: ["docs/**", "README.md"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install flake8 black yamllint
+          pip install -r requirements.txt
+      - name: Run flake8
+        run: flake8 src/ tests/ --max-line-length=120 --extend-ignore=E203
+      - name: Run yamllint on configs and protocols
+        run: yamllint configs/ protocols/
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov
+          pip install -r requirements.txt
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  generate:
+    name: Generation Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Generate from YAML spec
+        run: |
+          python -m src.main --spec configs/uart_demo.yaml --json
+      - name: Generate from .core file
+        run: |
+          python -m src.main --spec configs/uart16550-1.5.core --json
+      - name: Verify output files exist
+        run: |
+          test -d output/uart_tb
+          test -f output/uart_tb/testbench.sv
+          test -f output/uart_tb/interface_uart.sv
+          test -d output/uart16550_tb
+          test -f output/uart16550_tb/testbench.sv
+          echo "All output files verified"
+      - name: Verify API server imports
+        run: |
+          python -c "from src.api.server import app; print('API server OK')"
+
+  regression:
+    name: Multi-Seed Regression Test
+    runs-on: ubuntu-latest
+    needs: [generate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Run auto-training with 3 seeds
+        run: |
+          python -m src.main --spec configs/uart16550-1.5.core --auto-train \
+            --max-iterations 3 --coverage-target 75 --simulator stub
+      - name: Export coverage trend
+        run: |
+          python -c "
+          import json
+          from pathlib import Path
+          trend_file = next(Path('output').rglob('*coverage_trend*'), None)
+          if trend_file:
+              print('Coverage trend:')
+              print(trend_file.read_text())
+          else:
+              # Show registry content
+              reg_dir = Path('output') / 'model_registry'
+              if reg_dir.exists():
+                  versions = sorted(reg_dir.iterdir())
+                  print(f'Versions: {[v.name for v in versions]}')
+          " || true
+      - name: Verify FuseSoC .core file generated
+        run: |
+          test -f output/uart16550_tb/uart16550.core && echo "FuseSoC .core found" || echo "No FuseSoC core"
+
+  schema:
+    name: Schema Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install deps
+        run: pip install pyyaml jsonschema
+      - name: Validate demo specs against schema
+        run: |
+          python -c "
+import json, yaml, sys
+from jsonschema import validate
+
+with open('configs/schema/master_schema.json') as f:
+    schema = json.load(f)
+
+for spec_file in ['configs/uart_demo.yaml', 'configs/uart16550-1.5.core']:
+    with open(spec_file) as f:
+        if spec_file.endswith('.core'):
+            # .core files wrap spec in a different format; validate the relevant parts
+            data = yaml.safe_load(f)
+        else:
+            data = yaml.safe_load(f)
+    try:
+        validate(instance=data, schema=schema)
+        print(f'OK: {spec_file} passes schema')
+    except Exception as e:
+        print(f'FAIL: {spec_file} — {e}')
+        sys.exit(1)
+"

@@ -1,0 +1,9 @@
+# Simulation TCL script for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+vlib work
+vlog +incdir+../ +define+UVM_NO_DPI +define+USE_UVM +incdir+$(UVM_HOME)/src $(UVM_HOME)/src/uvm_pkg.sv
+{% for f in spec.files|default([]) %}
+vlog +incdir+../ +define+UVM_NO_DPI {{ f }}
+{% else %}
+vlog +incdir+../ +define+UVM_NO_DPI *.sv
+{% endfor %}
+vsim -c -do "run -all; exit" +UVM_TESTNAME={{ spec.design_name }}_regression_test work.testbench

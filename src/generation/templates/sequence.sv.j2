@@ -1,0 +1,78 @@
+// UVM Sequences for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_base_seq)
+  function new(string n = "{{ spec.design_name }}_base_seq"); super.new(n); endfunction
+  task body;
+    `uvm_info("SEQ", "Starting base sequence", UVM_MEDIUM)
+  endtask
+endclass
+
+class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_write_reg_seq)
+  rand logic [2:0] reg_addr;
+  rand logic [7:0] write_data;
+  constraint c_reg_addr { reg_addr inside {0,1,2,3,4,5,6,7}; }
+
+  function new(string n = "{{ spec.design_name }}_write_reg_seq"); super.new(n); endfunction
+  task body;
+    req = {{ spec.design_name }}_seq_item::type_id::create("req");
+    start_item(req);
+    assert(req.randomize() with { we == 1; addr == reg_addr; data == write_data; delay == 0; });
+    finish_item(req);
+    `uvm_info("SEQ", $sformatf("Write reg[0x%0h] = 0x%0h", reg_addr, write_data), UVM_MEDIUM)
+  endtask
+endclass
+
+class {{ spec.design_name }}_read_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_read_reg_seq)
+  rand logic [2:0] reg_addr;
+  constraint c_reg_addr { reg_addr inside {0,1,2,3,4,5,6,7}; }
+
+  function new(string n = "{{ spec.design_name }}_read_reg_seq"); super.new(n); endfunction
+  task body;
+    req = {{ spec.design_name }}_seq_item::type_id::create("req");
+    start_item(req);
+    assert(req.randomize() with { we == 0; addr == reg_addr; delay == 0; });
+    finish_item(req);
+    `uvm_info("SEQ", $sformatf("Read reg[0x%0h] => 0x%0h", reg_addr, req.data), UVM_MEDIUM)
+  endtask
+endclass
+
+class {{ spec.design_name }}_all_regs_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_all_regs_seq})
+  function new(string n = "{{ spec.design_name }}_all_regs_seq"); super.new(n); endfunction
+  task body;
+    for (int i = 0; i < 8; i++) begin
+      {{ spec.design_name }}_write_reg_seq wseq;
+      {{ spec.design_name }}_read_reg_seq  rseq;
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+      assert(wseq.randomize() with { reg_addr == i; write_data == (i*16+5); });
+      wseq.start(m_sequencer);
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+      assert(rseq.randomize() with { reg_addr == i; });
+      rseq.start(m_sequencer);
+    end
+  endtask
+endclass
+
+{% if p == "axi4lite" %}
+class {{ spec.design_name }}_axi_burst_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_axi_burst_seq})
+  rand int burst_len;
+  constraint c_burst { burst_len inside {[1:4]}; }
+  function new(string n = "{{ spec.design_name }}_axi_burst_seq"); super.new(n); endfunction
+  task body;
+    for (int i = 0; i < burst_len; i++) begin
+      req = {{ spec.design_name }}_seq_item::type_id::create("req");
+      start_item(req);
+      assert(req.randomize() with { addr == i; we == 1; });
+      finish_item(req);
+      start_item(req);
+      assert(req.randomize() with { addr == i; we == 0; });
+      finish_item(req);
+    end
+  endtask
+endclass
+{% endif %}

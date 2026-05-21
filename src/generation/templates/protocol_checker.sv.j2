@@ -1,0 +1,219 @@
+// Protocol Assertion Checker for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Functional correctness: SVA assertions for protocol compliance + data integrity
+interface {{ spec.design_name }}_protocol_checker (input logic clk, input logic rst_n);
+{% set p = spec.protocol|default("wishbone") %}
+
+  // ==========================================================
+  // DATA INTEGRITY: Write data must be readable back
+  // ==========================================================
+  logic [7:0] last_written_data;
+  logic [2:0] last_written_addr;
+  logic       write_strobe;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      last_written_data <= 0;
+      last_written_addr <= 0;
+      write_strobe <= 0;
+    end else begin
+      {% if p == "axi4lite" %}
+      if (awvalid && awready && wvalid && wready) begin
+        last_written_addr <= awaddr;
+        last_written_data <= wdata;
+        write_strobe <= 1;
+      end else write_strobe <= 0;
+      {% elif p == "apb" %}
+      if (psel && penable && pready && pwrite) begin
+        last_written_addr <= paddr;
+        last_written_data <= pwdata;
+        write_strobe <= 1;
+      end else write_strobe <= 0;
+      {% else %}
+      if (wb_cyc && wb_stb && wb_we && wb_ack) begin
+        last_written_addr <= wb_addr;
+        last_written_data <= wb_data_o;
+        write_strobe <= 1;
+      end else write_strobe <= 0;
+      {% endif %}
+    end
+
+  // Data integrity: write data must be readable back
+  // Track last written values for read-after-write checking
+  property data_integrity;
+    @(posedge clk) disable iff (!rst_n)
+    write_strobe |-> ##[1:10] (
+      {% if p == "axi4lite" %}
+      (arvalid && arready && rvalid && rready && araddr == $past(last_written_addr)) |->
+      rdata == $past(last_written_data)
+      {% elif p == "apb" %}
+      (psel && penable && pready && !pwrite && paddr == $past(last_written_addr)) |->
+      prdata == $past(last_written_data)
+      {% else %}
+      (wb_cyc && wb_stb && !wb_we && wb_ack && wb_addr == $past(last_written_addr)) |->
+      wb_data_i == $past(last_written_data)
+      {% endif %}
+    );
+  endproperty
+  a_data_integrity: assert property(data_integrity)
+    else $error("DATA_INTEGRITY: Read-after-write mismatch");
+
+  // ==========================================================
+  // PROTOCOL-SPECIFIC ASSERTIONS
+  // ==========================================================
+
+{% if p == "uart" %}
+  // UART: TX must be stable during STOP bit
+  property tx_stop_bit;
+    @(posedge clk) disable iff (!rst_n)
+    $fell(wb_stb) |-> ##[1:16] wb_ack;
+  endproperty
+  a_tx_stop: assert property(tx_stop_bit);
+
+  // UART: baud tick must toggle
+  property baud_tick_period;
+    @(posedge clk) disable iff (!rst_n)
+    $rose(uart_tx) |-> ##[1:100] $rose(uart_tx);
+  endproperty
+  cover property(baud_tick_period);
+
+  // UART: No data loss — TX completes before next write
+  property tx_no_overrun;
+    @(posedge clk) disable iff (!rst_n)
+    (wb_cyc && wb_stb && wb_we && wb_addr == 0) |=>
+    !(wb_cyc && wb_stb && wb_we && wb_addr == 0)[*1:3];
+  endproperty
+  a_tx_no_overrun: assert property(tx_no_overrun);
+
+{% elif p == "spi" %}
+  // SPI: SS_n must be deasserted between transfers
+  property ss_deassert;
+    @(posedge clk) disable iff (!rst_n)
+    $fell(ss_n) |=> $stable(ss_n)[*1:100] ##1 $rose(ss_n);
+  endproperty
+  a_ss_deassert: assert property(ss_deassert);
+
+  // SPI: SCLK toggles during active transfer
+  property sclk_active;
+    @(posedge clk) disable iff (!rst_n)
+    ss_n != 4'hF |-> sclk;
+  endproperty
+  cover property(sclk_active);
+
+  // SPI: MISO data must be valid while SS_n asserted
+  property miso_valid;
+    @(posedge clk) disable iff (!rst_n)
+    ss_n == 4'hE |=> $stable(miso);
+  endproperty
+  a_miso_valid: assert property(miso_valid);
+
+{% elif p == "i2c" %}
+  // I2C: START condition (SDA falling while SCL high)
+  property start_cond;
+    @(posedge clk) disable iff (!rst_n)
+    $fell(sda) && scl;
+  endproperty
+  a_start: assert property(start_cond);
+  cover property(start_cond);
+
+  // I2C: STOP condition (SDA rising while SCL high)
+  property stop_cond;
+    @(posedge clk) disable iff (!rst_n)
+    $rose(sda) && scl;
+  endproperty
+  a_stop: assert property(stop_cond);
+  cover property(stop_cond);
+
+  // I2C: SCL must toggle during data transfer
+  property scl_toggle;
+    @(posedge clk) disable iff (!rst_n)
+    $fell(sda) && scl |-> ##[1:10] $rose(scl);
+  endproperty
+  cover property(scl_toggle);
+
+{% elif p == "axi4lite" %}
+  // AXI4-Lite: AWVALID → AWREADY handshake
+  property aw_handshake;
+    @(posedge clk) disable iff (!rst_n)
+    awvalid |-> ##[1:16] awready;
+  endproperty
+  a_aw_handshake: assert property(aw_handshake);
+
+  // AXI4-Lite: WVALID → WREADY handshake
+  property w_handshake;
+    @(posedge clk) disable iff (!rst_n)
+    wvalid |-> ##[1:16] wready;
+  endproperty
+  a_w_handshake: assert property(w_handshake);
+
+  // AXI4-Lite: ARVALID → ARREADY → RVALID
+  property ar_to_r;
+    @(posedge clk) disable iff (!rst_n)
+    arvalid && arready |-> ##[1:16] rvalid;
+  endproperty
+  a_ar_to_r: assert property(ar_to_r);
+
+  // AXI4-Lite: No write before BRESP
+  property bresp_before_next;
+    @(posedge clk) disable iff (!rst_n)
+    awvalid && awready && wvalid && wready |=> bvalid until bready;
+  endproperty
+  a_bresp_before_next: assert property(bresp_before_next);
+
+{% elif p == "apb" %}
+  // APB: PSEL must be asserted before PENABLE
+  property psel_before_penable;
+    @(posedge clk) disable iff (!rst_n)
+    $rose(penable) |=> $past(psel);
+  endproperty
+  a_psel_before_penable: assert property(psel_before_penable);
+
+  // APB: PREADY within 16 cycles of PENABLE
+  property pready_timing;
+    @(posedge clk) disable iff (!rst_n)
+    penable |-> ##[1:16] pready;
+  endproperty
+  a_pready_timing: assert property(pready_timing);
+
+  // APB: No PSLVERR for valid addresses
+  property no_slverr;
+    @(posedge clk) disable iff (!rst_n)
+    psel && penable && pready |-> !pslverr;
+  endproperty
+  a_no_slverr: assert property(no_slverr);
+
+{% else %}
+  // Wishbone: STB→ACK within 16 cycles
+  property ack_within_16;
+    @(posedge clk) disable iff (!rst_n)
+    $rose(wb_stb) |-> ##[1:16] wb_ack;
+  endproperty
+  a_ack_within_16: assert property(ack_within_16);
+
+  // Wishbone: data stable during cycle
+  property data_stable;
+    @(posedge clk) disable iff (!rst_n)
+    wb_stb && wb_we |=> $stable(wb_data_o);
+  endproperty
+  a_data_stable: assert property(data_stable);
+
+  // Wishbone: CYC must be asserted with STB
+  property cyc_with_stb;
+    @(posedge clk) disable iff (!rst_n)
+    wb_stb |-> wb_cyc;
+  endproperty
+  a_cyc_with_stb: assert property(cyc_with_stb);
+{% endif %}
+
+  // ==========================================================
+  // COVERAGE TARGETS
+  // ==========================================================
+  cover property (@(posedge clk) disable iff (!rst_n)
+    {% if p == "axi4lite" %}
+    awvalid && awready && wvalid && wready && bvalid && bready
+    {% elif p == "apb" %}
+    psel && penable && pready
+    {% else %}
+    wb_cyc && wb_stb && wb_ack
+    {% endif %}
+  );
+
+endinterface

@@ -1,0 +1,48 @@
+# Wishbone Protocol Definition — UVM TB Generator
+protocol: wishbone
+description: Wishbone B4 bus interface
+tags: [bus, memory-mapped, synchronous, pipelined]
+
+interface_template:
+  signals:
+    - {name: cyc,  direction: input,  width: 1, description: Cycle start}
+    - {name: stb,  direction: input,  width: 1, description: Strobe}
+    - {name: we,   direction: input,  width: 1, description: Write enable}
+    - {name: adr,  direction: input,  width: 32, description: Address bus}
+    - {name: dat_i,direction: input,  width: 32, description: Write data}
+    - {name: dat_o,direction: output, width: 32, description: Read data}
+    - {name: ack,  direction: output, width: 1, description: Acknowledge}
+    - {name: err,  direction: output, width: 1, description: Error}
+    - {name: rty,  direction: output, width: 1, description: Retry}
+
+config_parameters:
+  - {name: ADDR_WIDTH, type: int, default: 32}
+  - {name: DATA_WIDTH, type: int, default: 32, enum: [8, 16, 32, 64]}
+  - {name: GRANULARITY,type: string, default: "byte", enum: [byte, word]}
+
+register_template:
+  - name: WB_CTRL
+    address: 0x00
+    access: rw
+    fields:
+      - {name: enable, bits: 0, description: Core enable}
+  - name: WB_STATUS
+    address: 0x04
+    access: ro
+    fields:
+      - {name: ready, bits: 0, description: Core ready}
+
+sequence_template:
+  name: wishbone_sequence
+  body: |
+    // Wishbone classic write sequence
+    adr = addr; dat_i = data; we = 1;
+    cyc = 1; stb = 1;
+    wait(ack);
+    cyc = 0; stb = 0;
+
+coverage_template:
+  - name: wb_cg
+    type: covergroup
+    items:
+      - {name: cg_op, type: coverpoint, expression: we}

@@ -1,0 +1,92 @@
+// UVM Driver for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_driver extends uvm_driver #({{ spec.design_name }}_seq_item);
+  `uvm_component_utils({{ spec.design_name }}_driver)
+  virtual {{ spec.design_name }}_intf vif;
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+
+  function void build_phase(uvm_phase phase);
+    if (!uvm_config_db#(virtual {{ spec.design_name }}_intf)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", "Virtual interface not set")
+  endfunction
+
+  task reset_signals();
+    {% if p == "axi4lite" %}
+    vif.drv_cb.awvalid <= 0; vif.drv_cb.wvalid <= 0;
+    vif.drv_cb.bready  <= 0; vif.drv_cb.arvalid <= 0;
+    vif.drv_cb.rready  <= 0;
+    {% elif p == "apb" %}
+    vif.drv_cb.psel    <= 0; vif.drv_cb.penable <= 0;
+    vif.drv_cb.pwrite  <= 0;
+    {% elif p == "i2c" %}
+    vif.drv_cb.scl <= 1; vif.drv_cb.sda <= 1;
+    vif.drv_cb.wb_cyc <= 0; vif.drv_cb.wb_stb <= 0; vif.drv_cb.wb_we <= 0;
+    {% elif p == "spi" %}
+    vif.drv_cb.miso <= 0;
+    vif.drv_cb.wb_cyc <= 0; vif.drv_cb.wb_stb <= 0; vif.drv_cb.wb_we <= 0;
+    {% else %}
+    vif.drv_cb.wb_cyc <= 0; vif.drv_cb.wb_stb <= 0;
+    vif.drv_cb.wb_we  <= 0; vif.drv_cb.wb_addr <= 0;
+    vif.drv_cb.wb_data_o <= 0;
+    {% if p == "uart" %}
+    vif.drv_cb.uart_rx <= 1; vif.drv_cb.cts_n <= 0;
+    vif.drv_cb.dsr_n <= 0; vif.drv_cb.ri_n <= 1; vif.drv_cb.dcd_n <= 1;
+    {% endif %}
+    {% endif %}
+  endtask
+
+  task drive_bus({{ spec.design_name }}_seq_item item);
+    {% if p == "axi4lite" %}
+    // AXI4-Lite write
+    if (item.we) begin
+      vif.drv_cb.awvalid <= 1; vif.drv_cb.awaddr <= item.addr;
+      vif.drv_cb.wvalid  <= 1; vif.drv_cb.wdata   <= item.data;
+      vif.drv_cb.bready   <= 1;
+      @(vif.drv_cb); wait(vif.drv_cb.awready && vif.drv_cb.wready);
+      @(vif.drv_cb); wait(vif.drv_cb.bvalid);
+      vif.drv_cb.awvalid <= 0; vif.drv_cb.wvalid <= 0; vif.drv_cb.bready <= 0;
+    end else begin
+      vif.drv_cb.arvalid <= 1; vif.drv_cb.araddr  <= item.addr;
+      vif.drv_cb.rready  <= 1;
+      @(vif.drv_cb); wait(vif.drv_cb.arready);
+      @(vif.drv_cb); wait(vif.drv_cb.rvalid);
+      item.data = vif.drv_cb.rdata;
+      vif.drv_cb.arvalid <= 0; vif.drv_cb.rready <= 0;
+    end
+    {% elif p == "apb" %}
+    vif.drv_cb.psel <= 1; vif.drv_cb.paddr <= item.addr;
+    vif.drv_cb.pwrite <= item.we; vif.drv_cb.pwdata <= item.data;
+    @(vif.drv_cb);
+    vif.drv_cb.penable <= 1;
+    @(vif.drv_cb); wait(vif.drv_cb.pready);
+    if (!item.we) item.data = vif.drv_cb.prdata;
+    vif.drv_cb.psel <= 0; vif.drv_cb.penable <= 0;
+    {% elif p == "i2c" %}
+    vif.drv_cb.wb_cyc <= 1; vif.drv_cb.wb_stb <= 1;
+    vif.drv_cb.wb_we  <= item.we;
+    vif.drv_cb.wb_addr <= item.addr;
+    vif.drv_cb.wb_data_o <= item.data;
+    @(vif.drv_cb); wait(vif.drv_cb.wb_ack); @(vif.drv_cb);
+    vif.drv_cb.wb_cyc <= 0; vif.drv_cb.wb_stb <= 0;
+    {% else %}
+    // Wishbone classic cycle (also used by UART, SPI)
+    vif.drv_cb.wb_cyc <= 1; vif.drv_cb.wb_stb <= 1;
+    vif.drv_cb.wb_we  <= item.we;
+    vif.drv_cb.wb_addr <= item.addr;
+    vif.drv_cb.wb_data_o <= item.data;
+    @(vif.drv_cb); wait(vif.drv_cb.wb_ack); @(vif.drv_cb);
+    if (!item.we) item.data = vif.drv_cb.wb_data_i;
+    vif.drv_cb.wb_cyc <= 0; vif.drv_cb.wb_stb <= 0;
+    {% endif %}
+  endtask
+
+  task run_phase(uvm_phase phase);
+    reset_signals();
+    forever begin
+      seq_item_port.get_next_item(req);
+      drive_bus(req);
+      seq_item_port.item_done();
+    end
+  endtask
+endclass

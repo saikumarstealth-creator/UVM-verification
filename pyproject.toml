@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "uvm-tb-generator"
+version = "0.3.0"
+description = "Industry-grade UVM Testbench Generator with protocol libraries, schema validation, and CI/CD"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "DV Automation Team"},
+]
+keywords = ["uvm", "testbench", "verification", "systemverilog", "eda", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = [
+    "pyyaml>=6.0",
+    "jinja2>=3.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "flake8>=7.0",
+    "black>=24.0",
+    "yamllint>=1.35",
+    "jsonschema>=4.0",
+    "build>=1.0",
+]
+mlflow = ["mlflow>=2.0"]
+
+[project.urls]
+Repository = "https://github.com/your-org/uvm-tb-generator"
+Documentation = "https://github.com/your-org/uvm-tb-generator/docs"
+
+[project.scripts]
+uvmgen = "src.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E203", "W503"]

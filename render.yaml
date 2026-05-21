@@ -1,0 +1,30 @@
+# Render.com deployment — free tier, single service
+# Steps:
+#   1. Push repo to GitHub
+#   2. Go to https://dashboard.render.com/select-repo
+#   3. Connect this repo — Render auto-reads this file
+#   4. Deploy (zero config)
+
+services:
+  - type: web
+    name: uvm-tb-generator
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      cd frontend && npm ci && npm run build && cd ..
+    startCommand: gunicorn src.api.server:app --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: LOG_LEVEL
+        value: info
+      - key: UVMGEN_OUTPUT_DIR
+        value: /var/data/uvmgen_output
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: uvmgen-data
+      mountPath: /var/data
+      sizeGB: 1

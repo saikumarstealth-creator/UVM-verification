@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@layer base {
+  body {
+    @apply font-sans text-sm leading-relaxed;
+  }
+  h1 { @apply text-2xl font-bold tracking-tight; }
+  h2 { @apply text-lg font-semibold; }
+  h3 { @apply text-base font-semibold; }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-xl border border-slate-200 shadow-sm;
+  }
+  .card-header {
+    @apply px-5 py-4 border-b border-slate-100 flex items-center gap-2;
+  }
+  .card-body {
+    @apply p-5;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white
+           shadow-sm hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium
+           text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .input-field {
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
+           placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20
+           transition-colors;
+  }
+  .select-field {
+    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
+           focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-colors;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .badge-success { @apply badge bg-emerald-50 text-emerald-700; }
+  .badge-error   { @apply badge bg-red-50 text-red-700; }
+  .badge-warning { @apply badge bg-amber-50 text-amber-700; }
+  .badge-info    { @apply badge bg-sky-50 text-sky-700; }
+
+  .log-entry { @apply font-mono text-xs leading-6; }
+  .log-info    { @apply log-entry text-slate-600; }
+  .log-error   { @apply log-entry text-red-600; }
+  .log-success { @apply log-entry text-emerald-600; }
+  .log-warn    { @apply log-entry text-amber-600; }
+}

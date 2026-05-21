@@ -1,0 +1,106 @@
+// UVM Scoreboard for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Functional correctness: shadow register model with data integrity checks
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils({{ spec.design_name }}_scoreboard)
+  uvm_analysis_imp #({{ spec.design_name }}_seq_item, {{ spec.design_name }}_scoreboard) item_export;
+
+  // Shadow register model (8-bit each, 8 registers)
+  logic [7:0] shadow_regs[0:7];
+
+  // Burst tracking
+  int burst_count;
+  logic [7:0] burst_data[$];
+  logic [2:0] burst_addr_start;
+
+  // Statistics
+  int write_count;
+  int read_count;
+  int match_count;
+  int mismatch_count;
+  int burst_count_total;
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+
+  function void build_phase(uvm_phase phase);
+    item_export = new("item_export", this);
+    for (int i = 0; i < 8; i++) shadow_regs[i] = 0;
+    burst_count = 0;
+    write_count = 0;
+    read_count = 0;
+    match_count = 0;
+    mismatch_count = 0;
+    burst_count_total = 0;
+  endfunction
+
+  function void write({{ spec.design_name }}_seq_item item);
+    if (item.we) begin
+      // Write: update shadow register
+      shadow_regs[item.addr] = item.data;
+      write_count++;
+      `uvm_info("SB", $sformatf("WRITE  addr=0x%0h data=0x%0h [shadow=0x%0h]",
+                item.addr, item.data, shadow_regs[item.addr]), UVM_MEDIUM)
+
+      // Detect burst: consecutive writes
+      if (burst_count == 0) begin
+        burst_addr_start = item.addr;
+        burst_data.delete();
+        burst_data.push_back(item.data);
+        burst_count = 1;
+      end else begin
+        if (item.addr == burst_addr_start + burst_count) begin
+          burst_data.push_back(item.data);
+          burst_count++;
+        end else begin
+          if (burst_count > 1) begin
+            burst_count_total++;
+            `uvm_info("SB", $sformatf("BURST  addr=0x%0h len=%0d data=%p",
+                      burst_addr_start, burst_count, burst_data), UVM_MEDIUM)
+          end
+          burst_addr_start = item.addr;
+          burst_data.delete();
+          burst_data.push_back(item.data);
+          burst_count = 1;
+        end
+      end
+    end else begin
+      // Read: verify against shadow register
+      read_count++;
+      if (shadow_regs[item.addr] === item.data) begin
+        match_count++;
+        `uvm_info("SB", $sformatf("READ   addr=0x%0h data=0x%0h [MATCH]",
+                  item.addr, item.data), UVM_MEDIUM)
+      end else begin
+        mismatch_count++;
+        `uvm_error("SB", $sformatf("READ   addr=0x%0h expected=0x%0h got=0x%0h [MISMATCH]",
+                    item.addr, shadow_regs[item.addr], item.data))
+      end
+
+      // Burst read detection
+      if (burst_count > 0 && burst_count_total > 0) begin
+        `uvm_info("SB", $sformatf("BURST  read detected addr=0x%0h", item.addr), UVM_DEBUG)
+      end
+    end
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    string report_str;
+    report_str = $sformatf(
+      "\n=== Scoreboard Report ===\n"
+      "  Writes:   %0d\n"
+      "  Reads:    %0d\n"
+      "  Matches:  %0d\n"
+      "  Mismatches: %0d\n"
+      "  Bursts:   %0d\n"
+      "  Status:   %s\n"
+      "===========================",
+      write_count, read_count, match_count, mismatch_count,
+      burst_count_total,
+      (mismatch_count == 0) ? "PASS" : "FAIL"
+    );
+    if (mismatch_count == 0)
+      `uvm_info("SCOREBOARD", report_str, UVM_LOW)
+    else
+      `uvm_error("SCOREBOARD", report_str)
+  endfunction
+endclass

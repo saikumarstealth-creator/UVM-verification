@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/your-org/uvm-tb-generator/schema/master_schema.json",
+  "title": "UVM TB Generator — Master Specification Schema",
+  "description": "Industry-grade schema for describing digital IP cores for automated UVM testbench generation. Supports multi-protocol, multi-clock, multi-power-domain designs.",
+  "type": "object",
+  "required": ["design_name", "interfaces"],
+
+  "definitions": {
+    "signal": {
+      "type": "object",
+      "required": ["name", "direction"],
+      "properties": {
+        "name":       { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$", "description": "Signal name" },
+        "direction":  { "type": "string", "enum": ["input", "output", "inout"] },
+        "width":      { "type": "integer", "minimum": 1, "default": 1, "description": "Bus width in bits" },
+        "description":{ "type": "string" }
+      }
+    },
+
+    "field": {
+      "type": "object",
+      "required": ["name", "bits"],
+      "properties": {
+        "name":        { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "bits":        { "type": "string", "pattern": "^([0-9]+|[0-9]+:[0-9]+)$", "description": "Single bit (e.g. '0') or range (e.g. '7:0')" },
+        "description": { "type": "string" },
+        "access":      { "type": "string", "enum": ["ro", "wo", "rw", "rc", "rs", "w1c"], "default": "rw" },
+        "reset":       { "type": "string", "description": "Reset value in hex (e.g. '0x00')" },
+        "hw_impl":     { "type": "boolean", "default": true, "description": "Hardware-implemented field" },
+        "sw_access":   { "type": "string", "enum": ["read-only", "write-only", "read-write", "read-clear"], "default": "read-write" }
+      }
+    },
+
+    "register": {
+      "type": "object",
+      "required": ["name", "address"],
+      "properties": {
+        "name":        { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "address":     { "type": "string", "pattern": "^0x[0-9a-fA-F]+$", "description": "Hex address" },
+        "size":        { "type": "integer", "minimum": 1, "default": 1, "description": "Number of bytes" },
+        "access":      { "type": "string", "enum": ["ro", "wo", "rw", "rc", "rs", "w1c"], "default": "rw" },
+        "description": { "type": "string" },
+        "fields":      { "type": "array", "items": { "$ref": "#/definitions/field" } },
+        "reset_value": { "type": "string", "description": "Full register reset value (hex)" },
+        "volatile":    { "type": "boolean", "default": false }
+      }
+    },
+
+    "clock_domain": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name":     { "type": "string" },
+        "frequency":{ "type": "integer", "description": "Frequency in Hz" },
+        "primary":  { "type": "boolean", "default": false }
+      }
+    },
+
+    "reset_domain": {
+      "type": "object",
+      "required": ["name", "signal", "active"],
+      "properties": {
+        "name":   { "type": "string" },
+        "signal": { "type": "string" },
+        "active": { "type": "integer", "enum": [0, 1], "description": "0 = active-low, 1 = active-high" },
+        "async":  { "type": "boolean", "default": false }
+      }
+    },
+
+    "interface": {
+      "type": "object",
+      "required": ["name", "signals"],
+      "properties": {
+        "name":        { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+        "protocol":    { "type": "string", "enum": ["uart", "spi", "i2c", "axi", "axi4", "axi4lite", "apb", "ahb", "wishbone", "custom"], "description": "Bus protocol standard" },
+        "direction":   { "type": "string", "enum": ["master", "slave", "monitor"], "default": "slave" },
+        "description": { "type": "string" },
+        "signals":     { "type": "array", "items": { "$ref": "#/definitions/signal" }, "minItems": 1 }
+      }
+    },
+
+    "interrupt": {
+      "type": "object",
+      "required": ["name", "signal"],
+      "properties": {
+        "name":      { "type": "string" },
+        "signal":    { "type": "string" },
+        "type":      { "type": "string", "enum": ["level", "edge", "pulse"], "default": "level" },
+        "sensitivity": { "type": "string", "enum": ["high", "low", "rising", "falling"], "default": "high" },
+        "description": { "type": "string" }
+      }
+    },
+
+    "memory_map": {
+      "type": "object",
+      "required": ["name", "base_address", "size"],
+      "properties": {
+        "name":         { "type": "string" },
+        "base_address": { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+        "size":         { "type": "integer", "description": "Size in bytes" },
+        "description":  { "type": "string" }
+      }
+    },
+
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "bins":            { "type": "array", "items": { "type": "object", "properties": {
+          "name":           { "type": "string" },
+          "type":           { "type": "string", "enum": ["coverpoint", "cross", "assertion"] },
+          "expression":     { "type": "string" },
+          "description":    { "type": "string" }
+        }}}
+      }
+    },
+
+    "parameter": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name":        { "type": "string" },
+        "type":        { "type": "string", "enum": ["int", "string", "bool", "float"], "default": "int" },
+        "default":     { "type": ["integer", "string", "boolean", "number"], "description": "Default value" },
+        "minimum":     { "type": ["integer", "number"] },
+        "maximum":     { "type": ["integer", "number"] },
+        "description": { "type": "string" }
+      }
+    },
+
+    "assertion": {
+      "type": "object",
+      "required": ["name", "expression"],
+      "properties": {
+        "name":        { "type": "string" },
+        "expression":  { "type": "string", "description": "SVA assertion expression" },
+        "severity":    { "type": "string", "enum": ["error", "warning", "info"], "default": "error" },
+        "description": { "type": "string" }
+      }
+    }
+  },
+
+  "properties": {
+    "design_name":  { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$" },
+    "version":      { "type": "string", "description": "IP version (semver)" },
+    "vendor":       { "type": "string", "description": "IP vendor name" },
+    "description":  { "type": "string" },
+    "technology":   { "type": "string", "description": "Target technology (e.g. 28nm, FPGA)" },
+    "language":     { "type": "string", "enum": ["verilog", "vhdl", "systemverilog"], "default": "systemverilog" },
+
+    "parameters": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/parameter" },
+      "description": "Design parameters / generics"
+    },
+
+    "clock_reset": {
+      "type": "object",
+      "required": ["clock", "reset"],
+      "properties": {
+        "clock":        { "type": "string" },
+        "reset":        { "type": "string" },
+        "reset_active": { "type": "integer", "enum": [0, 1], "default": 0 },
+        "clock_freq":   { "type": "integer", "description": "Clock frequency in Hz" }
+      }
+    },
+
+    "clock_domains": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/clock_domain" },
+      "description": "Multi-clock domain definitions"
+    },
+
+    "reset_domains": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/reset_domain" },
+      "description": "Multi-reset domain definitions"
+    },
+
+    "interfaces": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/interface" },
+      "minItems": 1
+    },
+
+    "registers": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/register" }
+    },
+
+    "interrupts": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/interrupt" }
+    },
+
+    "memory_maps": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/memory_map" }
+    },
+
+    "coverage": { "$ref": "#/definitions/coverage" },
+
+    "assertions": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/assertion" }
+    },
+
+    "validation_rules": {
+      "type": "object",
+      "properties": {
+        "min_registers":     { "type": "boolean", "default": false },
+        "require_reset":     { "type": "boolean", "default": true },
+        "require_interrupt": { "type": "boolean", "default": false },
+        "address_alignment": { "type": "integer", "default": 1, "description": "Required address alignment in bytes" },
+        "no_reserved_holes": { "type": "boolean", "default": false, "description": "No gaps in register address map" }
+      }
+    }
+  }
+}

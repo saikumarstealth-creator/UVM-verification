@@ -1,0 +1,34 @@
+// UVM Sequence Item for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_seq_item extends uvm_sequence_item;
+  `uvm_object_utils({{ spec.design_name }}_seq_item)
+
+  rand logic       we;
+  rand logic [2:0] addr;
+  rand logic [7:0] data;
+  rand int         delay;
+  {% if p == "spi" %}
+  rand logic [7:0] spi_mosi_data;
+  rand int         spi_speed_hz;
+  {% elif p == "i2c" %}
+  rand logic [6:0] i2c_slave_addr;
+  rand bit         i2c_10bit;
+  {% elif p == "axi4lite" %}
+  rand logic [1:0] awburst;  // burst type
+  rand logic [2:0] awsize;   // bytes per transfer
+  {% endif %}
+
+  constraint c_default {
+    delay inside {[0:5]};
+    soft we == 1'b1;
+    soft addr == 3'h0;
+  }
+
+  function new(string name = "{{ spec.design_name }}_seq_item");
+    super.new(name);
+  endfunction
+
+  function string convert2string();
+    return $sformatf("we=%0d addr=0x%0h data=0x%0h delay=%0d", we, addr, data, delay);
+  endfunction
+endclass

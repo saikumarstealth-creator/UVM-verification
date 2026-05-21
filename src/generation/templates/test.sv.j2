@@ -1,0 +1,23 @@
+// UVM Base Test for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+class {{ spec.design_name }}_base_test extends uvm_test;
+  `uvm_component_utils({{ spec.design_name }}_base_test)
+  {{ spec.design_name }}_env env;
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+  function void build_phase(uvm_phase phase);
+    env = {{ spec.design_name }}_env::type_id::create("env", this);
+  endfunction
+  function void end_of_elaboration_phase(uvm_phase phase);
+    uvm_top.print_topology();
+  endfunction
+endclass
+
+class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_regression_test)
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    uvm_config_wrapper::set(this, "env.agent.sequencer.run_phase",
+      "default_sequence", {{ spec.design_name }}_all_regs_seq::get_type());
+  endfunction
+endclass

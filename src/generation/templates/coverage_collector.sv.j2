@@ -1,0 +1,27 @@
+// UVM Coverage Collector for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec.design_name }}_seq_item);
+  `uvm_component_utils({{ spec.design_name }}_coverage_collector)
+
+  // Register address coverage
+  covergroup reg_address_cg with function sample(bit we, bit [2:0] addr, bit [7:0] data);
+    option.per_instance = 1;
+    cp_addr: coverpoint addr;
+    cp_we:   coverpoint we;
+    cp_data: coverpoint data {
+      bins zero   = {8'h00};
+      bins max    = {8'hFF};
+      bins others = default;
+    }
+    addr_x_we: cross cp_addr, cp_we;
+  endgroup
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+    reg_address_cg = new();
+  endfunction
+
+  function void write({{ spec.design_name }}_seq_item item);
+    reg_address_cg.sample(item.we, item.addr, item.data);
+  endfunction
+endclass

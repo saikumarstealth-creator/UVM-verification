@@ -1,0 +1,26 @@
+# Base pipeline configuration — inherit + override per environment
+
+generation:
+  templates_dir: src/generation/templates
+  output_dir: output
+  overwrite: false
+  strict_validation: true
+
+evaluation:
+  enabled: true
+  metrics:
+    - completeness
+    - syntax_validity
+    - coverage_readiness
+  threshold: 0.7
+
+tracking:
+  enabled: false
+  backend: local
+  experiment_name: uvm_tb_generator
+  tracking_uri: null
+
+logging:
+  level: INFO
+  file: null
+  format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"

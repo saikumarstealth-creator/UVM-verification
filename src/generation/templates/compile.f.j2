@@ -1,0 +1,19 @@
+# Compile file for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
++incdir+../src
++incdir+../rtl
+{% for f in spec.files|default([]) %}
+../{{ f }}
+{% else %}
+../interface.sv
+../sequence_item.sv
+../driver.sv
+../monitor.sv
+../agent.sv
+../scoreboard.sv
+../coverage_collector.sv
+../env.sv
+../sequence.sv
+../test.sv
+../testbench.sv
+../rtl/*.v
+{% endfor %}

@@ -1,0 +1,51 @@
+# APB Protocol Definition — UVM TB Generator
+protocol: apb
+description: Advanced Peripheral Bus (AMBA 3 APB)
+tags: [bus, memory-mapped, synchronous, low-power]
+
+interface_template:
+  signals:
+    - {name: psel,    direction: input,  width: 1, description: Select}
+    - {name: penable, direction: input,  width: 1, description: Enable}
+    - {name: paddr,   direction: input,  width: 32, description: Address}
+    - {name: pwrite,  direction: input,  width: 1, description: Write (1) / Read (0)}
+    - {name: pwdata,  direction: input,  width: 32, description: Write data}
+    - {name: prdata,  direction: output, width: 32, description: Read data}
+    - {name: pready,  direction: output, width: 1, description: Ready}
+    - {name: pslverr, direction: output, width: 1, description: Slave error}
+
+config_parameters:
+  - {name: ADDR_WIDTH, type: int, default: 32}
+  - {name: DATA_WIDTH, type: int, default: 32}
+
+register_template:
+  - name: APB_CTRL
+    address: 0x00
+    access: rw
+    fields:
+      - {name: enable, bits: 0, description: Core enable}
+  - name: APB_DATA
+    address: 0x04
+    access: rw
+    fields:
+      - {name: data, bits: 31:0, description: Data value}
+
+sequence_template:
+  name: apb_sequence
+  body: |
+    // APB write sequence
+    paddr = addr;
+    pwdata = data;
+    pwrite = 1;
+    psel = 1;
+    @(posedge clk);
+    penable = 1;
+    wait(pready);
+    @(posedge clk);
+    psel = 0; penable = 0;
+
+coverage_template:
+  - name: apb_cg
+    type: covergroup
+    items:
+      - {name: cg_op, type: coverpoint, expression: pwrite}

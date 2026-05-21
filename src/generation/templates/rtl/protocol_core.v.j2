@@ -1,0 +1,209 @@
+// {{ spec.design_name|upper }} — Protocol Core ({{ spec.protocol|default("wishbone", true) }})
+// Auto-generated parameterized behavioral model
+`timescale 1ns/1ps
+{% set p = spec.protocol|default("wishbone") %}
+
+module {{ spec.design_name }}_core (
+  input  logic clk,
+  input  logic rst_n,
+{% if p == "uart" %}
+  // Wishbone bus
+  input  logic       wb_cyc, wb_stb, wb_we,
+  input  logic [2:0] wb_addr,
+  input  logic [7:0] wb_data_i,
+  output logic [7:0] wb_data_o,
+  output logic       wb_ack,
+  // Serial
+  output logic       uart_tx,
+  input  logic       uart_rx,
+  // Modem
+  input  logic       cts_n, dsr_n, ri_n, dcd_n,
+  output logic       rts_n, dtr_n, out1_n, out2_n,
+  output logic       uart_intr
+);
+  logic [7:0] reg_lcr, reg_scr;
+  assign wb_ack = wb_cyc & wb_stb;
+  assign wb_data_o = (wb_addr == 3'h3) ? reg_lcr :
+                     (wb_addr == 3'h7) ? reg_scr : 8'h00;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin reg_lcr <= 0; reg_scr <= 0; end
+    else if (wb_cyc & wb_stb & wb_we)
+      case (wb_addr)
+        3'h3: reg_lcr <= wb_data_i;
+        3'h7: reg_scr <= wb_data_i;
+      endcase
+  assign uart_tx = uart_rx;
+  assign rts_n = 0; assign dtr_n = 0;
+  assign out1_n = 1; assign out2_n = 1;
+  assign uart_intr = 0;
+{% elif p == "spi" %}
+  // Wishbone bus
+  input  logic       wb_cyc, wb_stb, wb_we,
+  input  logic [2:0] wb_addr,
+  input  logic [7:0] wb_data_i,
+  output logic [7:0] wb_data_o,
+  output logic       wb_ack,
+  // SPI interface
+  output logic       sclk,
+  output logic       mosi,
+  input  logic       miso,
+  output logic [3:0] ss_n,
+  output logic       spi_intr
+);
+  logic [7:0] reg_ctrl, reg_data;
+  logic [2:0] bit_cnt;
+  assign wb_ack = wb_cyc & wb_stb;
+  assign wb_data_o = (wb_addr == 0) ? reg_data : reg_ctrl;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      reg_ctrl <= 8'h00; reg_data <= 8'h00;
+      sclk <= 0; mosi <= 0; ss_n <= 4'hF; bit_cnt <= 0;
+    end else if (wb_cyc & wb_stb & wb_we) begin
+      if (wb_addr == 0) begin
+        reg_data <= wb_data_i;
+        ss_n <= 4'hE;
+        bit_cnt <= 7;
+      end else if (wb_addr == 1) begin
+        reg_ctrl <= wb_data_i;
+      end
+    end else begin
+      if (bit_cnt > 0 && wb_addr == 0) begin
+        sclk <= ~sclk;
+        if (sclk) begin
+          mosi <= reg_data[bit_cnt];
+          bit_cnt <= bit_cnt - 1;
+        end
+      end else ss_n <= 4'hF;
+    end
+  assign spi_intr = (bit_cnt == 0 && ss_n == 4'hE);
+{% elif p == "i2c" %}
+  // Wishbone bus
+  input  logic       wb_cyc, wb_stb, wb_we,
+  input  logic [2:0] wb_addr,
+  input  logic [7:0] wb_data_i,
+  output logic [7:0] wb_data_o,
+  output logic       wb_ack,
+  // I2C interface
+  output logic       scl,
+  inout  logic       sda,
+  output logic       i2c_intr
+);
+  logic [7:0] reg_ctrl, reg_data;
+  logic sda_out;
+  assign wb_ack = wb_cyc & wb_stb;
+  assign wb_data_o = (wb_addr == 0) ? reg_data : reg_ctrl;
+  assign sda = sda_out ? 1'bz : 1'b0;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      reg_ctrl <= 0; reg_data <= 0;
+      scl <= 1; sda_out <= 1;
+    end else if (wb_cyc & wb_stb & wb_we) begin
+      if (wb_addr == 0) begin
+        reg_data <= wb_data_i;
+        sda_out <= 0;  // start
+        scl <= 1;
+      end else reg_ctrl <= wb_data_i;
+    end else begin
+      scl <= ~scl;
+      if (scl) sda_out <= 1;
+    end
+  assign i2c_intr = 0;
+{% elif p == "axi4lite" %}
+  // AXI4-Lite slave interface
+  input  logic       awvalid,
+  output logic       awready,
+  input  logic [2:0] awaddr,
+  input  logic       wvalid,
+  output logic       wready,
+  input  logic [7:0] wdata,
+  input  logic       bready,
+  output logic       bvalid,
+  output logic [1:0] bresp,
+  input  logic       arvalid,
+  output logic       arready,
+  input  logic [2:0] araddr,
+  input  logic       rready,
+  output logic       rvalid,
+  output logic [7:0] rdata,
+  output logic [1:0] rresp,
+  output logic       axi_intr
+);
+  logic [7:0] regs[0:7];
+  logic [2:0] waddr_ff, raddr_ff;
+  logic       w_done, r_done;
+  assign awready = 1; arready = 1;
+  assign wready  = wvalid & ~w_done;
+  assign bvalid  = w_done;
+  assign bresp   = 0;
+  assign rvalid  = r_done;
+  assign rresp   = 0;
+  assign rdata   = regs[raddr_ff];
+  assign axi_intr = 0;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      for (int i = 0; i < 8; i++) regs[i] <= 0;
+      w_done <= 0; r_done <= 0;
+    end else begin
+      if (awvalid) waddr_ff <= awaddr;
+      if (arvalid) raddr_ff <= araddr;
+      if (wvalid && !w_done) begin
+        regs[waddr_ff] <= wdata;
+        w_done <= 1;
+      end else if (bready) w_done <= 0;
+      if (arvalid && !r_done) r_done <= 1;
+      else if (rready) r_done <= 0;
+    end
+{% elif p == "apb" %}
+  // APB slave interface
+  input  logic       psel,
+  input  logic       penable,
+  input  logic       pwrite,
+  input  logic [2:0] paddr,
+  input  logic [7:0] pwdata,
+  output logic [7:0] prdata,
+  output logic       pready,
+  output logic       pslverr,
+  output logic       apb_intr
+);
+  logic [7:0] regs[0:7];
+  logic       active;
+  assign pready  = psel & penable & ~active;
+  assign pslverr = 0;
+  assign prdata  = regs[paddr];
+  assign apb_intr = 0;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      for (int i = 0; i < 8; i++) regs[i] <= 0;
+      active <= 0;
+    end else if (psel & penable & ~active) begin
+      if (pwrite) regs[paddr] <= pwdata;
+      active <= 1;
+    end else active <= 0;
+{% else %}
+  // Wishbone classic slave (default)
+  input  logic       wb_cyc, wb_stb, wb_we,
+  input  logic [2:0] wb_addr,
+  input  logic [7:0] wb_data_i,
+  output logic [7:0] wb_data_o,
+  output logic       wb_ack,
+  output logic       wb_intr
+);
+  logic [7:0] regs[0:7];
+  logic [2:0] addr_ff;
+  logic       ack_d;
+  assign wb_ack = ack_d;
+  assign wb_data_o = regs[addr_ff];
+  assign wb_intr = 0;
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) begin
+      for (int i = 0; i < 8; i++) regs[i] <= 0;
+      ack_d <= 0; addr_ff <= 0;
+    end else begin
+      if (wb_cyc & wb_stb) begin
+        addr_ff <= wb_addr;
+        if (wb_we) regs[wb_addr] <= wb_data_i;
+        ack_d <= 1;
+      end else ack_d <= 0;
+    end
+{% endif %}
+endmodule

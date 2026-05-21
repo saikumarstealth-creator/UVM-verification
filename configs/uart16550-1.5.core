@@ -1,0 +1,190 @@
+# UART 16550 v1.5 Core Description
+# FuseSoC-compatible .core format
+# Ref: https://github.com/fusesoc/fusesoc
+
+name: uart16550
+version: "1.5"
+description: Universal Asynchronous Receiver-Transmitter (UART) 16550-compatible core
+author: DV Automation Team
+
+parameters:
+  clk_freq:
+    datatype: int
+    default: 50000000
+    description: System clock frequency in Hz
+  baud_rate:
+    datatype: int
+    default: 115200
+    description: Target baud rate
+  data_bits:
+    datatype: int
+    default: 8
+    paramtype: vlogparam
+  fifo_depth:
+    datatype: int
+    default: 16
+    description: Depth of TX/RX FIFOs
+
+interfaces:
+  - name: bus
+    type: wb
+    description: Wishbone bus interface
+    signals:
+      - {name: clk, direction: input, width: 1}
+      - {name: rstn, direction: input, width: 1}
+      - {name: addr, direction: input, width: 3}
+      - {name: we, direction: input, width: 1}
+      - {name: cs, direction: input, width: 1}
+      - {name: data_in, direction: input, width: 8}
+      - {name: data_out, direction: output, width: 8}
+      - {name: irq, direction: output, width: 1}
+  - name: serial
+    type: uart
+    description: Serial interface
+    signals:
+      - {name: srx, direction: input, width: 1}
+      - {name: stx, direction: output, width: 1}
+  - name: modem
+    type: modem
+    description: Modem control interface
+    signals:
+      - {name: cts_n, direction: input, width: 1}
+      - {name: rts_n, direction: output, width: 1}
+      - {name: dsr_n, direction: input, width: 1}
+      - {name: dtr_n, direction: output, width: 1}
+      - {name: ri_n, direction: input, width: 1}
+      - {name: dcd_n, direction: input, width: 1}
+
+clock_reset:
+  clock: clk
+  reset: rstn
+  reset_active: 0
+
+registers:
+  - name: RBR
+    description: Receiver Buffer Register (read-only, DLAB=0)
+    address: '0x00'
+    access: ro
+    fields:
+      - {name: rbr_data, bits: '7:0', description: Received data}
+  - name: THR
+    description: Transmitter Holding Register (write-only, DLAB=0)
+    address: '0x00'
+    access: wo
+    fields:
+      - {name: thr_data, bits: '7:0', description: Data to transmit}
+  - name: IER
+    description: Interrupt Enable Register
+    address: '0x01'
+    access: rw
+    fields:
+      - {name: erbfi, bits: '0', description: Enable RX Data Available Interrupt}
+      - {name: etbei, bits: '1', description: Enable TX Holding Register Empty Interrupt}
+      - {name: elsi, bits: '2', description: Enable RX Line Status Interrupt}
+      - {name: edssi, bits: '3', description: Enable Modem Status Interrupt}
+  - name: IIR
+    description: Interrupt Identification Register (read-only)
+    address: '0x02'
+    access: ro
+    fields:
+      - {name: int_id, bits: '3:0', description: Interrupt identification}
+      - {name: fifos_en, bits: '7:6', description: FIFO enable status}
+  - name: FCR
+    description: FIFO Control Register (write-only)
+    address: '0x02'
+    access: wo
+    fields:
+      - {name: fifo_en, bits: '0', description: Enable FIFOs}
+      - {name: rclr, bits: '1', description: Clear RX FIFO}
+      - {name: tclr, bits: '2', description: Clear TX FIFO}
+      - {name: dma_mode, bits: '3', description: DMA mode select}
+      - {name: rx_trigger, bits: '7:6', description: RX FIFO trigger level}
+  - name: LCR
+    description: Line Control Register
+    address: '0x03'
+    access: rw
+    fields:
+      - {name: wls, bits: '1:0', description: Word length select}
+      - {name: stb, bits: '2', description: Stop bits}
+      - {name: pen, bits: '3', description: Parity enable}
+      - {name: eps, bits: '4', description: Even parity select}
+      - {name: sp, bits: '5', description: Stick parity}
+      - {name: bc, bits: '6', description: Break control}
+      - {name: dlab, bits: '7', description: Divisor latch access bit}
+  - name: MCR
+    description: Modem Control Register
+    address: '0x04'
+    access: rw
+    fields:
+      - {name: dtr, bits: '0', description: Data Terminal Ready}
+      - {name: rts, bits: '1', description: Request To Send}
+      - {name: out1, bits: '2', description: Output 1}
+      - {name: out2, bits: '3', description: Output 2}
+      - {name: loop, bits: '4', description: Loopback mode}
+  - name: LSR
+    description: Line Status Register (read-only)
+    address: '0x05'
+    access: ro
+    fields:
+      - {name: dr, bits: '0', description: Data Ready}
+      - {name: oe, bits: '1', description: Overrun Error}
+      - {name: pe, bits: '2', description: Parity Error}
+      - {name: fe, bits: '3', description: Framing Error}
+      - {name: bi, bits: '4', description: Break Interrupt}
+      - {name: thre, bits: '5', description: TX Holding Register Empty}
+      - {name: temt, bits: '6', description: TX Empty}
+      - {name: err, bits: '7', description: Error in RX FIFO}
+  - name: MSR
+    description: Modem Status Register (read-only)
+    address: '0x06'
+    access: ro
+    fields:
+      - {name: dcts, bits: '0', description: Delta Clear To Send}
+      - {name: ddsr, bits: '1', description: Delta Data Set Ready}
+      - {name: teri, bits: '2', description: Trailing Edge RI}
+      - {name: ddcd, bits: '3', description: Delta Data Carrier Detect}
+      - {name: cts, bits: '4', description: Clear To Send}
+      - {name: dsr, bits: '5', description: Data Set Ready}
+      - {name: ri, bits: '6', description: Ring Indicator}
+      - {name: dcd, bits: '7', description: Data Carrier Detect}
+  - name: SCR
+    description: Scratch Register
+    address: '0x07'
+    access: rw
+    fields:
+      - {name: scratch, bits: '7:0', description: Scratch value}
+  - name: DLL
+    description: Divisor Latch LSB (DLAB=1)
+    address: '0x00'
+    access: rw
+    fields:
+      - {name: dll, bits: '7:0', description: Divisor latch low byte}
+  - name: DLH
+    description: Divisor Latch MSB (DLAB=1)
+    address: '0x01'
+    access: rw
+    fields:
+      - {name: dlh, bits: '7:0', description: Divisor latch high byte}
+
+filesets:
+  - name: rtl
+    files:
+      - uart16550.v
+      - uart_baud.v
+      - uart_fifo.v
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+    parameters:
+      - clk_freq
+      - baud_rate
+  sim:
+    filesets: [rtl]
+    parameters:
+      - clk_freq
+      - baud_rate
+    tools:
+      - verilator
+      - iverilog

@@ -1,0 +1,45 @@
+// Generated coverage-driven sequences — {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// These target specific uncovered bins from the last simulation
+{% set p = spec.protocol|default("wishbone") %}
+{% if extra_seqs %}
+  {% for seq_name, seq_def in extra_seqs.items() %}
+// Sequence: {{ seq_name }}
+class {{ spec.design_name }}_{{ seq_name }}_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_{{ seq_name }}_seq)
+  function new(string n = "{{ spec.design_name }}_{{ seq_name }}_seq"); super.new(n); endfunction
+  task body;
+    {{ spec.design_name }}_seq_item item;
+    {% for txn in seq_def.get("transactions", []) %}
+    // {{ txn.comment }}
+    item = {{ spec.design_name }}_seq_item::type_id::create("item");
+    start_item(item);
+    assert(item.randomize() with {
+      we    == {{ 1 if txn.direction|lower == "write" else 0 }};
+      addr  == {{ txn.address }};
+      data  == {{ txn.data }};
+      delay == 0;
+    });
+    finish_item(item);
+    {% endfor %}
+  endtask
+endclass
+  {% endfor %}
+{% else %}
+// No extra sequences — base coverage targets
+class {{ spec.design_name }}_default_coverage_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_default_coverage_seq)
+  function new(string n = "{{ spec.design_name }}_default_coverage_seq"); super.new(n); endfunction
+  task body;
+    {{ spec.design_name }}_seq_item item;
+    item = {{ spec.design_name }}_seq_item::type_id::create("item");
+    start_item(item); assert(item.randomize() with { we == 1; addr == 0; data == 8'hA5; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 1; addr == 1; data == 8'h5A; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 1; addr == 2; data == 8'hFF; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 1; addr == 3; data == 8'h00; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 0; addr == 0; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 0; addr == 1; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 0; addr == 2; }); finish_item(item);
+    start_item(item); assert(item.randomize() with { we == 0; addr == 3; }); finish_item(item);
+  endtask
+endclass
+{% endif %}

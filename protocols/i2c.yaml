@@ -1,0 +1,61 @@
+# I2C Protocol Definition — UVM TB Generator
+protocol: i2c
+description: Inter-Integrated Circuit
+tags: [serial, synchronous, multi-master, open-drain]
+
+interface_template:
+  signals:
+    - {name: scl, direction: inout, width: 1, description: Serial clock line}
+    - {name: sda, direction: inout, width: 1, description: Serial data line}
+
+config_parameters:
+  - {name: SLAVE_ADDR, type: int, default: 0x50, minimum: 0x00, maximum: 0x7F, description: 7-bit slave address}
+  - {name: CLK_FREQ,   type: int, default: 100000, description: I2C bus frequency (Hz)}
+  - {name: ADDR_WIDTH, type: int, default: 7, enum: [7, 10], description: Addressing mode}
+
+register_template:
+  - name: CR      # Control Register
+    address: 0x00
+    access: rw
+    fields:
+      - {name: enable,    bits: 0, description: I2C core enable}
+      - {name: irq_en,    bits: 1, description: Interrupt enable}
+      - {name: addr_mode, bits: 2, description: 0=7bit, 1=10bit}
+  - name: ADR     # Slave Address Register
+    address: 0x04
+    access: rw
+    fields:
+      - {name: addr, bits: 9:0, description: Slave address}
+  - name: DR      # Data Register
+    address: 0x08
+    access: rw
+    fields:
+      - {name: data, bits: 7:0, description: I2C data byte}
+  - name: SR      # Status Register
+    address: 0x0C
+    access: ro
+    fields:
+      - {name: busy,    bits: 0, description: Bus busy}
+      - {name: rx_ack,  bits: 1, description: Receive acknowledge}
+      - {name: tx_rdy,  bits: 2, description: TX ready}
+      - {name: rx_rdy,  bits: 3, description: RX ready}
+      - {name: arb_lost,bits: 4, description: Arbitration lost}
+      - {name: nack,    bits: 5, description: No acknowledge received}
+
+sequence_template:
+  name: i2c_sequence
+  body: |
+    // I2C write sequence
+    drv.write_reg(ADR, slave_addr);
+    drv.write_reg(CR, {1'b1, enable});
+    foreach (tx_data[i]) begin
+      drv.write_reg(DR, tx_data[i]);
+      drv.wait_for_field(SR, tx_rdy, 1);
+    end
+
+coverage_template:
+  - name: i2c_cg
+    type: covergroup
+    items:
+      - {name: cg_addr,  type: coverpoint, expression: slave_addr}
+      - {name: cg_dir,   type: coverpoint, expression: {read, write}}
