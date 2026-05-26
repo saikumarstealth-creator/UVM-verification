@@ -64,90 +64,124 @@ interface AppState extends PipelineState {
 const defaultConfig: GenerationConfig = {
   design_name: 'uart',
   protocol: 'uart',
-  model_type: 'v2',
+  model_type: 'template',
   rl_strategy: 'ucb',
   enable_learning: true,
   strict_uvm: true,
   max_iterations: 1,
   spec_yaml: `design_name: uart
-module_name: uart_core
-clk_rst:
-  clk: clk
-  rst_n: rst_n
+protocol: uart
+clock_reset:
+  clock: clk
+  reset: rst_n
+  reset_active: 0
 
 interfaces:
-  apb:
-    type: apb
-    role: slave
-    ports:
-      paddr: input wire [7:0]
-      psel: input wire
-      penable: input wire
-      pwrite: input wire
-      pwdata: input wire [7:0]
-      prdata: output wire [7:0]
-      pready: output wire
-      pslverr: output wire
-  
-  uart_rx:
-    type: uart
-    role: receiver
-    ports:
-      rx: input wire
-      rx_data: output wire [7:0]
-      rx_valid: output wire
-      rx_error: output wire
-  
-  uart_tx:
-    type: uart
-    role: transmitter
-    ports:
-      tx: output wire
-      tx_data: input wire [7:0]
-      tx_valid: input wire
-      tx_ready: output wire
+  - name: wb_intf
+    signals:
+      - name: wb_cyc
+        direction: input
+      - name: wb_stb
+        direction: input
+      - name: wb_we
+        direction: input
+      - name: wb_addr
+        direction: input
+        width: 3
+      - name: wb_data_o
+        direction: output
+        width: 8
+      - name: wb_data_i
+        direction: input
+        width: 8
+      - name: wb_ack
+        direction: output
+
+  - name: uart_intf
+    signals:
+      - name: uart_tx
+        direction: output
+      - name: uart_rx
+        direction: input
+      - name: cts_n
+        direction: input
+      - name: rts_n
+        direction: output
+      - name: uart_intr
+        direction: output
 
 registers:
-  - name: tx_data
-    addr: '0x00'
-    width: 8
-    direction: WO
-    description: TX Data Register
-  
-  - name: rx_data
-    addr: '0x04'
-    width: 8
-    direction: RO
-    description: RX Data Register
-  
-  - name: ctrl
-    addr: '0x08'
-    width: 8
-    direction: RW
+  - name: RBR_THR
+    address: '0x00'
+    access: rw
+    description: Receiver Buffer / Transmitter Holding
     fields:
-      - name: tx_en
-        bit: 0
-        reset: 0
-      - name: rx_en
-        bit: 1
-        reset: 0
-      - name: parity_en
-        bit: 2
-        reset: 0
-    description: Control Register
-  
-  - name: status
-    addr: '0x0C'
-    width: 8
-    direction: RO
+      - name: data
+        bits: '7:0'
+        description: Data bits
+
+  - name: IER
+    address: '0x01'
+    access: rw
+    description: Interrupt Enable
     fields:
-      - name: tx_busy
-        bit: 0
-      - name: rx_valid
-        bit: 1
-      - name: parity_err
-        bit: 2
-    description: Status Register
+      - name: erbfi
+        bits: '0'
+        description: Enable RX data interrupt
+      - name: etbei
+        bits: '1'
+        description: Enable TX empty interrupt
+      - name: elsi
+        bits: '2'
+        description: Enable RX line status
+      - name: edssi
+        bits: '3'
+        description: Enable modem status
+
+  - name: LCR
+    address: '0x03'
+    access: rw
+    description: Line Control
+    fields:
+      - name: wls
+        bits: '1:0'
+        description: Word length select
+      - name: stb
+        bits: '2'
+        description: Stop bits
+      - name: pen
+        bits: '3'
+        description: Parity enable
+      - name: eps
+        bits: '4'
+        description: Even parity select
+      - name: dlab
+        bits: '7'
+        description: Divisor latch access bit
+
+  - name: LSR
+    address: '0x05'
+    access: ro
+    description: Line Status
+    fields:
+      - name: dr
+        bits: '0'
+        description: Data Ready
+      - name: oe
+        bits: '1'
+        description: Overrun Error
+      - name: pe
+        bits: '2'
+        description: Parity Error
+      - name: fe
+        bits: '3'
+        description: Framing Error
+      - name: thre
+        bits: '5'
+        description: TX Holding Register Empty
+      - name: temt
+        bits: '6'
+        description: Transmitter Empty
 
 coverage:
   groups:

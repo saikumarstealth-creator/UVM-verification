@@ -82,7 +82,12 @@ class PipelineManager:
             # Import generation logic from existing code
             import sys
             import os
-            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
+            # Calculate repo root from backend/core/pipeline_manager.py
+            # Need to go up 3 levels: backend/core/pipeline_manager.py -> backend/core -> backend -> repo_root
+            file_path = os.path.abspath(__file__)
+            repo_root = os.path.dirname(os.path.dirname(os.path.dirname(file_path)))
+            
             sys.path.insert(0, repo_root)
             
             from src.config import PipelineConfig, MLConfig, GenerationConfig, AutoTrainConfig

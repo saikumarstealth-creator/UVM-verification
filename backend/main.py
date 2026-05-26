@@ -8,17 +8,14 @@ import sys
 import os
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from typing import Dict, List
+from fastapi.responses import FileResponse, Response
+from typing import Dict, List, Set
 import asyncio
 import json
 import zipfile
 import io
 from datetime import datetime
-import tempfile
 
-# Add repo root to path for imports
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, repo_root)
 sys.path.insert(0, os.path.join(repo_root, "backend"))
@@ -47,8 +44,85 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# WebSocket connections
 active_connections: Dict[str, List[WebSocket]] = {}
+active_broadcasters: Set[str] = set()
+
+
+async def broadcast_continuously(task_id: str):
+    """Continuously broadcast updates while pipeline is running"""
+    if task_id in active_broadcasters:
+        return
+    
+    active_broadcasters.add(task_id)
+    
+    try:
+        last_progress = -1
+        last_step = None
+        
+        while True:
+            pipeline = pipeline_manager.get_pipeline(task_id)
+            if not pipeline:
+                break
+            
+            # Check if anything changed
+            changed = (
+                pipeline.progress != last_progress or 
+                pipeline.current_step != last_step
+            )
+            
+            if changed:
+                last_progress = pipeline.progress
+                last_step = pipeline.current_step
+                await broadcast_task_update(task_id)
+            
+            # Check if pipeline finished
+            if pipeline.status in [PipelineStatus.COMPLETED, PipelineStatus.FAILED]:
+                await broadcast_task_update(task_id)
+                break
+            
+            await asyncio.sleep(0.3)  # 300ms poll interval
+            
+    finally:
+        active_broadcasters.discard(task_id)
+
+
+async def broadcast_task_update(task_id: str):
+    """Broadcast pipeline update to all connected WebSockets"""
+    pipeline = pipeline_manager.get_pipeline(task_id)
+    if not pipeline:
+        return
+    
+    if task_id not in active_connections:
+        return
+    
+    websockets_to_remove = []
+    
+    for websocket in active_connections[task_id]:
+        try:
+            await send_pipeline_update(websocket, pipeline)
+        except Exception as e:
+            websockets_to_remove.append(websocket)
+    
+    for ws in websockets_to_remove:
+        if task_id in active_connections and ws in active_connections[task_id]:
+            active_connections[task_id].remove(ws)
+
+
+async def send_pipeline_update(websocket: WebSocket, pipeline):
+    """Send pipeline update to a single WebSocket"""
+    update = {
+        "type": "pipeline_update",
+        "task_id": pipeline.task_id,
+        "status": pipeline.status.value,
+        "current_step": pipeline.current_step.value if pipeline.current_step else None,
+        "progress": pipeline.progress,
+        "message": pipeline.message,
+        "logs": pipeline.logs[-50:],
+        "completed_steps": [s.value for s in pipeline.completed_steps],
+        "metrics": pipeline.metrics if pipeline.metrics else None
+    }
+    
+    await websocket.send_json(update)
 
 
 @app.get("/")
@@ -71,10 +145,9 @@ async def start_generation(config: GenerationConfig):
     """Start a new generation pipeline"""
     task_id = pipeline_manager.create_pipeline(config)
     
-    # Run generation in background
     asyncio.create_task(pipeline_manager.run_generation(task_id))
+    asyncio.create_task(broadcast_continuously(task_id))
     
-    # Broadcast via WebSocket
     await broadcast_task_update(task_id)
     
     return pipeline_manager.get_response(task_id)
@@ -204,7 +277,6 @@ async def list_pipelines():
     }
 
 
-# WebSocket for real-time updates
 @app.websocket("/ws/{task_id}")
 async def websocket_endpoint(websocket: WebSocket, task_id: str):
     await websocket.accept()
@@ -213,19 +285,23 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         active_connections[task_id] = []
     active_connections[task_id].append(websocket)
     
+    pipeline = pipeline_manager.get_pipeline(task_id)
+    if pipeline:
+        await send_pipeline_update(websocket, pipeline)
+        if pipeline.status == PipelineStatus.RUNNING:
+            asyncio.create_task(broadcast_continuously(task_id))
+    
     try:
-        # Send initial status
-        pipeline = pipeline_manager.get_pipeline(task_id)
-        if pipeline:
-            await send_pipeline_update(websocket, pipeline)
-        
         while True:
-            data = await websocket.receive_text()
             try:
-                message = json.loads(data)
-                if message.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
-            except:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+                try:
+                    message = json.loads(data)
+                    if message.get("type") == "ping":
+                        await websocket.send_json({"type": "pong"})
+                except:
+                    pass
+            except asyncio.TimeoutError:
                 pass
                 
     except WebSocketDisconnect:
@@ -234,40 +310,54 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 active_connections[task_id].remove(websocket)
 
 
-async def broadcast_task_update(task_id: str):
-    """Broadcast pipeline update to all connected WebSockets"""
-    pipeline = pipeline_manager.get_pipeline(task_id)
-    if not pipeline or task_id not in active_connections:
-        return
-    
-    for websocket in active_connections[task_id]:
-        try:
-            await send_pipeline_update(websocket, pipeline)
-        except:
-            pass
+# ============================================================================
+# Static File Serving (for single-service deployment on Render/Vercel/etc.)
+# ============================================================================
+
+FRONTEND_DIST = os.path.join(repo_root, "frontend", "dist")
+INDEX_HTML = os.path.join(FRONTEND_DIST, "index.html")
 
 
-async def send_pipeline_update(websocket: WebSocket, pipeline):
-    """Send pipeline update to a single WebSocket"""
-    response = pipeline_manager.get_response(pipeline.task_id)
+@app.get("/assets/{file_path:path}")
+async def serve_assets(file_path: str):
+    """Serve frontend static assets (JS, CSS, images, etc.)"""
+    asset_path = os.path.join(FRONTEND_DIST, "assets", file_path)
+    if os.path.exists(asset_path) and os.path.isfile(asset_path):
+        return FileResponse(asset_path)
+    raise HTTPException(status_code=404, detail="Asset not found")
+
+
+@app.get("/favicon.svg")
+async def serve_favicon():
+    favicon_path = os.path.join(FRONTEND_DIST, "favicon.svg")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    raise HTTPException(status_code=404)
+
+
+@app.api_route("/{path:path}", methods=["GET", "HEAD"])
+async def spa_fallback(path: str):
+    """
+    Single Page Application fallback - serves index.html for any non-API route.
+    This allows React Router to handle client-side routing.
+    """
+    excluded_prefixes = ["api", "ws", "health", "docs", "openapi.json", "assets", "favicon"]
     
-    update = {
-        "type": "pipeline_update",
-        "task_id": pipeline.task_id,
-        "status": pipeline.status.value,
-        "current_step": pipeline.current_step.value if pipeline.current_step else None,
-        "progress": pipeline.progress,
-        "message": pipeline.message,
-        "logs": pipeline.logs[-50:],  # Last 50 logs
-        "completed_steps": [s.value for s in pipeline.completed_steps],
-        "metrics": pipeline.metrics if pipeline.metrics else None
+    for prefix in excluded_prefixes:
+        if path.startswith(prefix) or path == prefix:
+            raise HTTPException(status_code=404, detail="Not found")
+    
+    if os.path.exists(INDEX_HTML):
+        return FileResponse(INDEX_HTML)
+    
+    return {
+        "name": "UVM Generator API",
+        "version": "2.1.0",
+        "frontend_available": False,
+        "note": "Build frontend with: cd frontend && npm install && npm run build",
+        "api_docs": "/docs"
     }
-    
-    await websocket.send_json(update)
 
-
-# Fix imports properly
-from fastapi.responses import Response
 
 if __name__ == "__main__":
     import uvicorn

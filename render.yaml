@@ -1,9 +1,20 @@
-# Render.com deployment — free tier, single service
+# Render.com deployment - Free Tier (Single Service)
+# Full Stack: FastAPI Backend + Vite React Frontend
+# 
 # Steps:
-#   1. Push repo to GitHub
+#   1. Push repo to GitHub/GitLab
 #   2. Go to https://dashboard.render.com/select-repo
-#   3. Connect this repo — Render auto-reads this file
-#   4. Deploy (zero config)
+#   3. Connect your repo - Render auto-detects this file
+#   4. Deploy (free tier)
+# 
+# URLs after deployment:
+#   - UI: https://uvm-tb-generator.onrender.com
+#   - API: https://uvm-tb-generator.onrender.com/api
+#   - API Docs: https://uvm-tb-generator.onrender.com/docs
+#
+# Notes:
+#   - Free tier spins down after 15 mins inactivity (cold start: ~15-30s)
+#   - Generation takes longer in free tier (resource constraints)
 
 services:
   - type: web
@@ -11,20 +22,49 @@ services:
     runtime: python
     region: oregon
     plan: free
+    rootDir: .
+    
     buildCommand: |
+      # Install Python dependencies
+      pip install --upgrade pip
       pip install -r requirements.txt
-      cd frontend && npm ci && npm run build && cd ..
-    startCommand: gunicorn src.api.server:app --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+      pip install -r backend/requirements.txt
+      
+      # Install Node.js and build frontend
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+      apt-get install -y nodejs
+      
+      cd frontend
+      npm install
+      npm run build
+      cd ..
+
+    startCommand: |
+      python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 120
+    
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: LOG_LEVEL
         value: info
-      - key: UVMGEN_OUTPUT_DIR
-        value: /var/data/uvmgen_output
-    healthCheckPath: /api/health
+      - key: UVICORN_TIMEOUT
+        value: "300"
+      
+    healthCheckPath: /health
     autoDeploy: true
-    disk:
-      name: uvmgen-data
-      mountPath: /var/data
-      sizeGB: 1
+    
+    # Optional: Persistent disk for generated files (free tier: 1GB max)
+    # disk:
+    #   name: uvmgen-output
+    #   mountPath: /opt/render/project/src/output
+    #   sizeGB: 1
+
+# Optional: If you want to split into 2 separate services
+# Frontend as static site:
+# staticSites:
+#   - name: uvm-tb-generator-ui
+#     buildCommand: cd frontend && npm install && npm run build
+#     publishDir: frontend/dist
+#     envVars:
+#       - key: VITE_API_URL
+#         value: https://uvm-tb-generator.onrender.com
