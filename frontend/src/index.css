@@ -2,168 +2,57 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
-
-@layer base {
-  body {
-    @apply font-sans text-sm leading-relaxed text-slate-700;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-  h1 { @apply text-2xl font-bold tracking-tight text-slate-900; }
-  h2 { @apply text-lg font-semibold text-slate-900; }
-  h3 { @apply text-base font-semibold text-slate-900; }
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-@layer utilities {
-  .text-shadow-sm {
-    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
-  }
-  .animate-in {
-    animation: animateIn 0.2s ease-out;
-  }
-  .fade-in {
-    animation: fadeIn 0.3s ease-out;
-  }
-  .slide-in-from-top-2 {
-    animation: slideInFromTop2 0.2s ease-out;
-  }
-  .glass {
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-  }
+* {
+  box-sizing: border-box;
 }
 
-@keyframes animateIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #0d1117;
+  color: #f0f6fc;
+  min-height: 100vh;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+code, pre, .mono {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 }
 
-@keyframes slideInFromTop2 {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
+/* Custom scrollbar - EDA tool style */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-@layer components {
-  .card {
-    @apply bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden;
-  }
-  .card-header {
-    @apply px-5 py-4 border-b border-slate-100 flex items-center gap-2;
-  }
-  .card-body {
-    @apply p-5;
-  }
-  .btn-primary {
-    @apply inline-flex items-center gap-2 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white
-           shadow-sm hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
-           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  .btn-secondary {
-    @apply inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium
-           text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2
-           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  .btn-ghost {
-    @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600
-           hover:text-slate-800 hover:bg-slate-50 focus:outline-none
-           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  .input-field {
-    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
-           placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20
-           transition-colors disabled:bg-slate-50 disabled:cursor-not-allowed;
-  }
-  .input-field:focus {
-    @apply outline-none;
-  }
-  .select-field {
-    @apply block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
-           focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-colors
-           disabled:bg-slate-50 disabled:cursor-not-allowed;
-  }
-  .select-field:focus {
-    @apply outline-none;
-  }
-  .badge {
-    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
-  }
-  .badge-success { @apply badge bg-emerald-50 text-emerald-700 border border-emerald-200; }
-  .badge-error   { @apply badge bg-red-50 text-red-700 border border-red-200; }
-  .badge-warning { @apply badge bg-amber-50 text-amber-700 border border-amber-200; }
-  .badge-info    { @apply badge bg-sky-50 text-sky-700 border border-sky-200; }
-  .badge-neutral { @apply badge bg-slate-100 text-slate-600 border border-slate-200; }
-
-  .log-entry { @apply font-mono text-xs leading-6; }
-  .log-info    { @apply log-entry text-slate-600; }
-  .log-error   { @apply log-entry text-red-600; }
-  .log-success { @apply log-entry text-emerald-600; }
-  .log-warn    { @apply log-entry text-amber-600; }
-
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 3px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
-  }
-
-  .divider-x {
-    @apply h-px bg-slate-200 my-4;
-  }
-  .divider-y {
-    @apply w-px bg-slate-200 mx-4;
-  }
-
-  .status-dot {
-    @apply w-2 h-2 rounded-full inline-block;
-  }
-  .status-dot-pulse {
-    @apply w-2 h-2 rounded-full inline-block animate-pulse;
-  }
-
-  .hero-gradient {
-    background: linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #1e1b4b 100%);
-  }
-
-  .brand-gradient {
-    background: linear-gradient(135deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%);
-  }
-
-  .shadow-brand-sm {
-    box-shadow: 0 2px 8px -1px rgba(79, 70, 229, 0.2), 0 1px 3px -2px rgba(79, 70, 229, 0.1);
-  }
-
-  .ring-brand-focus {
-    @apply focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2;
-  }
-
-  .hover-lift {
-    @apply transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-md;
-  }
+::-webkit-scrollbar-track {
+  background: #161b22;
 }
 
-/* Syntax highlighting colors */
-.token-keyword { color: #c678dd; }
-.token-string { color: #98c379; }
-.token-number { color: #d19a66; }
-.token-comment { color: #5c6370; font-style: italic; }
-.token-function { color: #61afef; }
-.token-operator { color: #56b6c2; }
-.token-class { color: #e5c07b; }
-.token-variable { color: #e06c75; }
-.token-tag { color: #e06c75; }
-.token-attr { color: #d19a66; }
-.token-punctuation { color: #abb2bf; }
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* Selection */
+::selection {
+  background: #1f6feb;
+  color: white;
+}
+
+/* Focus outline */
+:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
+}
