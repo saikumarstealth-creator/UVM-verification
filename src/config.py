@@ -86,14 +86,29 @@ class AutoTrainConfig(BaseModel):
 
 
 class MLConfig(BaseModel):
-    """Configuration for ML-augmented generation."""
+    """Configuration for AI/ML-augmented generation with actual learning capabilities."""
     enabled: bool = False
-    model_type: str = Field(default="template", pattern=r"^(template|ml|hybrid)$")
+    model_type: str = Field(default="template", pattern=r"^(template|ml|hybrid|llm|semantic)$")
     similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     auto_learn: bool = True
     index_path: Optional[str] = None
     top_k_retrieval: int = Field(default=3, ge=1, le=10)
     fallback_to_templates: bool = True
+
+    use_llm: bool = True
+    llm_model_name: Optional[str] = None
+    llm_max_tokens: int = Field(default=1024, ge=64, le=4096)
+    llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
+    llm_use_few_shot: bool = True
+
+    use_semantic_encoder: bool = True
+    semantic_model_name: str = "microsoft/codebert-base"
+
+    use_learning: bool = True
+    learning_storage_path: Optional[str] = None
+    learning_rate: float = Field(default=0.1, ge=0.001, le=1.0)
+    reinforcement_discount: float = Field(default=0.9, ge=0.0, le=1.0)
+    exploration_epsilon: float = Field(default=0.05, ge=0.0, le=0.5)
 
 
 class PipelineConfig(BaseModel):

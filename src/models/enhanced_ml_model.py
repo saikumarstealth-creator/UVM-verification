@@ -1,18 +1,20 @@
 """
-Industry-level enhanced ML generation model with:
-- Multi-strategy retrieval
+Industry-level AI/ML generation model with:
+- LLM-based code generation (CodeGen, CodeT5, StarCoder)
+- Semantic code embeddings for intelligent similarity
+- Reinforcement learning from validation feedback
+- Multi-strategy retrieval (protocol-first, semantic, text)
 - Spec-aware adaptation
 - Code validation
 - Multi-level fallback
 - Comprehensive reporting
 
-This model ensures output quality through:
-1. Protocol-first retrieval
-2. Coverage-aware selection
-3. Full adaptation with signal/register mapping
-4. Pre-validation before writing
-5. Automatic fallback to templates if issues found
-6. Detailed generation reports
+This model uses actual AI/ML:
+1. Neural semantic embeddings (CodeBERT) for similarity
+2. LLM generation (CodeGen, CodeT5) for actual code generation
+3. Reinforcement learning that learns from validation feedback
+4. Pattern learning from success/failure patterns
+5. Auto-improving generation strategies
 """
 
 from __future__ import annotations
@@ -43,6 +45,16 @@ from src.models.spec_adapter import (
 from src.models.similarity_index import SimilarityIndex, get_global_index
 from src.models.template_model import TemplateModel
 
+try:
+    from src.models.semantic_encoder import SemanticCodeEncoder, SemanticEmbedding
+    from src.models.llm_generator import LLMCodeGenerator, LLMGenerationResult
+    from src.models.learning_module import LearningModule, ValidationFeedback
+
+    ML_MODULES_AVAILABLE = True
+except ImportError as e:
+    logger.warning("Advanced ML modules not available: %s", e)
+    ML_MODULES_AVAILABLE = False
+
 logger = logging.getLogger("uvmgen")
 
 
@@ -50,9 +62,12 @@ class GenerationSource(Enum):
     RETRIEVAL_HIGH_CONF = "retrieval_high_confidence"
     RETRIEVAL_MEDIUM_CONF = "retrieval_medium_confidence"
     RETRIEVAL_LOW_CONF = "retrieval_low_confidence"
+    LLM_GENERATION = "llm_generation"
+    LLM_FALLBACK = "llm_fallback"
     TEMPLATE_FALLBACK = "template_fallback"
     BLENDED = "blended"
     HYBRID = "hybrid"
+    LEARNING_IMPROVED = "learning_improved"
 
 
 @dataclass
@@ -117,15 +132,21 @@ class RetrievalCandidate:
 
 class EnhancedMLGenerationModel(GenerationModel):
     """
-    Industry-level enhanced ML generation model.
+    Industry-level AI/ML generation model with actual learning capabilities.
 
-    Key features:
-    1. Multi-strategy retrieval (protocol-first, then similarity)
-    2. Spec-aware adaptation with signal/register mapping
-    3. Pre-validation before output
-    4. Multi-level fallback strategies
-    5. Comprehensive reporting and audit trail
-    6. Coverage-aware candidate selection
+    Key AI/ML features:
+    1. LLM-based code generation (CodeGen, CodeT5, StarCoder)
+    2. Semantic code embeddings (CodeBERT) for intelligent similarity
+    3. Reinforcement learning from validation feedback
+    4. Pattern learning from success/failure patterns
+    5. Multi-strategy retrieval with intelligent selection
+    6. Auto-improving generation strategies
+
+    Traditional features:
+    - Spec-aware adaptation with signal/register mapping
+    - Pre-validation before output
+    - Multi-level fallback strategies
+    - Comprehensive reporting and audit trail
     """
 
     def __init__(
@@ -135,6 +156,11 @@ class EnhancedMLGenerationModel(GenerationModel):
         index: Optional[SimilarityIndex] = None,
         templates_dir: Optional[str] = None,
         strict_validation: bool = True,
+        use_llm: bool = True,
+        use_semantic_encoder: bool = True,
+        use_learning: bool = True,
+        llm_model_name: Optional[str] = None,
+        learning_storage_path: Optional[str] = None,
     ):
         super().__init__(name)
         self.config = config or MLModelConfig()
@@ -144,6 +170,27 @@ class EnhancedMLGenerationModel(GenerationModel):
         self._strict_validation = strict_validation
         self._metadata: Dict[str, Any] = {}
         self._last_result: Optional[GenerationResult] = None
+        self._last_retrieval: Optional[Any] = None
+
+        self._use_llm = use_llm and ML_MODULES_AVAILABLE
+        self._use_semantic = use_semantic_encoder and ML_MODULES_AVAILABLE
+        self._use_learning = use_learning and ML_MODULES_AVAILABLE
+
+        self._llm_generator: Optional[LLMCodeGenerator] = None
+        self._semantic_encoder: Optional[SemanticCodeEncoder] = None
+        self._learning_module: Optional[LearningModule] = None
+
+        if self._use_llm:
+            self._llm_generator = LLMCodeGenerator(model_name=llm_model_name)
+            logger.info("LLM generator enabled: %s", llm_model_name or "default")
+
+        if self._use_semantic:
+            self._semantic_encoder = SemanticCodeEncoder()
+            logger.info("Semantic encoder enabled")
+
+        if self._use_learning:
+            self._learning_module = LearningModule(storage_path=learning_storage_path)
+            logger.info("Learning module enabled")
 
     @property
     def index(self) -> SimilarityIndex:
@@ -162,6 +209,23 @@ class EnhancedMLGenerationModel(GenerationModel):
                 templates_dir=self._templates_dir,
             )
         return self._template_model
+
+    @property
+    def last_retrieval(self) -> Optional[Any]:
+        """Get information about the last retrieval operation."""
+        from src.models.ml_generation_model import RetrievalInfo
+
+        if self._last_retrieval is not None:
+            return self._last_retrieval
+
+        if self._last_result is not None:
+            return RetrievalInfo(
+                used_similarity=(self._last_result.similar_specs_found > 0),
+                similar_specs=self._last_result.similar_specs_found,
+                best_score=self._last_result.best_match_score,
+            )
+
+        return RetrievalInfo(used_similarity=False, similar_specs=0, best_score=0.0)
 
     def train(self, specs: List[DesignSpec]) -> Dict[str, Any]:
         """Train the model by adding specs to the similarity index."""
@@ -226,20 +290,21 @@ class EnhancedMLGenerationModel(GenerationModel):
         extra_seqs: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
-        Generate testbench with full validation and fallback.
+        Generate testbench with AI/ML-powered generation and fallback.
 
-        Workflow:
-        1. Extract rich features
-        2. Search for similar specs
-        3. For each candidate:
-           - Create adaptation plan
-           - Pre-validate
-           - Score
-        4. Select best candidate or fallback
-        5. Adapt best candidate
-        6. Validate output
-        7. If validation fails, fallback to templates
-        8. If auto_learn, add to index
+        AI/ML Workflow:
+        1. Use learning module to select best generation strategy
+        2. Try semantic similarity search (if semantic encoder available)
+        3. Try LLM-based code generation (if LLM available)
+        4. Try traditional retrieval-based generation
+        5. Fallback to templates
+        6. Record validation feedback to learning module
+        7. Auto-learn from successful generation
+
+        Traditional features:
+        - Spec-aware adaptation
+        - Pre-validation before writing
+        - Multi-level fallback
         """
         if not self._is_trained:
             self.train([])
@@ -249,11 +314,40 @@ class EnhancedMLGenerationModel(GenerationModel):
         query_fv = extractor.extract(spec)
         query_dict = self._spec_to_dict(spec)
 
+        protocol = query_dict.get("protocol", "unknown")
+
+        available_strategies = ["retrieval"]
+        if self._use_llm and self._llm_generator:
+            available_strategies.append("llm")
+        available_strategies.append("template")
+
+        selected_strategy = "retrieval"
+        strategy_confidence = 0.5
+
+        if self._use_learning and self._learning_module:
+            selected_strategy, strategy_confidence = (
+                self._learning_module.select_best_generation_strategy(
+                    spec_dict=query_dict,
+                    file_type="testbench",
+                    available_sources=available_strategies,
+                )
+            )
+            logger.info(
+                "Learning module selected strategy: '%s' (confidence: %.2f)",
+                selected_strategy,
+                strategy_confidence,
+            )
+
         similar = self.index.search(
             query_fv,
             top_k=self.config.top_k_retrieval,
             min_similarity=0.3,
         )
+
+        if self._use_semantic and self._semantic_encoder and similar:
+            similar = self._enhance_with_semantic_similarity(
+                similar, query_dict
+            )
 
         logger.info(
             "Enhanced ML generation: found %d similar specs, best score: %.3f",
@@ -262,10 +356,18 @@ class EnhancedMLGenerationModel(GenerationModel):
 
         result: Optional[GenerationResult] = None
 
-        if similar and similar[0].similarity >= self.config.similarity_threshold:
+        if selected_strategy == "llm" and self._use_llm and self._llm_generator:
+            logger.info("Trying LLM-based generation (selected by learning module)")
+            result = self._try_llm_generation(query_dict, spec, cfg)
+
+        if result is None and similar and similar[0].similarity >= self.config.similarity_threshold:
             result = self._try_retrieval_generation(
                 similar, query_fv, query_dict, spec, cfg
             )
+
+        if result is None and self._use_llm and self._llm_generator:
+            logger.info("Trying LLM-based generation as fallback")
+            result = self._try_llm_generation(query_dict, spec, cfg)
 
         if (
             result is None
@@ -273,16 +375,25 @@ class EnhancedMLGenerationModel(GenerationModel):
             and self.config.fallback_to_templates
         ):
             if result is None:
-                logger.info("No valid retrieval candidate, falling back to templates")
+                logger.info("No valid ML/LLM candidate, falling back to templates")
             else:
                 logger.warning(
-                    "Retrieval-based generation failed validation (errors: %d), falling back to templates",
+                    "LLM/retrieval generation failed validation (errors: %d), falling back to templates",
                     result.validation_report.total_errors if result.validation_report else 0
                 )
             result = self._generate_with_fallback(spec, cfg, extra_seqs, result)
 
         if result is None:
             raise RuntimeError("All generation strategies failed")
+
+        if self._use_learning and self._learning_module and result.validation_report:
+            logger.info("Recording validation feedback to learning module")
+            self._learning_module.record_feedback(
+                design_name=spec.design_name,
+                generation_source=result.source.value,
+                spec_dict=query_dict,
+                validation_results=result.validation_report.to_dict(),
+            )
 
         if self.config.auto_learn and result.passed:
             self._learn_from_result(result, query_fv, query_dict)
@@ -291,6 +402,186 @@ class EnhancedMLGenerationModel(GenerationModel):
         self._log_result_summary(result)
 
         return result.generated_files
+
+    def _enhance_with_semantic_similarity(
+        self,
+        similar: List[Any],
+        query_dict: Dict[str, Any],
+    ) -> List[Any]:
+        """Enhance similarity scores using semantic code embeddings."""
+        if not self._semantic_encoder or not self._semantic_encoder.is_available():
+            return similar
+
+        try:
+            query_text = self._spec_dict_to_text(query_dict)
+            query_emb = self._semantic_encoder.encode(
+                text=query_text,
+                embedding_type="spec",
+                metadata=query_dict,
+            )
+
+            for item in similar:
+                spec_text = self._spec_dict_to_text(item.spec_dict)
+                cand_emb = self._semantic_encoder.encode(
+                    text=spec_text,
+                    embedding_type="spec",
+                    metadata=item.spec_dict,
+                )
+
+                semantic_sim = self._semantic_encoder.similarity(query_emb, cand_emb)
+
+                original_sim = item.similarity
+                item.similarity = (original_sim * 0.6) + (semantic_sim * 0.4)
+
+                logger.debug(
+                    "Semantic enhancement: original=%.3f, semantic=%.3f, combined=%.3f",
+                    original_sim, semantic_sim, item.similarity
+                )
+
+            similar = sorted(similar, key=lambda x: x.similarity, reverse=True)
+
+        except Exception as e:
+            logger.warning("Semantic similarity enhancement failed: %s", e)
+
+        return similar
+
+    def _spec_dict_to_text(self, spec_dict: Dict[str, Any]) -> str:
+        """Convert spec dict to text for semantic encoding."""
+        parts = []
+        parts.append(f"design: {spec_dict.get('design_name', 'unknown')}")
+        parts.append(f"protocol: {spec_dict.get('protocol', 'unknown')}")
+
+        signals = spec_dict.get("signals", [])
+        if signals:
+            signal_names = [s.get("name", "") for s in signals if isinstance(s, dict)]
+            parts.append(f"signals: {', '.join(signal_names[:20])}")
+
+        registers = spec_dict.get("registers", [])
+        if registers:
+            reg_names = [r.get("name", "") for r in registers if isinstance(r, dict)]
+            parts.append(f"registers: {', '.join(reg_names[:10])}")
+
+        features = spec_dict.get("features", [])
+        if features:
+            parts.append(f"features: {', '.join(features[:10])}")
+
+        return " | ".join(parts)
+
+    def _try_llm_generation(
+        self,
+        query_dict: Dict[str, Any],
+        spec: DesignSpec,
+        cfg: PipelineConfig,
+    ) -> Optional[GenerationResult]:
+        """
+        Try LLM-based code generation.
+
+        This uses actual AI/ML:
+        1. LLM (CodeGen, CodeT5, etc.) generates SystemVerilog code
+        2. Uses few-shot examples for UVM patterns
+        3. Validates generated code
+        4. Falls back to templates if needed
+        """
+        if not self._llm_generator:
+            return None
+
+        design_name = spec.design_name.lower()
+
+        file_types_to_generate = [
+            "driver",
+            "monitor",
+            "agent",
+        ]
+
+        generated_files: Dict[str, str] = {}
+        llm_results: Dict[str, LLMGenerationResult] = {}
+        all_warnings: List[str] = []
+        avg_confidence = 0.0
+
+        for file_type in file_types_to_generate:
+            try:
+                llm_result = self._llm_generator.generate(
+                    spec_dict=query_dict,
+                    file_type=file_type,
+                    use_few_shot=True,
+                    max_tokens=1024,
+                    temperature=0.2,
+                )
+
+                llm_results[file_type] = llm_result
+                avg_confidence += llm_result.confidence
+                all_warnings.extend(llm_result.warnings)
+
+                file_name = f"{design_name}_{file_type}.sv"
+                generated_files[file_name] = llm_result.generated_code
+
+                logger.info(
+                    "LLM generated %s (confidence: %.2f, tokens: %d)",
+                    file_name,
+                    llm_result.confidence,
+                    llm_result.tokens_generated,
+                )
+
+            except Exception as e:
+                logger.warning("LLM generation failed for %s: %s", file_type, e)
+                all_warnings.append(f"LLM generation failed for {file_type}: {e}")
+
+        if not generated_files:
+            logger.warning("LLM generated no files, falling back")
+            return None
+
+        if llm_results:
+            avg_confidence /= len(llm_results)
+
+        try:
+            template_files = self.template_model.predict(spec, cfg)
+            template_contents: Dict[str, str] = {}
+            for fname, fpath in template_files.items():
+                try:
+                    template_contents[fname] = Path(fpath).read_text(encoding="utf-8")
+                except Exception:
+                    pass
+
+            for fname, content in template_contents.items():
+                if fname not in generated_files:
+                    generated_files[fname] = content
+
+        except Exception as e:
+            logger.warning("Could not fill missing files from templates: %s", e)
+
+        validator = CodeValidator()
+        val_report = validator.validate_files(generated_files, query_dict)
+
+        total_errors = val_report.total_errors
+        total_warnings = val_report.total_warnings + len(all_warnings)
+
+        passed = val_report.overall_passed
+        if self._strict_validation:
+            passed = passed and (total_errors == 0)
+
+        generation_source = GenerationSource.LLM_GENERATION
+        if avg_confidence < 0.5:
+            generation_source = GenerationSource.LLM_FALLBACK
+
+        result = GenerationResult(
+            design_name=spec.design_name,
+            source=generation_source,
+            passed=passed,
+            generated_files=generated_files,
+            validation_report=val_report,
+            adaptation_plan=None,
+            similar_specs_found=0,
+            best_match_score=avg_confidence,
+            files_from_retrieval=[],
+            files_from_template=list(template_contents.keys()) if "template_contents" in dir() else [],
+            warnings=all_warnings + [
+                f"LLM confidence: {avg_confidence:.2f}",
+                f"LLM warnings: {len(all_warnings)}",
+            ],
+            errors=[f"LLM errors: {total_errors}"] if total_errors > 0 else [],
+        )
+
+        return result
 
     def _try_retrieval_generation(
         self,

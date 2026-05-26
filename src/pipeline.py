@@ -55,7 +55,7 @@ class TBPipeline:
         model_type = ml_cfg.model_type
         self.logger.info("ML generation enabled, model_type=%s", model_type)
 
-        if model_type in ("ml", "hybrid"):
+        if model_type in ("ml", "hybrid", "llm", "semantic"):
             ml_model_config = MLModelConfig(
                 similarity_threshold=ml_cfg.similarity_threshold,
                 auto_learn=ml_cfg.auto_learn,
@@ -68,8 +68,19 @@ class TBPipeline:
                 config=ml_model_config,
                 templates_dir=self.cfg.generation.templates_dir,
                 strict_validation=True,
+                use_llm=ml_cfg.use_llm,
+                use_semantic_encoder=ml_cfg.use_semantic_encoder,
+                use_learning=ml_cfg.use_learning,
+                llm_model_name=ml_cfg.llm_model_name,
+                learning_storage_path=ml_cfg.learning_storage_path,
             )
             self.logger.info("Created EnhancedMLGenerationModel with index size: %d", len(model.index))
+
+            if model_type == "llm":
+                self.logger.info("LLM mode: will prioritize LLM generation")
+            elif model_type == "semantic":
+                self.logger.info("Semantic mode: will use semantic embeddings for similarity")
+
             return model
 
         self.logger.info("Falling back to template model")
