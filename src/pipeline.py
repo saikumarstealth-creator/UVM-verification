@@ -13,6 +13,7 @@ from src.features.extractors import SpecFeatureExtractor
 from src.generation.engine import GenerationEngine
 from src.models.base_model import GenerationModel
 from src.models.enhanced_ml_model import EnhancedMLGenerationModel
+from src.models.enhanced_ml_model_v2 import EnhancedMLGenerationModelV2
 from src.models.ml_generation_model import MLGenerationModel, MLModelConfig
 from src.models.registry import ModelRegistry
 from src.models.template_model import TemplateModel
@@ -55,7 +56,7 @@ class TBPipeline:
         model_type = ml_cfg.model_type
         self.logger.info("ML generation enabled, model_type=%s", model_type)
 
-        if model_type in ("ml", "hybrid", "llm", "semantic"):
+        if model_type in ("ml", "hybrid", "llm", "semantic", "v2"):
             ml_model_config = MLModelConfig(
                 similarity_threshold=ml_cfg.similarity_threshold,
                 auto_learn=ml_cfg.auto_learn,
@@ -63,18 +64,34 @@ class TBPipeline:
                 top_k_retrieval=ml_cfg.top_k_retrieval,
                 fallback_to_templates=ml_cfg.fallback_to_templates,
             )
-            model = EnhancedMLGenerationModel(
-                name="enhanced_ml_model",
-                config=ml_model_config,
-                templates_dir=self.cfg.generation.templates_dir,
-                strict_validation=True,
-                use_llm=ml_cfg.use_llm,
-                use_semantic_encoder=ml_cfg.use_semantic_encoder,
-                use_learning=ml_cfg.use_learning,
-                llm_model_name=ml_cfg.llm_model_name,
-                learning_storage_path=ml_cfg.learning_storage_path,
-            )
-            self.logger.info("Created EnhancedMLGenerationModel with index size: %d", len(model.index))
+
+            if model_type == "v2":
+                model = EnhancedMLGenerationModelV2(
+                    name="enhanced_ml_model_v2",
+                    config=ml_model_config,
+                    templates_dir=self.cfg.generation.templates_dir,
+                    strict_validation=True,
+                    use_llm=ml_cfg.use_llm,
+                    use_semantic_encoder=ml_cfg.use_semantic_encoder,
+                    use_learning=ml_cfg.use_learning,
+                    llm_model_name=ml_cfg.llm_model_name,
+                    learning_storage_path=ml_cfg.learning_storage_path,
+                    exploration_strategy=getattr(ml_cfg, 'exploration_strategy', 'ucb'),
+                )
+                self.logger.info("Created EnhancedMLGenerationModelV2 with advanced RL and pattern learning")
+            else:
+                model = EnhancedMLGenerationModel(
+                    name="enhanced_ml_model",
+                    config=ml_model_config,
+                    templates_dir=self.cfg.generation.templates_dir,
+                    strict_validation=True,
+                    use_llm=ml_cfg.use_llm,
+                    use_semantic_encoder=ml_cfg.use_semantic_encoder,
+                    use_learning=ml_cfg.use_learning,
+                    llm_model_name=ml_cfg.llm_model_name,
+                    learning_storage_path=ml_cfg.learning_storage_path,
+                )
+                self.logger.info("Created EnhancedMLGenerationModel with index size: %d", len(model.index))
 
             if model_type == "llm":
                 self.logger.info("LLM mode: will prioritize LLM generation")

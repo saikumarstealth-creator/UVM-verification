@@ -16,9 +16,9 @@ module {{ spec.design_name }}_core (
   // Serial
   output logic       uart_tx,
   input  logic       uart_rx,
-  // Modem
-  input  logic       cts_n, dsr_n, ri_n, dcd_n,
-  output logic       rts_n, dtr_n, out1_n, out2_n,
+  // Modem (as per spec)
+  input  logic       cts_n,
+  output logic       rts_n,
   output logic       uart_intr
 );
   logic [7:0] reg_lcr, reg_scr;
@@ -33,8 +33,7 @@ module {{ spec.design_name }}_core (
         3'h7: reg_scr <= wb_data_i;
       endcase
   assign uart_tx = uart_rx;
-  assign rts_n = 0; assign dtr_n = 0;
-  assign out1_n = 1; assign out2_n = 1;
+  assign rts_n = 0;
   assign uart_intr = 0;
 {% elif p == "spi" %}
   // Wishbone bus

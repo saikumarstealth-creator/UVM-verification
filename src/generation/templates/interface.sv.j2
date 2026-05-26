@@ -10,16 +10,16 @@ interface {{ spec.design_name }}_intf (input logic clk, input logic rst_n);
   logic       wb_ack;
   // Serial
   logic       uart_tx, uart_rx;
-  // Modem
-  logic       cts_n, rts_n, dsr_n, dtr_n, ri_n, dcd_n, out1_n, out2_n;
+  // Modem (as per spec)
+  logic       cts_n, rts_n;
   // Interrupt
   logic       uart_intr;
 
   clocking drv_cb @(posedge clk);
     default input #1ns output #1ns;
     output wb_cyc, wb_stb, wb_we, wb_addr, wb_data_o;
-    output uart_rx, cts_n, dsr_n, ri_n, dcd_n;
-    input  wb_ack, wb_data_i, uart_tx, uart_intr, rts_n, dtr_n, out1_n, out2_n;
+    output uart_rx, cts_n;
+    input  wb_ack, wb_data_i, uart_tx, uart_intr, rts_n;
   endclocking
 
 {% elif p == "spi" %}

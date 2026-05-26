@@ -185,7 +185,7 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
 
     `uvm_info("UART_TX", $sformatf("Transmitting %0d bytes: %p", num_bytes, tx_data), UVM_MEDIUM)
 
-    foreach (tx_data.size()) begin
+    for (int i = 0; i < num_bytes; i++) begin
       wait_for_tx_empty();
 
       if (reg_model) begin
@@ -221,7 +221,7 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
   endtask
 endclass
 
-class uart_rx_seq extends {{ spec.design_name }}_seq_item);
+class uart_rx_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_rx_seq)
 
   logic [7:0] rx_data[$];

@@ -57,9 +57,6 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     `uvm_info("TEST", "Starting test...", UVM_LOW)
     vif.uart_rx <= 1'b1;
     vif.cts_n <= 1'b0;
-    vif.dsr_n <= 1'b0;
-    vif.ri_n <= 1'b1;
-    vif.dcd_n <= 1'b1;
     run_top_sequence();
     phase.drop_objection(this);
   endtask

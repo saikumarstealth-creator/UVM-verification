@@ -13,25 +13,19 @@ module testbench;
   {{ spec.design_name }}_core dut (
     .clk  (clk),
     .rst_n(rst_n),
-    {% if p == "uart" %}
-    .wb_cyc    (intf.wb_cyc),
-    .wb_stb    (intf.wb_stb),
-    .wb_we     (intf.wb_we),
-    .wb_addr   (intf.wb_addr),
-    .wb_data_i (intf.wb_data_o),
-    .wb_data_o (intf.wb_data_i),
-    .wb_ack    (intf.wb_ack),
-    .uart_tx   (intf.uart_tx),
-    .uart_rx   (intf.uart_rx),
-    .cts_n     (intf.cts_n),
-    .rts_n     (intf.rts_n),
-    .dsr_n     (intf.dsr_n),
-    .dtr_n     (intf.dtr_n),
-    .ri_n      (intf.ri_n),
-    .dcd_n     (intf.dcd_n),
-    .out1_n    (intf.out1_n),
-    .out2_n    (intf.out2_n),
-    .uart_intr (intf.uart_intr)
+     {% if p == "uart" %}
+     .wb_cyc    (intf.wb_cyc),
+     .wb_stb    (intf.wb_stb),
+     .wb_we     (intf.wb_we),
+     .wb_addr   (intf.wb_addr),
+     .wb_data_i (intf.wb_data_o),
+     .wb_data_o (intf.wb_data_i),
+     .wb_ack    (intf.wb_ack),
+     .uart_tx   (intf.uart_tx),
+     .uart_rx   (intf.uart_rx),
+     .cts_n     (intf.cts_n),
+     .rts_n     (intf.rts_n),
+     .uart_intr (intf.uart_intr)
     {% elif p == "spi" %}
     .wb_cyc    (intf.wb_cyc),
     .wb_stb    (intf.wb_stb),
