@@ -1,3 +1,13 @@
+---
+title: UVM Testbench Generator
+emoji: 🔬
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_file: src/api/server.py
+pinned: false
+---
+
 # UVM-verification
 
 Automated UVM testbench generation from YAML / `.core` specifications — with **protocol libraries**, **schema validation**, **coverage-driven auto-training**, and **CI/CD integration**.
