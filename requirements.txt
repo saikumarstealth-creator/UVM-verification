@@ -9,6 +9,9 @@ numpy>=1.21.0
 scikit-learn>=1.0.0
 scipy>=1.7.0
 
+# Optional: For Streamlit UI (deploy to share.streamlit.io)
+# streamlit>=1.30.0
+
 # Optional: Uncomment for full AI/ML capabilities (requires more resources)
 # torch>=2.0.0
 # transformers>=4.35.0
