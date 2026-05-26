@@ -1,6 +1,6 @@
 """
-Enhanced Streamlit UI for UVM Testbench Generator
-Shows advanced ML capabilities: V2 model, RL strategies, learning persistence, etc.
+Industry-Grade UVM Testbench Generator UI
+Professional, clean, industry-standard EDA tool interface
 """
 
 import streamlit as st
@@ -12,16 +12,47 @@ import io
 from pathlib import Path
 from datetime import datetime
 import json
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvmgen-streamlit")
 
 st.set_page_config(
-    page_title="UVM Testbench Generator - AI/ML Enhanced",
-    page_icon="🔬",
+    page_title="UVM Testbench Generator",
+    page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
+
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 1.8rem;
+        font-weight: 600;
+        color: #1f77b4;
+        margin-bottom: 0.5rem;
+    }
+    .sub-header {
+        font-size: 1.0rem;
+        color: #666;
+        margin-bottom: 1rem;
+    }
+    .status-passed {
+        color: #2ecc71;
+        font-weight: 600;
+    }
+    .stButton>button {
+        background-color: #1f77b4;
+        color: white;
+        border-radius: 4px;
+        border: none;
+        font-weight: 500;
+    }
+    .stButton>button:hover {
+        background-color: #1a5f8a;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 EXAMPLES = {
     "UART": """design_name: uart
@@ -209,17 +240,17 @@ registers:
 protocol: i2c"""
 }
 
-MODEL_TYPES = {
-    "template": "Template Only (Fast, No Learning)",
-    "hybrid": "Hybrid ML (Retrieval + Templates)",
-    "v2": "Advanced ML V2 (Recommended) - RL + Pattern Learning",
+MODEL_NAMES = {
+    "v2": "ML-Driven (Recommended)",
+    "hybrid": "Hybrid Retrieval",
+    "template": "Template Only"
 }
 
-EXPLORATION_STRATEGIES = {
-    "ucb": "UCB1 (Upper Confidence Bound) - Best for exploration/exploitation balance",
-    "epsilon_greedy": "Epsilon-Greedy - Simple, with decaying randomness",
-    "softmax": "Softmax (Boltzmann) - Probabilistic based on Q-values",
-    "thompson": "Thompson Sampling - Bayesian approach with Beta distributions",
+RL_STRATEGY_NAMES = {
+    "ucb": "Upper Confidence Bound",
+    "softmax": "Softmax (Boltzmann)",
+    "epsilon_greedy": "Epsilon-Greedy",
+    "thompson": "Thompson Sampling"
 }
 
 if 'last_result' not in st.session_state:
@@ -230,318 +261,211 @@ if 'log_output' not in st.session_state:
     st.session_state.log_output = []
 if 'ml_stats' not in st.session_state:
     st.session_state.ml_stats = None
-if 'learning_state_path' not in st.session_state:
-    st.session_state.learning_state_path = None
 
-st.title("🔬 UVM Testbench Generator")
-st.markdown("""
-**AI-Powered Semiconductor Verification Pipeline with Advanced ML**  
-Generate industry-grade UVM testbenches from YAML specifications. Now featuring:
-- **Advanced ML V2** with Reinforcement Learning (UCB, Softmax, Thompson Sampling)
-- **Experience Replay Buffer** (10,000 capacity)
-- **Eligibility Traces** for better credit assignment
-- **Pattern Mining** with N-grams and Association Rules
-- **Deep UVM Compliance Validation** (factory registration, phases, TLM)
-- **Continuous Learning** with state persistence
-""")
+st.markdown('<p class="main-header">UVM Testbench Generator</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">AI-Powered Semiconductor Verification Pipeline • Production-Grade UVM Framework</p>', unsafe_allow_html=True)
+st.markdown("---")
 
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    st.header("Configuration")
     
-    with st.expander("📋 Quick Setup", expanded=True):
+    with st.expander("Specification", expanded=True):
         selected_protocol = st.selectbox(
-            "Protocol Example",
+            "Protocol",
             list(EXAMPLES.keys()),
-            index=0,
-            help="Select a pre-built protocol specification"
+            index=0
         )
         
-        default_name = selected_protocol.lower() + "_controller"
         design_name = st.text_input(
             "Design Name",
-            value=default_name,
-            help="Name for your generated IP"
+            value=f"{selected_protocol.lower()}_controller"
         )
 
-    st.divider()
+    st.markdown("---")
     
-    with st.expander("🤖 ML Configuration", expanded=True):
-        use_ml = st.checkbox(
-            "Enable AI/ML Features",
-            value=True,
-            help="Use machine learning for intelligent generation"
+    with st.expander("Generation Mode", expanded=True):
+        model_mode = st.radio(
+            "Engine",
+            list(MODEL_NAMES.keys()),
+            index=0,
+            format_func=lambda k: MODEL_NAMES[k]
         )
         
-        if use_ml:
-            model_type = st.selectbox(
-                "ML Model Version",
-                list(MODEL_TYPES.keys()),
-                index=2,
-                format_func=lambda k: MODEL_TYPES[k],
-                help="V2 is recommended for advanced learning"
-            )
-            
-            if model_type == "v2":
-                exploration_strategy = st.selectbox(
-                    "RL Exploration Strategy",
-                    list(EXPLORATION_STRATEGIES.keys()),
-                    index=0,
-                    format_func=lambda k: EXPLORATION_STRATEGIES[k].split(" - ")[0],
-                    help="How the RL agent balances exploration and exploitation"
-                )
-                
-                st.caption(EXPLORATION_STRATEGIES[exploration_strategy])
-                
-                persist_learning = st.checkbox(
-                    "Persist Learning State",
-                    value=True,
-                    help="Save and load learned patterns between sessions"
-                )
-                
-                if persist_learning:
-                    st.session_state.learning_state_path = os.path.join(
-                        tempfile.gettempdir(), 
-                        "uvmgen_learning_state.json"
-                    )
-                    st.caption(f"State will be saved to: temporary directory")
-            
-            strict_validation = st.checkbox(
-                "Strict UVM Compliance",
-                value=True,
-                help="Enforce deep UVM validation (factory, phases, TLM)"
-            )
-            
-            auto_learn = st.checkbox(
-                "Continuous Learning",
-                value=True,
-                help="Learn from each generation to improve future results"
-            )
+        if model_mode == "v2":
+            st.caption("Advanced RL with pattern recognition")
+        elif model_mode == "hybrid":
+            st.caption("Similarity search + templates")
         else:
-            model_type = "template"
-            exploration_strategy = "ucb"
-            strict_validation = False
-            auto_learn = False
+            st.caption("Fast deterministic generation")
 
-    st.divider()
+    if model_mode == "v2":
+        st.markdown("---")
+        with st.expander("RL Configuration"):
+            rl_strategy = st.selectbox(
+                "Exploration Strategy",
+                list(RL_STRATEGY_NAMES.keys()),
+                index=0,
+                format_func=lambda k: RL_STRATEGY_NAMES[k]
+            )
+            
+            enable_learning = st.checkbox("Enable Learning", value=True)
+            strict_uvm = st.checkbox("Strict UVM Compliance", value=True)
+
+    st.markdown("---")
     
-    with st.expander("⚡ Generation Options"):
-        auto_train = st.checkbox(
-            "Coverage-Driven Auto-Training",
-            value=False,
-            help="Iteratively improve testbench based on coverage analysis"
-        )
-        
+    with st.expander("Execution"):
         max_iterations = st.slider(
-            "Max Iterations",
+            "Iterations",
             min_value=1,
             max_value=10,
-            value=1,
-            help="Maximum auto-training iterations"
+            value=1
         )
-        
-        st.caption("Auto-training requires a simulator (Icarus Verilog, VCS, or Questa)")
 
-    st.divider()
+    st.markdown("---")
     
-    with st.expander("ℹ️ About"):
-        st.info("💡 **UVM = Universal Verification Methodology**")
-        st.info("🔬 **ML V2 = Reinforcement Learning + Pattern Mining**")
-        st.markdown("---")
-        st.caption("Developed by **Sai Kumar Taraka**")
-        st.caption("Promotion-Ready Advanced ML System")
+    st.header("Actions")
+    
+    generate_btn = st.button(
+        "Run Generation",
+        type="primary",
+        use_container_width=True
+    )
+    
+    st.markdown("---")
+    
+    with st.expander("About"):
+        st.markdown("""
+        **Version**: 2.0.0  
+        **Author**: Sai Kumar Taraka  
+        **UVM Compliance**: IEEE 1800.2-2020  
+        **Status**: Production Ready
+        """)
 
-tab_spec, tab_results, tab_ml_insights = st.tabs([
-    "📝 Specification", 
-    "📊 Results & Files",
-    "🤖 ML Insights"
+tab_spec, tab_exec, tab_results, tab_analysis = st.tabs([
+    "Specification", 
+    "Execution", 
+    "Results", 
+    "Analysis"
 ])
 
 with tab_spec:
-    col1, col2 = st.columns([1, 1])
+    col_edit, col_summary = st.columns([2, 1])
     
-    with col1:
-        st.subheader("✏️ YAML Specification Editor")
+    with col_edit:
+        st.subheader("YAML Specification")
         spec_text = st.text_area(
-            "Edit your specification",
+            "Editor",
             value=EXAMPLES[selected_protocol],
             height=450,
-            key="spec_editor",
-            help="Define your interfaces, signals, registers, and protocol"
+            label_visibility="collapsed"
         )
         
-        st.caption(f"Protocol: {selected_protocol} | Model: {model_type.upper()} | Strategy: {exploration_strategy.upper()}")
+        st.caption(f"Protocol: {selected_protocol} | Engine: {model_mode.upper()}")
     
-    with col2:
-        st.subheader("📋 Specification Summary")
+    with col_summary:
+        st.subheader("Summary")
         
         import yaml
         try:
             spec_dict = yaml.safe_load(spec_text)
             
-            st.metric("Design Name", spec_dict.get('design_name', 'unknown'))
-            st.metric("Protocol", spec_dict.get('protocol', 'unknown').upper())
+            st.metric("Design", spec_dict.get('design_name', 'N/A'))
+            st.metric("Protocol", spec_dict.get('protocol', 'N/A').upper())
             
-            col_a, col_b = st.columns(2)
-            with col_a:
-                interfaces = spec_dict.get('interfaces', [])
-                st.metric("Interfaces", len(interfaces))
-                total_signals = sum(len(i.get('signals', [])) for i in interfaces)
-                st.metric("Total Signals", total_signals)
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Interfaces", len(spec_dict.get('interfaces', [])))
+                total_sigs = sum(len(i.get('signals', [])) for i in spec_dict.get('interfaces', []))
+                st.metric("Signals", total_sigs)
             
-            with col_b:
-                registers = spec_dict.get('registers', [])
-                st.metric("Registers", len(registers))
-                total_fields = sum(len(r.get('fields', [])) for r in registers)
-                st.metric("Register Fields", total_fields)
+            with col2:
+                st.metric("Registers", len(spec_dict.get('registers', [])))
+                total_fields = sum(len(r.get('fields', [])) for r in spec_dict.get('registers', []))
+                st.metric("Fields", total_fields)
             
-            if interfaces:
-                st.subheader("Interface Signals")
-                for iface in interfaces:
-                    with st.expander(f"🔌 {iface.get('name', 'unknown')}"):
-                        signals = iface.get('signals', [])
-                        for sig in signals:
-                            name = sig.get('name', 'unknown')
-                            direction = sig.get('direction', 'input')
-                            width = sig.get('width', 1)
-                            st.text(f"  • {name} ({direction}, {width}bit)")
+            st.subheader("Interfaces")
+            for iface in spec_dict.get('interfaces', []):
+                with st.expander(f"{iface.get('name')}"):
+                    for sig in iface.get('signals', []):
+                        name = sig.get('name')
+                        direction = sig.get('direction')
+                        width = sig.get('width', 1)
+                        st.text(f"{name} ({direction}, {width}b)")
             
-            if registers:
-                st.subheader("Register Map")
-                for reg in registers:
-                    with st.expander(f"📋 {reg.get('name', 'unknown')} @ {reg.get('address', '0x0')}"):
-                        st.text(f"  Description: {reg.get('description', 'None')}")
-                        fields = reg.get('fields', [])
-                        if fields:
-                            st.text(f"  Fields:")
-                            for field in fields:
-                                st.text(f"    • {field.get('name', 'unknown')} [{field.get('bits', '0')}]")
+            st.subheader("Registers")
+            for reg in spec_dict.get('registers', []):
+                st.text(f"{reg.get('name')} @ {reg.get('address')}")
                         
         except Exception as e:
-            st.error(f"Invalid YAML: {e}")
+            st.error(f"Parse Error: {e}")
+
+with tab_exec:
+    st.subheader("Execution")
     
-    st.divider()
+    status_placeholder = st.empty()
     
-    generate_btn = st.button(
-        "🚀 Generate UVM Testbench",
-        type="primary",
-        use_container_width=True,
-        help=f"Generate using {model_type.upper()} model"
-    )
+    with st.expander("Run Log", expanded=True):
+        log_placeholder = st.empty()
 
 with tab_results:
-    status_placeholder = st.empty()
+    st.subheader("Results")
     
     metrics_placeholder = st.empty()
     
-    with st.expander("📋 Log Output", expanded=True):
-        log_placeholder = st.empty()
+    with st.expander("Generated Files", expanded=True):
+        file_view_placeholder = st.empty()
     
-    files_placeholder = st.empty()
+    with st.expander("Download"):
+        dl_placeholder = st.empty()
 
-with tab_ml_insights:
-    st.header("🤖 Advanced ML Insights")
+with tab_analysis:
+    st.subheader("ML Analysis")
     
     if st.session_state.ml_stats:
         stats = st.session_state.ml_stats
         
-        col1, col2 = st.columns(2)
+        col_metrics, col_details = st.columns([1, 1])
         
-        with col1:
-            st.subheader("📊 Learning Statistics")
-            total_gen = stats.get('total_generations', 0)
-            st.metric("Total Generations", total_gen)
-            
-            if 'recent_performance' in stats:
-                perf = stats['recent_performance']
-                st.metric("Recent Pass Rate", f"{perf.get('pass_rate', 0)*100:.1f}%")
-                st.metric("Avg Score", f"{perf.get('avg_score', 0):.3f}")
+        with col_metrics:
+            st.markdown("**Learning Metrics**")
+            st.metric("Generations", stats.get('total_generations', 0))
             
             if 'rl_learner' in stats:
-                rl_stats = stats['rl_learner']
-                st.subheader("🎮 Reinforcement Learning")
-                st.metric("Episode Count", rl_stats.get('episode_count', 0))
-                st.metric("Total Updates", rl_stats.get('total_updates', 0))
-                st.metric("Learning Rate", f"{rl_stats.get('learning_rate', 0.1):.4f}")
-                
-                if 'state_stats' in rl_stats:
-                    st.subheader("📈 Strategy Performance")
-                    state_stats = rl_stats['state_stats']
-                    for state, info in list(state_stats.items())[:5]:
-                        st.text(f"  {state}: best='{info.get('best_action', 'unknown')}' (Q={info.get('best_q_value', 0):.3f})")
+                rl = stats['rl_learner']
+                st.metric("RL Episodes", rl.get('episode_count', 0))
+                st.metric("Updates", rl.get('total_updates', 0))
         
-        with col2:
-            st.subheader("🎯 Source Distribution")
+        with col_details:
+            st.markdown("**Source Distribution**")
             if 'source_distribution' in stats:
-                source_dist = stats['source_distribution']
-                fig_data = {
-                    'Source': list(source_dist.keys()),
-                    'Count': list(source_dist.values())
-                }
-                st.bar_chart(fig_data, x='Source', y='Count')
+                dist = stats['source_distribution']
+                if dist:
+                    df = pd.DataFrame({
+                        'Source': list(dist.keys()),
+                        'Count': list(dist.values())
+                    })
+                    st.bar_chart(df.set_index('Source'))
             
-            st.subheader("⚖️ Strategy Weights")
+            st.markdown("**Strategy Weights**")
             if 'strategy_weights' in stats:
-                weights = stats['strategy_weights']
-                st.json(weights)
-            
-            if 'pattern_learner' in stats:
-                st.subheader("🔍 Pattern Learner")
-                patterns = stats['pattern_learner']
-                if 'common_errors' in patterns:
-                    st.text("Common Error Patterns:")
-                    for err, count in patterns['common_errors'][:5]:
-                        st.text(f"  • {err}: {count} occurrences")
-                
-                if 'recommendations' in patterns:
-                    st.subheader("💡 Recommendations")
-                    for rec in patterns['recommendations'][:5]:
-                        st.info(rec)
+                st.json(stats['strategy_weights'])
         
-        st.divider()
+        st.markdown("---")
+        st.markdown("**State Performance**")
+        if 'rl_learner' in stats and 'state_stats' in stats['rl_learner']:
+            state_stats = stats['rl_learner']['state_stats']
+            for state, info in list(state_stats.items())[:5]:
+                st.text(f"{state}: best='{info.get('best_action')}' (Q={info.get('best_q_value'):.3f})")
         
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("📥 Export Learning State"):
-                if st.session_state.learning_state_path and os.path.exists(st.session_state.learning_state_path):
-                    with open(st.session_state.learning_state_path, 'r') as f:
-                        state_data = f.read()
-                    st.download_button(
-                        "Download Learning State JSON",
-                        data=state_data,
-                        file_name="uvmgen_learning_state.json",
-                        mime="application/json"
-                    )
-                else:
-                    st.warning("No learning state saved yet")
-        
-        with col_b:
-            uploaded_file = st.file_uploader("📤 Import Learning State", type="json")
-            if uploaded_file is not None:
-                try:
-                    state_data = json.load(uploaded_file)
-                    if st.session_state.learning_state_path:
-                        with open(st.session_state.learning_state_path, 'w') as f:
-                            json.dump(state_data, f, indent=2)
-                        st.success("Learning state imported! It will be loaded on next generation.")
-                except Exception as e:
-                    st.error(f"Failed to import: {e}")
-    
     else:
-        st.info("Run a generation first to see ML insights.")
-        st.markdown("""
-        ### What you'll see here:
-        - **Learning Statistics**: Total generations, pass rates, average scores
-        - **RL Metrics**: Episode counts, learning rates, strategy performance
-        - **Pattern Analysis**: Common error patterns and recommendations
-        - **Strategy Distribution**: Which generation sources work best
-        - **Import/Export**: Save and load learned state
+        st.info("Run a generation to view analysis data.")
         
-        ### ML V2 Capabilities:
-        1. **Reinforcement Learning** with 4 exploration strategies
-        2. **Experience Replay** buffer (10,000 capacity)
-        3. **Eligibility Traces** for better credit assignment
-        4. **Pattern Mining** with N-grams and Association Rules
-        5. **Deep UVM Validation** for factory registration, phases, TLM connections
+        st.markdown("""
+        **ML Analysis Features:**
+        - Learning metrics tracking
+        - RL strategy performance
+        - Source distribution analysis
+        - Q-value tracking
         """)
 
 if generate_btn:
@@ -550,10 +474,10 @@ if generate_btn:
     st.session_state.generated_files = {}
     st.session_state.ml_stats = None
     
-    status_placeholder.info("🔄 Generating UVM testbench...")
+    status_placeholder.info("Running generation...")
     
     try:
-        from src.config import ConfigLoader, PipelineConfig
+        from src.config import ConfigLoader, PipelineConfig, MLConfig, GenerationConfig, AutoTrainConfig
         from src.pipeline import TBPipeline
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False, encoding='utf-8') as f:
@@ -561,33 +485,36 @@ if generate_btn:
             spec_path = f.name
         
         timestamp = datetime.now().strftime('%H:%M:%S')
-        st.session_state.log_output.append(f"[{timestamp}] Starting generation for: {design_name}")
-        st.session_state.log_output.append(f"[{timestamp}] Model: {model_type}")
-        if model_type == "v2":
-            st.session_state.log_output.append(f"[{timestamp}] RL Strategy: {exploration_strategy}")
-        st.session_state.log_output.append(f"[{timestamp}] ML Enabled: {use_ml}")
-        st.session_state.log_output.append(f"[{timestamp}] Strict Validation: {strict_validation}")
+        st.session_state.log_output.append(f"[{timestamp}] Starting: {design_name}")
+        st.session_state.log_output.append(f"[{timestamp}] Engine: {model_mode}")
         log_placeholder.code("\n".join(st.session_state.log_output))
         
-        pipeline = TBPipeline()
+        ml_cfg = MLConfig(
+            enabled=(model_mode != "template"),
+            model_type=model_mode,
+            use_llm=False,
+            use_semantic_encoder=False,
+        )
         
-        if use_ml:
-            pipeline.cfg.ml.enabled = True
-            pipeline.cfg.ml.model_type = model_type
-            pipeline.cfg.ml.use_llm = False
-            pipeline.cfg.ml.use_semantic_encoder = False
-            pipeline.cfg.ml.use_learning = auto_learn
-            pipeline.cfg.ml.strict_validation = strict_validation
-            
-            if model_type == "v2":
-                pipeline.cfg.ml.exploration_strategy = exploration_strategy
-                if st.session_state.learning_state_path:
-                    pipeline.cfg.ml.learning_storage_path = st.session_state.learning_state_path
-        else:
-            pipeline.cfg.ml.enabled = False
+        if model_mode == "v2":
+            ml_cfg.exploration_strategy = rl_strategy
+            ml_cfg.use_learning = enable_learning
+            ml_cfg.strict_validation = strict_uvm
         
-        pipeline.cfg.auto_train.enabled = auto_train
-        pipeline.cfg.auto_train.max_iterations = max_iterations
+        pipeline_cfg = PipelineConfig(
+            ml=ml_cfg,
+            generation=GenerationConfig(
+                templates_dir=os.path.join(os.getcwd(), "src", "generation", "templates"),
+                output_dir=os.path.join(os.getcwd(), "output"),
+                overwrite=True
+            ),
+            auto_train=AutoTrainConfig(
+                enabled=(max_iterations > 1),
+                max_iterations=max_iterations
+            )
+        )
+        
+        pipeline = TBPipeline(pipeline_cfg)
         
         result = pipeline.run(spec_path)
         
@@ -602,70 +529,52 @@ if generate_btn:
         try:
             if hasattr(pipeline.model, 'get_learning_stats'):
                 st.session_state.ml_stats = pipeline.model.get_learning_stats()
-            elif hasattr(pipeline.model, '_rl_learner') and hasattr(pipeline.model, '_pattern_learner'):
-                st.session_state.ml_stats = {
-                    'total_generations': len(st.session_state.log_output),
-                    'rl_learner': pipeline.model._rl_learner.get_performance_stats() if hasattr(pipeline.model._rl_learner, 'get_performance_stats') else {},
-                }
         except Exception as e:
             logger.warning(f"Could not get ML stats: {e}")
         
         timestamp = datetime.now().strftime('%H:%M:%S')
-        st.session_state.log_output.append(f"[{timestamp}] Generation complete!")
-        st.session_state.log_output.append(f"[{timestamp}] Files generated: {len(st.session_state.generated_files)}")
-        if result.get('passed'):
-            st.session_state.log_output.append(f"[{timestamp}] Status: PASSED ✅")
-        else:
-            st.session_state.log_output.append(f"[{timestamp}] Status: COMPLETED WITH WARNINGS ⚠️")
+        st.session_state.log_output.append(f"[{timestamp}] Complete")
+        st.session_state.log_output.append(f"[{timestamp}] Files: {len(st.session_state.generated_files)}")
+        
         log_placeholder.code("\n".join(st.session_state.log_output))
         
         if result.get('passed'):
-            status_placeholder.success("✅ Generation successful!")
+            status_placeholder.success("Generation completed successfully")
         else:
-            status_placeholder.warning("⚠️ Generation completed with issues")
+            status_placeholder.warning("Generation completed")
             
     except Exception as e:
         timestamp = datetime.now().strftime('%H:%M:%S')
-        st.session_state.log_output.append(f"[{timestamp}] ERROR: {str(e)}")
+        st.session_state.log_output.append(f"[{timestamp}] Error: {str(e)}")
         log_placeholder.code("\n".join(st.session_state.log_output))
-        status_placeholder.error(f"❌ Error: {str(e)}")
+        status_placeholder.error(f"Error: {str(e)}")
         import traceback
         st.session_state.log_output.append(traceback.format_exc())
         log_placeholder.code("\n".join(st.session_state.log_output))
 
 if st.session_state.last_result:
+    result = st.session_state.last_result
+    
     with tab_results:
-        result = st.session_state.last_result
+        eval_metrics = result.get('evaluation', {})
         
         with metrics_placeholder.container():
-            eval_metrics = result.get('evaluation', {})
+            cols = st.columns(5)
             
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                completeness = eval_metrics.get('completeness', 0) * 100
-                st.metric("Completeness", f"{completeness:.1f}%")
-            with m2:
-                signal_cov = eval_metrics.get('interface_signal_coverage', 0) * 100
-                st.metric("Signal Coverage", f"{signal_cov:.1f}%")
-            with m3:
-                reg_cov = eval_metrics.get('register_coverage', 0) * 100
-                st.metric("Register Coverage", f"{reg_cov:.1f}%")
-            with m4:
-                st.metric("Files Generated", len(st.session_state.generated_files))
+            completeness = eval_metrics.get('completeness', 0) * 100
+            signal_cov = eval_metrics.get('interface_signal_coverage', 0) * 100
+            reg_cov = eval_metrics.get('register_coverage', 0) * 100
             
-            m5, m6 = st.columns(2)
-            with m5:
-                st.metric("Auto-Train Iterations", result.get('auto_train_iterations', 0))
-            with m6:
-                if result.get('passed'):
-                    st.metric("Status", "✅ PASSED")
-                else:
-                    st.metric("Status", "⚠️ WARNINGS")
+            cols[0].metric("Completeness", f"{completeness:.1f}%")
+            cols[1].metric("Signal Coverage", f"{signal_cov:.1f}%")
+            cols[2].metric("Register Coverage", f"{reg_cov:.1f}%")
+            cols[3].metric("Files", len(st.session_state.generated_files))
+            cols[4].metric("Iterations", result.get('auto_train_iterations', 0))
         
-        with files_placeholder.expander("📄 Generated Files", expanded=True):
+        with file_view_placeholder.container():
             if st.session_state.generated_files:
                 file_names = sorted(st.session_state.generated_files.keys())
-                selected_file = st.selectbox("Select file to preview", file_names, key="file_selector")
+                selected_file = st.selectbox("File", file_names)
                 
                 if selected_file:
                     file_path = st.session_state.generated_files[selected_file]
@@ -676,20 +585,11 @@ if st.session_state.last_result:
                             
                             st.code(content, language='systemverilog')
                             
-                            col1, col2 = st.columns([1, 1])
-                            with col1:
-                                st.download_button(
-                                    f"📥 Download {selected_file}",
-                                    data=content,
-                                    file_name=selected_file,
-                                    mime="text/plain",
-                                    use_container_width=True
-                                )
-                            with col2:
-                                st.info(f"Lines: {len(content.splitlines())} | Size: {len(content)} bytes")
+                            st.caption(f"Lines: {len(content.splitlines())} | Size: {len(content)} bytes")
                         except Exception as e:
                             st.warning(f"Could not read file: {e}")
-            
+        
+        with dl_placeholder.container():
             if st.session_state.generated_files:
                 zip_buffer = io.BytesIO()
                 
@@ -701,22 +601,23 @@ if st.session_state.last_result:
                 zip_buffer.seek(0)
                 
                 st.download_button(
-                    label="📦 Download All Files as ZIP",
+                    label="Download All Files",
                     data=zip_buffer,
-                    file_name=f"{design_name}_uvm_testbench.zip",
+                    file_name=f"{design_name}_uvm_tb.zip",
                     mime="application/zip",
                     use_container_width=True,
                     type="primary"
                 )
 
-st.divider()
+st.markdown("---")
 
-footer_col1, footer_col2, footer_col3 = st.columns([1, 2, 1])
+col_foot1, col_foot2, col_foot3 = st.columns([2, 2, 2])
 
-with footer_col2:
-    st.caption("""
-    **UVM Testbench Generator v2.0** • AI-Powered by **Sai Kumar Taraka**  
-    🔬 Advanced ML: RL (UCB/Softmax/Thompson) + Pattern Mining + Experience Replay + Eligibility Traces  
-    📚 Protocol Libraries: UART, SPI, I2C, AXI4-Lite, APB, Wishbone  
-    🎯 Deep UVM Validation: Factory Registration, Phases, TLM Connections, Coverage  
-    """)
+with col_foot1:
+    st.caption("**UVM Testbench Generator v2.0**")
+
+with col_foot2:
+    st.caption("IEEE 1800.2-2020 Compliant")
+
+with col_foot3:
+    st.caption("Sai Kumar Taraka")
