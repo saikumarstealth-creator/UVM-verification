@@ -1,0 +1,387 @@
+// UVM RAL (Register Abstraction Layer) Model for {{ spec.design_name }}
+// Generated from YAML register specification
+{% set p = spec.protocol|default("wishbone") %}
+{% set regs = spec.registers if spec.registers else [] %}
+
+class {{ spec.design_name }}_reg_adapter extends uvm_reg_adapter;
+  `uvm_object_utils({{ spec.design_name }}_reg_adapter)
+
+  function new(string name = "{{ spec.design_name }}_reg_adapter");
+    super.new(name);
+    supports_byte_enable = 0;
+    provides_responses = 1;
+  endfunction
+
+  virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+    {{ spec.design_name }}_seq_item item;
+    item = {{ spec.design_name }}_seq_item::type_id::create("item");
+    item.we   = (rw.kind == UVM_WRITE) ? 1'b1 : 1'b0;
+    item.addr = rw.addr[2:0];
+    item.data = rw.data[7:0];
+    return item;
+  endfunction
+
+  virtual function void bus2reg(uvm_sequence_item bus_item, ref uvm_reg_bus_op rw);
+    {{ spec.design_name }}_seq_item item;
+    if (!$cast(item, bus_item)) begin
+      `uvm_fatal("NOT_REG_TYPE", "bus_item is not of the {{ spec.design_name }}_seq_item type")
+      return;
+    end
+    rw.kind = item.we ? UVM_WRITE : UVM_READ;
+    rw.addr = item.addr;
+    rw.data = item.data;
+    rw.status = UVM_IS_OK;
+  endfunction
+endclass
+
+class uart_reg_LCR extends uvm_reg;
+  `uvm_object_utils(uart_reg_LCR)
+
+  rand uvm_reg_field wls;
+  rand uvm_reg_field stb;
+  rand uvm_reg_field pen;
+  rand uvm_reg_field eps;
+  rand uvm_reg_field sp;
+  rand uvm_reg_field bc;
+  rand uvm_reg_field dlab;
+
+  function new(string name = "uart_reg_LCR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    wls  = uvm_reg_field::type_id::create("wls");
+    stb  = uvm_reg_field::type_id::create("stb");
+    pen  = uvm_reg_field::type_id::create("pen");
+    eps  = uvm_reg_field::type_id::create("eps");
+    sp   = uvm_reg_field::type_id::create("sp");
+    bc   = uvm_reg_field::type_id::create("bc");
+    dlab = uvm_reg_field::type_id::create("dlab");
+
+    wls.configure(this, 2, 0, "RW", 0, 2'h3, 1, 1, 1);
+    stb.configure(this, 1, 2, "RW", 0, 1'h0, 1, 1, 1);
+    pen.configure(this, 1, 3, "RW", 0, 1'h0, 1, 1, 1);
+    eps.configure(this, 1, 4, "RW", 0, 1'h0, 1, 1, 1);
+    sp.configure(this, 1, 5, "RW", 0, 1'h0, 1, 1, 1);
+    bc.configure(this, 1, 6, "RW", 0, 1'h0, 1, 1, 1);
+    dlab.configure(this, 1, 7, "RW", 0, 1'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_IER extends uvm_reg;
+  `uvm_object_utils(uart_reg_IER)
+
+  rand uvm_reg_field erbfi;
+  rand uvm_reg_field etbei;
+  rand uvm_reg_field elsi;
+  rand uvm_reg_field edssi;
+
+  function new(string name = "uart_reg_IER");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    erbfi = uvm_reg_field::type_id::create("erbfi");
+    etbei = uvm_reg_field::type_id::create("etbei");
+    elsi  = uvm_reg_field::type_id::create("elsi");
+    edssi = uvm_reg_field::type_id::create("edssi");
+
+    erbfi.configure(this, 1, 0, "RW", 0, 1'h0, 1, 1, 1);
+    etbei.configure(this, 1, 1, "RW", 0, 1'h0, 1, 1, 1);
+    elsi.configure(this, 1, 2, "RW", 0, 1'h0, 1, 1, 1);
+    edssi.configure(this, 1, 3, "RW", 0, 1'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_IIR extends uvm_reg;
+  `uvm_object_utils(uart_reg_IIR)
+
+  uvm_reg_field int_id;
+  uvm_reg_field fifos_en;
+
+  function new(string name = "uart_reg_IIR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    int_id   = uvm_reg_field::type_id::create("int_id");
+    fifos_en = uvm_reg_field::type_id::create("fifos_en");
+
+    int_id.configure(this, 4, 0, "RO", 0, 4'h1, 1, 1, 1);
+    fifos_en.configure(this, 2, 6, "RO", 0, 2'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_FCR extends uvm_reg;
+  `uvm_object_utils(uart_reg_FCR)
+
+  rand uvm_reg_field fifo_en;
+  rand uvm_reg_field rclr;
+  rand uvm_reg_field tclr;
+  rand uvm_reg_field dma_mode;
+  rand uvm_reg_field rx_trigger;
+
+  function new(string name = "uart_reg_FCR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    fifo_en   = uvm_reg_field::type_id::create("fifo_en");
+    rclr      = uvm_reg_field::type_id::create("rclr");
+    tclr      = uvm_reg_field::type_id::create("tclr");
+    dma_mode  = uvm_reg_field::type_id::create("dma_mode");
+    rx_trigger = uvm_reg_field::type_id::create("rx_trigger");
+
+    fifo_en.configure(this, 1, 0, "WO", 0, 1'h0, 1, 1, 1);
+    rclr.configure(this, 1, 1, "WO", 0, 1'h0, 1, 1, 1);
+    tclr.configure(this, 1, 2, "WO", 0, 1'h0, 1, 1, 1);
+    dma_mode.configure(this, 1, 3, "WO", 0, 1'h0, 1, 1, 1);
+    rx_trigger.configure(this, 2, 6, "WO", 0, 2'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_LSR extends uvm_reg;
+  `uvm_object_utils(uart_reg_LSR)
+
+  uvm_reg_field dr;
+  uvm_reg_field oe;
+  uvm_reg_field pe;
+  uvm_reg_field fe;
+  uvm_reg_field bi;
+  uvm_reg_field thre;
+  uvm_reg_field temt;
+  uvm_reg_field err;
+
+  function new(string name = "uart_reg_LSR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    dr   = uvm_reg_field::type_id::create("dr");
+    oe   = uvm_reg_field::type_id::create("oe");
+    pe   = uvm_reg_field::type_id::create("pe");
+    fe   = uvm_reg_field::type_id::create("fe");
+    bi   = uvm_reg_field::type_id::create("bi");
+    thre = uvm_reg_field::type_id::create("thre");
+    temt = uvm_reg_field::type_id::create("temt");
+    err  = uvm_reg_field::type_id::create("err");
+
+    dr.configure(this, 1, 0, "RO", 0, 1'h0, 1, 1, 1);
+    oe.configure(this, 1, 1, "RO", 0, 1'h0, 1, 1, 1);
+    pe.configure(this, 1, 2, "RO", 0, 1'h0, 1, 1, 1);
+    fe.configure(this, 1, 3, "RO", 0, 1'h0, 1, 1, 1);
+    bi.configure(this, 1, 4, "RO", 0, 1'h0, 1, 1, 1);
+    thre.configure(this, 1, 5, "RO", 0, 1'h1, 1, 1, 1);
+    temt.configure(this, 1, 6, "RO", 0, 1'h1, 1, 1, 1);
+    err.configure(this, 1, 7, "RO", 0, 1'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_MCR extends uvm_reg;
+  `uvm_object_utils(uart_reg_MCR)
+
+  rand uvm_reg_field dtr;
+  rand uvm_reg_field rts;
+  rand uvm_reg_field out1;
+  rand uvm_reg_field out2;
+  rand uvm_reg_field loop;
+
+  function new(string name = "uart_reg_MCR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    dtr  = uvm_reg_field::type_id::create("dtr");
+    rts  = uvm_reg_field::type_id::create("rts");
+    out1 = uvm_reg_field::type_id::create("out1");
+    out2 = uvm_reg_field::type_id::create("out2");
+    loop = uvm_reg_field::type_id::create("loop");
+
+    dtr.configure(this, 1, 0, "RW", 0, 1'h0, 1, 1, 1);
+    rts.configure(this, 1, 1, "RW", 0, 1'h0, 1, 1, 1);
+    out1.configure(this, 1, 2, "RW", 0, 1'h0, 1, 1, 1);
+    out2.configure(this, 1, 3, "RW", 0, 1'h0, 1, 1, 1);
+    loop.configure(this, 1, 4, "RW", 0, 1'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_MSR extends uvm_reg;
+  `uvm_object_utils(uart_reg_MSR)
+
+  uvm_reg_field dcts;
+  uvm_reg_field ddsr;
+  uvm_reg_field teri;
+  uvm_reg_field ddcd;
+  uvm_reg_field cts;
+  uvm_reg_field dsr;
+  uvm_reg_field ri;
+  uvm_reg_field dcd;
+
+  function new(string name = "uart_reg_MSR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    dcts = uvm_reg_field::type_id::create("dcts");
+    ddsr = uvm_reg_field::type_id::create("ddsr");
+    teri = uvm_reg_field::type_id::create("teri");
+    ddcd = uvm_reg_field::type_id::create("ddcd");
+    cts  = uvm_reg_field::type_id::create("cts");
+    dsr  = uvm_reg_field::type_id::create("dsr");
+    ri   = uvm_reg_field::type_id::create("ri");
+    dcd  = uvm_reg_field::type_id::create("dcd");
+
+    dcts.configure(this, 1, 0, "RO", 0, 1'h0, 1, 1, 1);
+    ddsr.configure(this, 1, 1, "RO", 0, 1'h0, 1, 1, 1);
+    teri.configure(this, 1, 2, "RO", 0, 1'h0, 1, 1, 1);
+    ddcd.configure(this, 1, 3, "RO", 0, 1'h0, 1, 1, 1);
+    cts.configure(this, 1, 4, "RO", 0, 1'h0, 1, 1, 1);
+    dsr.configure(this, 1, 5, "RO", 0, 1'h0, 1, 1, 1);
+    ri.configure(this, 1, 6, "RO", 0, 1'h0, 1, 1, 1);
+    dcd.configure(this, 1, 7, "RO", 0, 1'h0, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_SCR extends uvm_reg;
+  `uvm_object_utils(uart_reg_SCR)
+
+  rand uvm_reg_field scratch;
+
+  function new(string name = "uart_reg_SCR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    scratch = uvm_reg_field::type_id::create("scratch");
+    scratch.configure(this, 8, 0, "RW", 0, 8'h00, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_RBR_THR extends uvm_reg;
+  `uvm_object_utils(uart_reg_RBR_THR)
+
+  uvm_reg_field rbr_data;
+  rand uvm_reg_field thr_data;
+
+  function new(string name = "uart_reg_RBR_THR");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    rbr_data = uvm_reg_field::type_id::create("rbr_data");
+    thr_data = uvm_reg_field::type_id::create("thr_data");
+    rbr_data.configure(this, 8, 0, "RO", 0, 8'h00, 1, 1, 1);
+    thr_data.configure(this, 8, 0, "WO", 0, 8'h00, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_DLL extends uvm_reg;
+  `uvm_object_utils(uart_reg_DLL)
+
+  rand uvm_reg_field dll;
+
+  function new(string name = "uart_reg_DLL");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    dll = uvm_reg_field::type_id::create("dll");
+    dll.configure(this, 8, 0, "RW", 0, 8'h00, 1, 1, 1);
+  endfunction
+endclass
+
+class uart_reg_DLM extends uvm_reg;
+  `uvm_object_utils(uart_reg_DLM)
+
+  rand uvm_reg_field dlm;
+
+  function new(string name = "uart_reg_DLM");
+    super.new(name, 8, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    dlm = uvm_reg_field::type_id::create("dlm");
+    dlm.configure(this, 8, 0, "RW", 0, 8'h00, 1, 1, 1);
+  endfunction
+endclass
+
+class {{ spec.design_name }}_reg_block extends uvm_reg_block;
+  `uvm_object_utils({{ spec.design_name }}_reg_block)
+
+  rand uart_reg_RBR_THR rbr_thr;
+  rand uart_reg_IER     ier;
+       uart_reg_IIR     iir;
+  rand uart_reg_FCR     fcr;
+  rand uart_reg_LCR     lcr;
+  rand uart_reg_MCR     mcr;
+       uart_reg_LSR     lsr;
+       uart_reg_MSR     msr;
+  rand uart_reg_SCR     scr;
+  rand uart_reg_DLL     dll;
+  rand uart_reg_DLM     dlm;
+
+  uvm_reg_map reg_map;
+
+  function new(string name = "{{ spec.design_name }}_reg_block");
+    super.new(name, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    rbr_thr = uart_reg_RBR_THR::type_id::create("rbr_thr");
+    ier     = uart_reg_IER::type_id::create("ier");
+    iir     = uart_reg_IIR::type_id::create("iir");
+    fcr     = uart_reg_FCR::type_id::create("fcr");
+    lcr     = uart_reg_LCR::type_id::create("lcr");
+    mcr     = uart_reg_MCR::type_id::create("mcr");
+    lsr     = uart_reg_LSR::type_id::create("lsr");
+    msr     = uart_reg_MSR::type_id::create("msr");
+    scr     = uart_reg_SCR::type_id::create("scr");
+    dll     = uart_reg_DLL::type_id::create("dll");
+    dlm     = uart_reg_DLM::type_id::create("dlm");
+
+    rbr_thr.configure(this, null, "");
+    ier.configure(this, null, "");
+    iir.configure(this, null, "");
+    fcr.configure(this, null, "");
+    lcr.configure(this, null, "");
+    mcr.configure(this, null, "");
+    lsr.configure(this, null, "");
+    msr.configure(this, null, "");
+    scr.configure(this, null, "");
+    dll.configure(this, null, "");
+    dlm.configure(this, null, "");
+
+    rbr_thr.build();
+    ier.build();
+    iir.build();
+    fcr.build();
+    lcr.build();
+    mcr.build();
+    lsr.build();
+    msr.build();
+    scr.build();
+    dll.build();
+    dlm.build();
+
+    reg_map = create_map("reg_map", 0, 1, UVM_LITTLE_ENDIAN, 1);
+    reg_map.add_reg(rbr_thr, 'h0, "RW");
+    reg_map.add_reg(ier,     'h1, "RW");
+    reg_map.add_reg(iir,     'h2, "RO");
+    reg_map.add_reg(fcr,     'h2, "WO");
+    reg_map.add_reg(lcr,     'h3, "RW");
+    reg_map.add_reg(mcr,     'h4, "RW");
+    reg_map.add_reg(lsr,     'h5, "RO");
+    reg_map.add_reg(msr,     'h6, "RO");
+    reg_map.add_reg(scr,     'h7, "RW");
+
+    lock_model();
+  endfunction
+endclass
+
+class {{ spec.design_name }}_reg_predictor extends uvm_reg_predictor #({{ spec.design_name }}_seq_item);
+  `uvm_component_utils({{ spec.design_name }}_reg_predictor)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+endclass

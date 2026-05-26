@@ -1,0 +1,207 @@
+// UART Serial Monitor for {{ spec.design_name }}
+// Monitors uart_tx and uart_rx lines, deserializes data, checks integrity
+{% set p = spec.protocol|default("wishbone") %}
+
+class uart_serial_item extends uvm_sequence_item;
+  `uvm_object_utils(uart_serial_item)
+
+  typedef enum {TX, RX} direction_t;
+  typedef enum {NONE, ODD, EVEN, MARK, SPACE} parity_t;
+
+  rand logic [7:0] data;
+  rand direction_t dir;
+  rand int         baud_rate;
+  rand int         data_bits;
+  rand int         stop_bits;
+  rand parity_t    parity_mode;
+  rand logic       parity_error;
+  rand logic       framing_error;
+  rand logic       break_condition;
+  time             start_time;
+  time             end_time;
+
+  constraint c_default {
+    data_bits inside {5, 6, 7, 8};
+    stop_bits inside {1, 2};
+    parity_mode inside {NONE, ODD, EVEN, MARK, SPACE};
+  }
+
+  function new(string name = "uart_serial_item");
+    super.new(name);
+    parity_error = 0;
+    framing_error = 0;
+    break_condition = 0;
+  endfunction
+
+  function string convert2string();
+    return $sformatf("dir=%s data=0x%02h baud=%0d bits=%0d stop=%0d parity=%s perr=%b ferr=%b",
+                     dir.name(), data, baud_rate, data_bits, stop_bits, parity_mode.name(),
+                     parity_error, framing_error);
+  endfunction
+endclass
+
+class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
+  `uvm_component_utils({{ spec.design_name }}_serial_monitor)
+
+  uvm_analysis_port #(uart_serial_item) tx_port;
+  uvm_analysis_port #(uart_serial_item) rx_port;
+
+  virtual {{ spec.design_name }}_intf vif;
+
+  int baud_rate = 115200;
+  int data_bits = 8;
+  int stop_bits = 1;
+  uart_serial_item::parity_t parity_mode = uart_serial_item::NONE;
+
+  protected int clk_freq = 100_000_000;
+  protected int cycles_per_bit;
+
+  protected logic [7:0] tx_data_bytes[$];
+  protected logic [7:0] rx_data_bytes[$];
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    tx_port = new("tx_port", this);
+    rx_port = new("rx_port", this);
+    update_cycles_per_bit();
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    if (!uvm_config_db#(virtual {{ spec.design_name }}_intf)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", "Virtual interface not set")
+  endfunction
+
+  function void set_baud_rate(int rate);
+    baud_rate = rate;
+    update_cycles_per_bit();
+    `uvm_info("SER_MON", $sformatf("Baud rate set to %0d, cycles per bit = %0d", baud_rate, cycles_per_bit), UVM_MEDIUM)
+  endfunction
+
+  function void set_format(int dbits = 8, int sbits = 1, uart_serial_item::parity_t parity = uart_serial_item::NONE);
+    data_bits = dbits;
+    stop_bits = sbits;
+    parity_mode = parity;
+  endfunction
+
+  protected function void update_cycles_per_bit();
+    cycles_per_bit = clk_freq / baud_rate;
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    fork
+      monitor_tx();
+      monitor_rx();
+    join
+  endtask
+
+  protected task monitor_tx();
+    uart_serial_item item;
+    forever begin
+      @(negedge vif.uart_tx);
+      item = uart_serial_item::type_id::create("item");
+      item.dir = uart_serial_item::TX;
+      item.baud_rate = baud_rate;
+      item.data_bits = data_bits;
+      item.stop_bits = stop_bits;
+      item.parity_mode = parity_mode;
+      item.start_time = $time;
+      receive_byte(vif.uart_tx, item);
+      item.end_time = $time;
+      tx_data_bytes.push_back(item.data);
+      `uvm_info("SER_MON_TX", {"TX Received: ", item.convert2string()}, UVM_HIGH)
+      tx_port.write(item);
+    end
+  endtask
+
+  protected task monitor_rx();
+    uart_serial_item item;
+    forever begin
+      @(negedge vif.uart_rx);
+      item = uart_serial_item::type_id::create("item");
+      item.dir = uart_serial_item::RX;
+      item.baud_rate = baud_rate;
+      item.data_bits = data_bits;
+      item.stop_bits = stop_bits;
+      item.parity_mode = parity_mode;
+      item.start_time = $time;
+      receive_byte(vif.uart_rx, item);
+      item.end_time = $time;
+      rx_data_bytes.push_back(item.data);
+      `uvm_info("SER_MON_RX", {"RX Received: ", item.convert2string()}, UVM_HIGH)
+      rx_port.write(item);
+    end
+  endtask
+
+  protected task receive_byte(ref logic line, output uart_serial_item item);
+    logic [10:0] shift_reg;
+    logic parity_calc;
+    int bit_cnt;
+
+    repeat(cycles_per_bit/2) @(posedge vif.clk);
+
+    if (line !== 1'b0) begin
+      `uvm_warning("SER_MON", "Start bit not low at sample point")
+    end
+
+    shift_reg[0] = 1'b0;
+    bit_cnt = 1;
+
+    for (int i = 0; i < data_bits; i++) begin
+      repeat(cycles_per_bit) @(posedge vif.clk);
+      shift_reg[bit_cnt] = line;
+      bit_cnt++;
+    end
+
+    item.data = shift_reg[data_bits:1];
+
+    if (parity_mode != uart_serial_item::NONE) begin
+      repeat(cycles_per_bit) @(posedge vif.clk);
+      shift_reg[bit_cnt] = line;
+
+      parity_calc = calc_parity(item.data, data_bits, parity_mode);
+      if (line !== parity_calc) begin
+        item.parity_error = 1'b1;
+        `uvm_error("SER_MON", $sformatf("Parity error: expected %b, got %b", parity_calc, line))
+      end
+      bit_cnt++;
+    end
+
+    for (int i = 0; i < stop_bits; i++) begin
+      repeat(cycles_per_bit) @(posedge vif.clk);
+      if (line !== 1'b1) begin
+        item.framing_error = 1'b1;
+        `uvm_error("SER_MON", $sformatf("Framing error: stop bit %0d not high", i+1))
+      end
+    end
+
+    if (data == 8'h00 && item.framing_error) begin
+      item.break_condition = 1'b1;
+      `uvm_info("SER_MON", "Break condition detected", UVM_MEDIUM)
+    end
+  endtask
+
+  protected function logic calc_parity(logic [7:0] data, int bits, uart_serial_item::parity_t mode);
+    logic parity;
+    parity = ^data[bits-1:0];
+
+    case (mode)
+      uart_serial_item::ODD:   return parity;
+      uart_serial_item::EVEN:  return ~parity;
+      uart_serial_item::MARK:  return 1'b1;
+      uart_serial_item::SPACE: return 1'b0;
+      default: return 1'b0;
+    endcase
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    `uvm_info("SER_MON", $sformatf("\n=== Serial Monitor Report ==="), UVM_LOW)
+    `uvm_info("SER_MON", $sformatf("  TX bytes captured: %0d", tx_data_bytes.size()), UVM_LOW)
+    `uvm_info("SER_MON", $sformatf("  RX bytes captured: %0d", rx_data_bytes.size()), UVM_LOW)
+    `uvm_info("SER_MON", $sformatf("  Baud rate: %0d", baud_rate), UVM_LOW)
+    `uvm_info("SER_MON", $sformatf("  Data bits: %0d, Stop bits: %0d, Parity: %s",
+                                     data_bits, stop_bits, parity_mode.name()), UVM_LOW)
+    if (tx_data_bytes.size() > 0) begin
+      `uvm_info("SER_MON", $sformatf("  First TX bytes: %p", tx_data_bytes[0:tx_data_bytes.size()<10?tx_data_bytes.size()-1:9]), UVM_LOW)
+    end
+  endfunction
+endclass

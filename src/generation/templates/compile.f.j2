@@ -4,10 +4,14 @@
 {% for f in spec.files|default([]) %}
 ../{{ f }}
 {% else %}
+../ral_model.sv
 ../interface.sv
 ../sequence_item.sv
 ../driver.sv
 ../monitor.sv
+{% if spec.protocol|default("wishbone") == "uart" %}
+../serial_monitor.sv
+{% endif %}
 ../agent.sv
 ../scoreboard.sv
 ../coverage_collector.sv

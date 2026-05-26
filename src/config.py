@@ -84,12 +84,25 @@ class AutoTrainConfig(BaseModel):
     num_seeds: int = Field(default=3, ge=1, le=20, description="Number of regression seeds per iteration")
     generate_regression_test: bool = True
 
+
+class MLConfig(BaseModel):
+    """Configuration for ML-augmented generation."""
+    enabled: bool = False
+    model_type: str = Field(default="template", pattern=r"^(template|ml|hybrid)$")
+    similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    auto_learn: bool = True
+    index_path: Optional[str] = None
+    top_k_retrieval: int = Field(default=3, ge=1, le=10)
+    fallback_to_templates: bool = True
+
+
 class PipelineConfig(BaseModel):
     generation: GenerationConfig = GenerationConfig()
     evaluation: EvaluationConfig = EvaluationConfig()
     tracking: TrackingConfig = TrackingConfig()
     logging: LoggingConfig = LoggingConfig()
     auto_train: AutoTrainConfig = AutoTrainConfig()
+    ml: MLConfig = MLConfig()
 
 
 # ── Config Loader ────────────────────────────────────────────────────────────

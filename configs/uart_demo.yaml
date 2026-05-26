@@ -1,31 +1,158 @@
 design_name: uart
+protocol: uart
 clock_reset:
   clock: clk
   reset: rst_n
   reset_active: 0
 
 interfaces:
-  - name: uart_if
+  - name: uart_intf
     signals:
-      - name: tx
+      - name: wb_cyc
+        direction: input
+      - name: wb_stb
+        direction: input
+      - name: wb_we
+        direction: input
+      - name: wb_addr
+        direction: input
+        width: 3
+      - name: wb_data_o
         direction: output
-      - name: rx
+        width: 8
+      - name: wb_data_i
         direction: input
-      - name: baud_tick
+        width: 8
+      - name: wb_ack
+        direction: output
+      - name: uart_tx
+        direction: output
+      - name: uart_rx
         direction: input
+      - name: cts_n
+        direction: input
+      - name: rts_n
+        direction: output
+      - name: uart_intr
+        direction: output
 
 registers:
-  - name: ctrl
+  - name: RBR_THR
     address: '0x00'
+    access: rw
     fields:
-      - name: enable
-        bits: '0'
-      - name: baud_div
-        bits: '7:2'
-  - name: status
-    address: '0x04'
+      - name: data
+        bits: '7:0'
+        description: Receiver Buffer / Transmitter Holding
+  - name: IER
+    address: '0x01'
+    access: rw
     fields:
-      - name: tx_full
+      - name: erbfi
         bits: '0'
-      - name: rx_empty
+        description: Enable RX data available interrupt
+      - name: etbei
         bits: '1'
+        description: Enable TX holding register empty interrupt
+      - name: elsi
+        bits: '2'
+        description: Enable RX line status interrupt
+      - name: edssi
+        bits: '3'
+        description: Enable modem status interrupt
+  - name: IIR
+    address: '0x02'
+    access: ro
+    fields:
+      - name: int_id
+        bits: '3:0'
+        description: Interrupt ID
+  - name: LCR
+    address: '0x03'
+    access: rw
+    fields:
+      - name: wls
+        bits: '1:0'
+        description: Word length select
+      - name: stb
+        bits: '2'
+        description: Stop bits
+      - name: pen
+        bits: '3'
+        description: Parity enable
+      - name: eps
+        bits: '4'
+        description: Even parity select
+      - name: sp
+        bits: '5'
+        description: Stick parity
+      - name: bc
+        bits: '6'
+        description: Break control
+      - name: dlab
+        bits: '7'
+        description: Divisor latch access bit
+  - name: MCR
+    address: '0x04'
+    access: rw
+    fields:
+      - name: dtr
+        bits: '0'
+        description: Data Terminal Ready
+      - name: rts
+        bits: '1'
+        description: Request To Send
+      - name: out1
+        bits: '2'
+        description: Output 1
+      - name: out2
+        bits: '3'
+        description: Output 2
+      - name: loop
+        bits: '4'
+        description: Loopback mode enable
+  - name: LSR
+    address: '0x05'
+    access: ro
+    fields:
+      - name: dr
+        bits: '0'
+        description: Data Ready
+      - name: oe
+        bits: '1'
+        description: Overrun Error
+      - name: pe
+        bits: '2'
+        description: Parity Error
+      - name: fe
+        bits: '3'
+        description: Framing Error
+      - name: bi
+        bits: '4'
+        description: Break Interrupt
+      - name: thre
+        bits: '5'
+        description: TX Holding Register Empty
+      - name: temt
+        bits: '6'
+        description: Transmitter Empty
+      - name: err
+        bits: '7'
+        description: Error in RX FIFO
+  - name: MSR
+    address: '0x06'
+    access: ro
+    fields:
+      - name: dcts
+        bits: '0'
+        description: Delta Clear To Send
+      - name: cts
+        bits: '4'
+        description: Clear To Send
+  - name: SCR
+    address: '0x07'
+    access: rw
+    fields:
+      - name: scratch
+        bits: '7:0'
+        description: Scratch register

@@ -1,106 +1,365 @@
-// UVM Scoreboard for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
-// Functional correctness: shadow register model with data integrity checks
+// Enhanced UVM Scoreboard for {{ spec.design_name }}
+// Features: shadow register model, UART loopback checking, data integrity, coverage tracking
 {% set p = spec.protocol|default("wishbone") %}
+
+typedef struct packed {
+  logic [7:0] data;
+  logic [2:0] addr;
+  logic       we;
+  time        timestamp;
+  int         seq_num;
+} transaction_t;
+
 class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   `uvm_component_utils({{ spec.design_name }}_scoreboard)
+
   uvm_analysis_imp #({{ spec.design_name }}_seq_item, {{ spec.design_name }}_scoreboard) item_export;
+  `uvm_analysis_imp_decl(_tx)
+  uvm_analysis_imp_tx #(uart_serial_item, {{ spec.design_name }}_scoreboard) tx_export;
+  `uvm_analysis_imp_decl(_rx)
+  uvm_analysis_imp_rx #(uart_serial_item, {{ spec.design_name }}_scoreboard) rx_export;
 
-  // Shadow register model (8-bit each, 8 registers)
   logic [7:0] shadow_regs[0:7];
+  logic [7:0] tx_fifo[$];
+  logic [7:0] rx_fifo[$];
+  logic [7:0] expected_rx_fifo[$];
 
-  // Burst tracking
-  int burst_count;
-  logic [7:0] burst_data[$];
-  logic [2:0] burst_addr_start;
-
-  // Statistics
+  int transaction_count;
   int write_count;
   int read_count;
   int match_count;
   int mismatch_count;
-  int burst_count_total;
+  int burst_count;
+  int tx_serial_count;
+  int rx_serial_count;
+  int parity_errors;
+  int framing_errors;
+  int loopback_matches;
+  int loopback_mismatches;
 
-  function new(string n, uvm_component p); super.new(n, p); endfunction
+  transaction_t write_history[$];
+  transaction_t read_history[$];
+
+  uvm_event tx_done_ev;
+  uvm_event rx_done_ev;
+
+  typedef struct {
+    int total;
+    int passed;
+    int failed;
+  } test_stats_t;
+
+  test_stats_t test_stats;
+
+  int errors[$];
+  string error_msgs[$];
+
+  bit enable_loopback_check = 1;
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+    item_export = new("item_export", this);
+    tx_export = new("tx_export", this);
+    rx_export = new("rx_export", this);
+    tx_done_ev = new("tx_done_ev");
+    rx_done_ev = new("rx_done_ev");
+  endfunction
 
   function void build_phase(uvm_phase phase);
-    item_export = new("item_export", this);
     for (int i = 0; i < 8; i++) shadow_regs[i] = 0;
-    burst_count = 0;
+    transaction_count = 0;
     write_count = 0;
     read_count = 0;
     match_count = 0;
     mismatch_count = 0;
-    burst_count_total = 0;
+    burst_count = 0;
+    tx_serial_count = 0;
+    rx_serial_count = 0;
+    parity_errors = 0;
+    framing_errors = 0;
+    loopback_matches = 0;
+    loopback_mismatches = 0;
+    test_stats.total = 0;
+    test_stats.passed = 0;
+    test_stats.failed = 0;
+    tx_fifo.delete();
+    rx_fifo.delete();
+    expected_rx_fifo.delete();
+    write_history.delete();
+    read_history.delete();
+    errors.delete();
+    error_msgs.delete();
   endfunction
 
   function void write({{ spec.design_name }}_seq_item item);
-    if (item.we) begin
-      // Write: update shadow register
-      shadow_regs[item.addr] = item.data;
-      write_count++;
-      `uvm_info("SB", $sformatf("WRITE  addr=0x%0h data=0x%0h [shadow=0x%0h]",
-                item.addr, item.data, shadow_regs[item.addr]), UVM_MEDIUM)
+    transaction_t tr;
+    tr.data = item.data;
+    tr.addr = item.addr;
+    tr.we = item.we;
+    tr.timestamp = $time;
+    tr.seq_num = transaction_count++;
 
-      // Detect burst: consecutive writes
-      if (burst_count == 0) begin
-        burst_addr_start = item.addr;
-        burst_data.delete();
-        burst_data.push_back(item.data);
-        burst_count = 1;
-      end else begin
-        if (item.addr == burst_addr_start + burst_count) begin
-          burst_data.push_back(item.data);
-          burst_count++;
-        end else begin
-          if (burst_count > 1) begin
-            burst_count_total++;
-            `uvm_info("SB", $sformatf("BURST  addr=0x%0h len=%0d data=%p",
-                      burst_addr_start, burst_count, burst_data), UVM_MEDIUM)
-          end
-          burst_addr_start = item.addr;
-          burst_data.delete();
-          burst_data.push_back(item.data);
-          burst_count = 1;
-        end
-      end
+    if (item.we) begin
+      process_write(tr);
     end else begin
-      // Read: verify against shadow register
-      read_count++;
-      if (shadow_regs[item.addr] === item.data) begin
+      process_read(tr);
+    end
+  endfunction
+
+  protected function void process_write(transaction_t tr);
+    logic [7:0] old_val;
+
+    old_val = shadow_regs[tr.addr];
+    shadow_regs[tr.addr] = tr.data;
+    write_count++;
+    write_history.push_back(tr);
+
+    `uvm_info("SB", $sformatf("WRITE[%0d] addr=0x%0h data=0x%02h (old=0x%02h)",
+              write_count, tr.addr, tr.data, old_val), UVM_HIGH)
+
+    if (tr.addr == 3'h0) begin
+      tx_fifo.push_back(tr.data);
+      expected_rx_fifo.push_back(tr.data);
+      `uvm_info("SB_TX", $sformatf("Queued TX data: 0x%02h, tx_fifo size=%0d",
+                tr.data, tx_fifo.size()), UVM_MEDIUM)
+    end
+
+    detect_burst(tr);
+  endfunction
+
+  protected function void process_read(transaction_t tr);
+    logic [7:0] expected;
+
+    read_count++;
+    read_history.push_back(tr);
+
+    expected = shadow_regs[tr.addr];
+
+    `uvm_info("SB", $sformatf("READ[%0d] addr=0x%0h expected=0x%02h actual=0x%02h",
+              read_count, tr.addr, expected, tr.data), UVM_HIGH)
+
+    if (tr.addr == 3'h5) begin
+      `uvm_info("SB_LSR", $sformatf("LSR read: 0x%02h (DR=%b, THRE=%b, TEMT=%b)",
+                tr.data, tr.data[0], tr.data[5], tr.data[6]), UVM_MEDIUM)
+    end
+    else if (tr.addr == 3'h0) begin
+      if (shadow_regs[3'h3][7]) begin
+        `uvm_info("SB", "Reading DLL (DLAB=1)", UVM_MEDIUM)
+      end else begin
+        `uvm_info("SB_RX", $sformatf("Reading RBR: 0x%02h", tr.data), UVM_MEDIUM)
+        rx_fifo.push_back(tr.data);
+      end
+    end
+
+    if (tr.addr inside {3'h3, 3'h4, 3'h7}) begin
+      if (tr.data === expected) begin
         match_count++;
-        `uvm_info("SB", $sformatf("READ   addr=0x%0h data=0x%0h [MATCH]",
-                  item.addr, item.data), UVM_MEDIUM)
+        `uvm_info("SB", $sformatf("READ MATCH: addr=0x%0h data=0x%02h", tr.addr, tr.data), UVM_HIGH)
       end else begin
         mismatch_count++;
-        `uvm_error("SB", $sformatf("READ   addr=0x%0h expected=0x%0h got=0x%0h [MISMATCH]",
-                    item.addr, shadow_regs[item.addr], item.data))
-      end
-
-      // Burst read detection
-      if (burst_count > 0 && burst_count_total > 0) begin
-        `uvm_info("SB", $sformatf("BURST  read detected addr=0x%0h", item.addr), UVM_DEBUG)
+        log_error($sformatf("READ MISMATCH: addr=0x%0h expected=0x%02h got=0x%02h",
+                  tr.addr, expected, tr.data));
       end
     end
   endfunction
 
+  protected function void detect_burst(transaction_t tr);
+    static int burst_len = 0;
+    static logic [2:0] last_addr = 'hFF;
+
+    if (write_history.size() >= 2) begin
+      transaction_t last_tr = write_history[$];
+      if (last_tr.we && tr.we && (tr.addr == last_tr.addr + 1)) begin
+        burst_len++;
+        if (burst_len == 2) begin
+          burst_count++;
+          `uvm_info("SB_BURST", $sformatf("Burst write detected starting at addr=0x%0h", last_tr.addr), UVM_MEDIUM)
+        end
+      end else begin
+        burst_len = 1;
+      end
+    end
+    last_addr = tr.addr;
+  endfunction
+
+  function void write_tx(uart_serial_item item);
+    logic [7:0] expected;
+
+    tx_serial_count++;
+
+    `uvm_info("SB_TX_SER", $sformatf("Serial TX: %s", item.convert2string()), UVM_MEDIUM)
+
+    if (item.parity_error) begin
+      parity_errors++;
+      log_error($sformatf("TX parity error: data=0x%02h", item.data));
+    end
+    if (item.framing_error) begin
+      framing_errors++;
+      log_error($sformatf("TX framing error: data=0x%02h", item.data));
+    end
+
+    if (tx_fifo.size() > 0) begin
+      expected = tx_fifo.pop_front();
+      if (item.data === expected) begin
+        `uvm_info("SB_TX", $sformatf("TX MATCH: expected=0x%02h got=0x%02h", expected, item.data), UVM_MEDIUM)
+      end else begin
+        log_error($sformatf("TX MISMATCH: expected=0x%02h got=0x%02h", expected, item.data));
+      end
+    end else begin
+      `uvm_warning("SB_TX", $sformatf("Unexpected TX byte: 0x%02h (tx_fifo empty)", item.data))
+    end
+
+    if (tx_fifo.size() == 0) begin
+      tx_done_ev.trigger();
+    end
+  endfunction
+
+  function void write_rx(uart_serial_item item);
+    logic [7:0] expected;
+
+    rx_serial_count++;
+
+    `uvm_info("SB_RX_SER", $sformatf("Serial RX: %s", item.convert2string()), UVM_MEDIUM)
+
+    if (item.parity_error) begin
+      parity_errors++;
+      log_error($sformatf("RX parity error: data=0x%02h", item.data));
+    end
+    if (item.framing_error) begin
+      framing_errors++;
+      log_error($sformatf("RX framing error: data=0x%02h", item.data));
+    end
+
+    if (enable_loopback_check && expected_rx_fifo.size() > 0) begin
+      expected = expected_rx_fifo[0];
+      if (item.data === expected) begin
+        void'(expected_rx_fifo.pop_front());
+        loopback_matches++;
+        `uvm_info("SB_LB", $sformatf("Loopback MATCH: 0x%02h", item.data), UVM_MEDIUM)
+      end else begin
+        loopback_mismatches++;
+        log_error($sformatf("Loopback MISMATCH: expected=0x%02h got=0x%02h", expected, item.data));
+      end
+    end
+
+    if (rx_fifo.size() == 0 && expected_rx_fifo.size() == 0) begin
+      rx_done_ev.trigger();
+    end
+  endfunction
+
+  protected function void log_error(string msg);
+    errors.push_back(errors.size() + 1);
+    error_msgs.push_back(msg);
+    `uvm_error("SB", msg)
+  endfunction
+
+  task wait_for_tx_complete(int timeout = 1000000);
+    fork
+      tx_done_ev.wait_trigger();
+      begin
+        #timeout;
+        `uvm_error("SB", "Timeout waiting for TX complete")
+      end
+    join_any
+    disable fork;
+  endtask
+
+  function bit check_data_integrity();
+    return (mismatch_count == 0 && parity_errors == 0 && framing_errors == 0 && loopback_mismatches == 0);
+  endfunction
+
   function void report_phase(uvm_phase phase);
     string report_str;
+    string error_summary;
+    bit status_pass;
+
+    status_pass = check_data_integrity();
+
     report_str = $sformatf(
-      "\n=== Scoreboard Report ===\n"
-      "  Writes:   %0d\n"
-      "  Reads:    %0d\n"
-      "  Matches:  %0d\n"
-      "  Mismatches: %0d\n"
-      "  Bursts:   %0d\n"
-      "  Status:   %s\n"
-      "===========================",
-      write_count, read_count, match_count, mismatch_count,
-      burst_count_total,
-      (mismatch_count == 0) ? "PASS" : "FAIL"
+      "\n"
+      "================================================================================\n"
+      "                         SCOREBOARD REPORT\n"
+      "================================================================================\n"
+      "\n"
+      "  [ Bus Transactions ]\n"
+      "    Total Transactions:  %0d\n"
+      "    Writes:              %0d\n"
+      "    Reads:               %0d\n"
+      "    Bursts:              %0d\n"
+      "    Register Matches:    %0d\n"
+      "    Register Mismatches: %0d\n"
+      "\n"
+      "  [ Serial Transactions ]\n"
+      "    TX Bytes Sent:       %0d\n"
+      "    RX Bytes Received:   %0d\n"
+      "    Parity Errors:       %0d\n"
+      "    Framing Errors:      %0d\n"
+      "\n"
+      "  [ Loopback Test ]\n"
+      "    Matches:             %0d\n"
+      "    Mismatches:          %0d\n"
+      "\n"
+      "  [ FIFO Status ]\n"
+      "    TX FIFO remaining:   %0d\n"
+      "    RX FIFO remaining:   %0d\n",
+      transaction_count, write_count, read_count, burst_count,
+      match_count, mismatch_count,
+      tx_serial_count, rx_serial_count, parity_errors, framing_errors,
+      loopback_matches, loopback_mismatches,
+      tx_fifo.size(), rx_fifo.size()
     );
-    if (mismatch_count == 0)
+
+    if (status_pass) begin
+      report_str = {report_str, $sformatf(
+        "\n"
+        "  [ STATUS ]            PASS\n"
+        "================================================================================\n"
+      )};
       `uvm_info("SCOREBOARD", report_str, UVM_LOW)
-    else
+    end else begin
+      report_str = {report_str, $sformatf(
+        "\n"
+        "  [ STATUS ]            FAIL\n"
+        "================================================================================\n"
+      )};
       `uvm_error("SCOREBOARD", report_str)
+
+      if (error_msgs.size() > 0) begin
+        error_summary = "\n  [ Error Summary ]\n";
+        foreach (error_msgs[i]) begin
+          error_summary = {error_summary, $sformatf("    %0d: %s\n", i+1, error_msgs[i])};
+        end
+        `uvm_info("SCOREBOARD", error_summary, UVM_LOW)
+      end
+    end
+
+    if (write_history.size() > 0) begin
+      `uvm_info("SB_HIST", $sformatf("\n  Last %0d writes (addr:data):",
+                write_history.size() < 10 ? write_history.size() : 10), UVM_HIGH)
+      for (int i = write_history.size() > 10 ? write_history.size()-10 : 0;
+           i < write_history.size(); i++) begin
+        `uvm_info("SB_HIST", $sformatf("    [%0d] 0x%0h:0x%02h @%0t",
+                  i, write_history[i].addr, write_history[i].data, write_history[i].timestamp), UVM_HIGH)
+      end
+    end
+  endfunction
+
+  function void extract_coverage(output int cov_write, output int cov_read,
+                                  output int cov_addr_hit, output int cov_data_pattern);
+    int addr_bits[8];
+    int data_patterns[4];
+
+    cov_write = write_count;
+    cov_read = read_count;
+
+    foreach (write_history[i]) begin
+      addr_bits[write_history[i].addr] = 1;
+    end
+    foreach (read_history[i]) begin
+      addr_bits[read_history[i].addr] = 1;
+    end
+
+    cov_addr_hit = addr_bits.sum() with (int'(item));
+    cov_data_pattern = 0;
   endfunction
 endclass

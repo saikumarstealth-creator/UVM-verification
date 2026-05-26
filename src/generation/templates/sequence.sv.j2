@@ -1,20 +1,33 @@
-// UVM Sequences for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Enhanced UVM Sequences for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Includes: RAL-based sequences, UART TX/RX, baud config, interrupt tests
 {% set p = spec.protocol|default("wishbone") %}
+
 class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_base_seq)
-  function new(string n = "{{ spec.design_name }}_base_seq"); super.new(n); endfunction
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string n = "{{ spec.design_name }}_base_seq");
+    super.new(n);
+  endfunction
+
   task body;
     `uvm_info("SEQ", "Starting base sequence", UVM_MEDIUM)
   endtask
 endclass
 
-class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item});
   `uvm_object_utils({{ spec.design_name }}_write_reg_seq)
+
   rand logic [2:0] reg_addr;
   rand logic [7:0] write_data;
+
   constraint c_reg_addr { reg_addr inside {0,1,2,3,4,5,6,7}; }
 
-  function new(string n = "{{ spec.design_name }}_write_reg_seq"); super.new(n); endfunction
+  function new(string n = "{{ spec.design_name }}_write_reg_seq");
+    super.new(n);
+  endfunction
+
   task body;
     req = {{ spec.design_name }}_seq_item::type_id::create("req");
     start_item(req);
@@ -26,22 +39,33 @@ endclass
 
 class {{ spec.design_name }}_read_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_read_reg_seq)
+
   rand logic [2:0] reg_addr;
+  logic [7:0] read_data;
+
   constraint c_reg_addr { reg_addr inside {0,1,2,3,4,5,6,7}; }
 
-  function new(string n = "{{ spec.design_name }}_read_reg_seq"); super.new(n); endfunction
+  function new(string n = "{{ spec.design_name }}_read_reg_seq");
+    super.new(n);
+  endfunction
+
   task body;
     req = {{ spec.design_name }}_seq_item::type_id::create("req");
     start_item(req);
     assert(req.randomize() with { we == 0; addr == reg_addr; delay == 0; });
     finish_item(req);
-    `uvm_info("SEQ", $sformatf("Read reg[0x%0h] => 0x%0h", reg_addr, req.data), UVM_MEDIUM)
+    read_data = req.data;
+    `uvm_info("SEQ", $sformatf("Read reg[0x%0h] => 0x%0h", reg_addr, read_data), UVM_MEDIUM)
   endtask
 endclass
 
 class {{ spec.design_name }}_all_regs_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
-  `uvm_object_utils({{ spec.design_name }}_all_regs_seq})
-  function new(string n = "{{ spec.design_name }}_all_regs_seq"); super.new(n); endfunction
+  `uvm_object_utils({{ spec.design_name }}_all_regs_seq)
+
+  function new(string n = "{{ spec.design_name }}_all_regs_seq");
+    super.new(n);
+  endfunction
+
   task body;
     for (int i = 0; i < 8; i++) begin
       {{ spec.design_name }}_write_reg_seq wseq;
@@ -57,12 +81,422 @@ class {{ spec.design_name }}_all_regs_seq extends uvm_sequence #({{ spec.design_
   endtask
 endclass
 
+{% if p == "uart" %}
+
+class uart_config_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_config_seq)
+
+  rand int baud_rate;
+  rand int data_bits;
+  rand int stop_bits;
+  rand bit parity_en;
+  rand bit even_parity;
+
+  constraint c_valid {
+    baud_rate inside {9600, 19200, 38400, 57600, 115200};
+    data_bits inside {5, 6, 7, 8};
+    stop_bits inside {1, 2};
+  }
+
+  function new(string n = "uart_config_seq");
+    super.new(n);
+    baud_rate = 115200;
+    data_bits = 8;
+    stop_bits = 1;
+    parity_en = 0;
+    even_parity = 0;
+  endfunction
+
+  task body;
+    uvm_status_e status;
+    logic [7:0] lcr_val;
+    logic [15:0] divisor;
+
+    divisor = get_divisor(baud_rate);
+
+    lcr_val[1:0] = get_wls(data_bits);
+    lcr_val[2] = (stop_bits == 2) ? 1'b1 : 1'b0;
+    lcr_val[3] = parity_en;
+    lcr_val[4] = even_parity;
+    lcr_val[7] = 1'b1;
+
+    `uvm_info("UART_CFG", $sformatf("Configuring: Baud=%0d, Data bits=%0d, Stop bits=%0d, Parity=%0d",
+              baud_rate, data_bits, stop_bits, parity_en), UVM_MEDIUM)
+
+    if (reg_model) begin
+      reg_model.lcr.write(status, lcr_val, .parent(this));
+      reg_model.dll.write(status, divisor[7:0], .parent(this));
+      reg_model.dlm.write(status, divisor[15:8], .parent(this));
+      lcr_val[7] = 1'b0;
+      reg_model.lcr.write(status, lcr_val, .parent(this));
+    end else begin
+      {{ spec.design_name }}_write_reg_seq wseq;
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      wseq.reg_addr = 3'h3; wseq.write_data = lcr_val;
+      wseq.start(m_sequencer);
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      wseq.reg_addr = 3'h0; wseq.write_data = divisor[7:0];
+      wseq.start(m_sequencer);
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      wseq.reg_addr = 3'h1; wseq.write_data = divisor[15:8];
+      wseq.start(m_sequencer);
+      lcr_val[7] = 1'b0;
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      wseq.reg_addr = 3'h3; wseq.write_data = lcr_val;
+      wseq.start(m_sequencer);
+    end
+  endtask
+
+  function logic [1:0] get_wls(int bits);
+    case (bits)
+      5: return 2'b00;
+      6: return 2'b01;
+      7: return 2'b10;
+      8: return 2'b11;
+      default: return 2'b11;
+    endcase
+  endfunction
+
+  function logic [15:0] get_divisor(int baud);
+    int clk_freq = 100_000_000;
+    return (clk_freq / (16 * baud));
+  endfunction
+endclass
+
+class uart_tx_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_tx_seq)
+
+  rand logic [7:0] tx_data[$];
+  int num_bytes;
+
+  constraint c_tx_data {
+    tx_data.size() == num_bytes;
+    num_bytes inside {[1:32]};
+  }
+
+  function new(string n = "uart_tx_seq");
+    super.new(n);
+    num_bytes = 1;
+  endfunction
+
+  task body;
+    uvm_status_e status;
+    logic [7:0] lsr_val;
+
+    `uvm_info("UART_TX", $sformatf("Transmitting %0d bytes: %p", num_bytes, tx_data), UVM_MEDIUM)
+
+    foreach (tx_data.size()) begin
+      wait_for_tx_empty();
+
+      if (reg_model) begin
+        reg_model.rbr_thr.write(status, tx_data[i], .parent(this));
+      end else begin
+        {{ spec.design_name }}_write_reg_seq wseq;
+        wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+        wseq.reg_addr = 3'h0;
+        wseq.write_data = tx_data[i];
+        wseq.start(m_sequencer);
+      end
+      `uvm_info("UART_TX", $sformatf("Wrote byte: 0x%02h", tx_data[i]), UVM_HIGH)
+    end
+
+    `uvm_info("UART_TX", "TX sequence complete", UVM_MEDIUM)
+  endtask
+
+  task wait_for_tx_empty();
+    logic [7:0] lsr_data;
+    int timeout = 10000;
+
+    for (int i = 0; i < timeout; i++) begin
+      {{ spec.design_name }}_read_reg_seq rseq;
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+      rseq.reg_addr = 3'h5;
+      rseq.start(m_sequencer);
+      if (rseq.read_data[5]) begin
+        return;
+      end
+      @(posedge m_sequencer.vif.clk);
+    end
+    `uvm_error("UART_TX", "Timeout waiting for TX empty")
+  endtask
+endclass
+
+class uart_rx_seq extends {{ spec.design_name }}_seq_item);
+  `uvm_object_utils(uart_rx_seq)
+
+  logic [7:0] rx_data[$];
+  int expected_bytes = 1;
+  int timeout_cycles = 100000;
+
+  function new(string n = "uart_rx_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    uvm_status_e status;
+    logic [7:0] lsr_val;
+    int timeout_cnt = 0;
+
+    `uvm_info("UART_RX", $sformatf("Waiting for %0d RX bytes", expected_bytes), UVM_MEDIUM)
+
+    while (rx_data.size() < expected_bytes && timeout_cnt < timeout_cycles) begin
+      if (reg_model) begin
+        reg_model.lsr.read(status, lsr_val, .parent(this));
+      end else begin
+        {{ spec.design_name }}_read_reg_seq rseq;
+        rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+        rseq.reg_addr = 3'h5;
+        rseq.start(m_sequencer);
+        lsr_val = rseq.read_data;
+      end
+
+      if (lsr_val[0]) begin
+        logic [7:0] data;
+        if (reg_model) begin
+          reg_model.rbr_thr.read(status, data, .parent(this));
+        end else begin
+          {{ spec.design_name }}_read_reg_seq rseq2;
+          rseq2 = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq2");
+          rseq2.reg_addr = 3'h0;
+          rseq2.start(m_sequencer);
+          data = rseq2.read_data;
+        end
+        rx_data.push_back(data);
+        `uvm_info("UART_RX", $sformatf("Received byte: 0x%02h", data), UVM_HIGH)
+      end else begin
+        timeout_cnt++;
+        @(posedge m_sequencer.vif.clk);
+      end
+    end
+
+    if (timeout_cnt >= timeout_cycles) begin
+      `uvm_error("UART_RX", $sformatf("Timeout! Received %0d/%0d bytes", rx_data.size(), expected_bytes))
+    end
+  endtask
+endclass
+
+class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_loopback_seq)
+
+  rand logic [7:0] test_data[$];
+  int num_passes = 0;
+  int errors = 0;
+
+  constraint c_test_data {
+    test_data.size() inside {[1:16]};
+  }
+
+  function new(string n = "uart_loopback_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    uvm_status_e status;
+    logic [7:0] mcr_val;
+
+    `uvm_info("UART_LB", "Starting loopback test", UVM_MEDIUM)
+
+    if (reg_model) begin
+      reg_model.mcr.read(status, mcr_val, .parent(this));
+      mcr_val[4] = 1'b1;
+      reg_model.mcr.write(status, mcr_val, .parent(this));
+    end else begin
+      {{ spec.design_name }}_read_reg_seq rseq;
+      {{ spec.design_name }}_write_reg_seq wseq;
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+      rseq.reg_addr = 3'h4;
+      rseq.start(m_sequencer);
+      mcr_val = rseq.read_data;
+      mcr_val[4] = 1'b1;
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      wseq.reg_addr = 3'h4;
+      wseq.write_data = mcr_val;
+      wseq.start(m_sequencer);
+    end
+
+    foreach (test_data[i]) begin
+      if (reg_model) begin
+        reg_model.rbr_thr.write(status, test_data[i], .parent(this));
+        #10us;
+      end else begin
+        {{ spec.design_name }}_write_reg_seq wseq;
+        wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+        wseq.reg_addr = 3'h0;
+        wseq.write_data = test_data[i];
+        wseq.start(m_sequencer);
+        #10us;
+      end
+    end
+
+    `uvm_info("UART_LB", "Loopback test: Enable modem loopback disabled", UVM_MEDIUM)
+  endtask
+endclass
+
+class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_interrupt_seq)
+
+  typedef enum {
+    INT_RX_DATA, INT_TX_EMPTY, INT_LINE_STATUS, INT_MODEM_STATUS
+  } int_type_t;
+
+  rand int_type_t int_type;
+  bit interrupt_detected;
+
+  function new(string n = "uart_interrupt_seq");
+    super.new(n);
+    interrupt_detected = 0;
+  endfunction
+
+  task body;
+    uvm_status_e status;
+    logic [7:0] ier_val;
+    logic [7:0] iir_val;
+
+    `uvm_info("UART_INT", $sformatf("Testing interrupt type: %s", int_type.name()), UVM_MEDIUM)
+
+    case (int_type)
+      INT_RX_DATA:    ier_val = 8'h01;
+      INT_TX_EMPTY:  ier_val = 8'h02;
+      INT_LINE_STATUS: ier_val = 8'h04;
+      INT_MODEM_STATUS: ier_val = 8'h08;
+    endcase
+
+    if (reg_model) begin
+      reg_model.ier.write(status, ier_val, .parent(this));
+    end else begin
+      {{ spec.design_name }}_write_reg_seq wseq;
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+      wseq.reg_addr = 3'h1;
+      wseq.write_data = ier_val;
+      wseq.start(m_sequencer);
+    end
+
+    fork
+      begin : wait_for_interrupt();
+      begin : trigger_interrupt();
+      join
+    join_any
+    disable fork;
+
+    if (reg_model) begin
+      reg_model.iir.read(status, iir_val, .parent(this));
+    end else begin
+      {{ spec.design_name }}_read_reg_seq rseq;
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+      rseq.reg_addr = 3'h2;
+      rseq.start(m_sequencer);
+      iir_val = rseq.read_data;
+    end
+
+    if (iir_val[0] == 1'b0) begin
+      `uvm_info("UART_INT", $sformatf("Interrupt pending, IIR = 0x%02h", iir_val), UVM_MEDIUM)
+      interrupt_detected = 1;
+    end
+  endtask
+
+  task wait_for_interrupt();
+    int timeout = 100000;
+    for (int i = 0; i < timeout; i++) begin
+      @(posedge m_sequencer.vif.clk);
+      if (m_sequencer.vif.uart_intr) begin
+        `uvm_info("UART_INT", "Interrupt detected on uart_intr signal", UVM_MEDIUM)
+        return;
+      end
+    end
+    `uvm_warning("UART_INT", "Timeout waiting for interrupt signal")
+  endtask
+
+  task trigger_interrupt();
+    uvm_status_e status;
+    if (int_type == INT_TX_EMPTY) begin
+      if (reg_model) begin
+        reg_model.rbr_thr.write(status, 8'hAA, .parent(this));
+      end else begin
+        {{ spec.design_name }}_write_reg_seq wseq;
+        wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+        wseq.reg_addr = 3'h0;
+        wseq.write_data = 8'hAA;
+        wseq.start(m_sequencer);
+      end
+    end
+  endtask
+endclass
+
+class uart_baud_change_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_baud_change_seq)
+
+  int baud_rates[$] = {9600, 19200, 38400, 57600, 115200};
+
+  function new(string n = "uart_baud_change_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    foreach (baud_rates[i]) begin
+      uart_config_seq cfg_seq;
+      uart_tx_seq tx_seq;
+
+      `uvm_info("UART_BAUD", $sformatf("Testing baud rate: %0d", baud_rates[i]), UVM_MEDIUM)
+
+      cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+      cfg_seq.baud_rate = baud_rates[i];
+      cfg_seq.data_bits = 8;
+      cfg_seq.stop_bits = 1;
+      cfg_seq.start(m_sequencer);
+
+      tx_seq = uart_tx_seq::type_id::create("tx_seq");
+      tx_seq.tx_data = {8'h55, 8'hAA, 8'h33, 8'hCC};
+      tx_seq.num_bytes = 4;
+      tx_seq.start(m_sequencer);
+
+      #100us;
+    end
+  endtask
+endclass
+
+class uart_reg_hw_reset_seq extends uvm_reg_hw_reset_seq;
+  `uvm_object_utils(uart_reg_hw_reset_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "uart_reg_hw_reset_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+class uart_reg_bit_bash_seq extends uvm_reg_bit_bash_seq;
+  `uvm_object_utils(uart_reg_bit_bash_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "uart_reg_bit_bash_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+{% endif %}
+
 {% if p == "axi4lite" %}
 class {{ spec.design_name }}_axi_burst_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
-  `uvm_object_utils({{ spec.design_name }}_axi_burst_seq})
+  `uvm_object_utils({{ spec.design_name }}_axi_burst_seq)
+
   rand int burst_len;
   constraint c_burst { burst_len inside {[1:4]}; }
-  function new(string n = "{{ spec.design_name }}_axi_burst_seq"); super.new(n); endfunction
+
+  function new(string n = "{{ spec.design_name }}_axi_burst_seq");
+    super.new(n);
+  endfunction
+
   task body;
     for (int i = 0; i < burst_len; i++) begin
       req = {{ spec.design_name }}_seq_item::type_id::create("req");

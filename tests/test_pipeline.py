@@ -44,6 +44,32 @@ DEMO_SPEC = {
     ],
 }
 
+SIMILAR_UART_SPEC = {
+    "design_name": "uart2",
+    "clock_reset": {"clock": "clk", "reset": "rst_n", "reset_active": 0},
+    "interfaces": [{
+        "name": "uart_if2",
+        "signals": [
+            {"name": "tx", "direction": "output"},
+            {"name": "rx", "direction": "input"},
+            {"name": "baud_tick", "direction": "input"},
+        ],
+    }],
+    "registers": [
+        {"name": "ctrl", "address": "0x00", "fields": [
+            {"name": "enable", "bits": "0"},
+            {"name": "baud_div", "bits": "7:2"},
+        ]},
+        {"name": "status", "address": "0x04", "fields": [
+            {"name": "tx_full", "bits": "0"},
+            {"name": "rx_empty", "bits": "1"},
+        ]},
+        {"name": "divisor", "address": "0x08", "fields": [
+            {"name": "div", "bits": "15:0"},
+        ]},
+    ],
+}
+
 
 def test_design_spec_validation():
     spec = DesignSpec(**DEMO_SPEC)
@@ -203,4 +229,152 @@ registers:
         result = pipeline.run(str(core_path))
         assert result["passed"]
         assert result["design_name"] == "uart16550"
+        assert len(result["generated_files"]) >= 5
+
+
+def test_rich_feature_extraction():
+    """Test rich feature extraction for ML similarity."""
+    from src.features.extractors import RichSpecFeatureExtractor
+    from src.models.ml_utils import RichFeatureVector
+
+    spec = DesignSpec(**DEMO_SPEC)
+    extractor = RichSpecFeatureExtractor()
+    fv = extractor.extract(spec)
+
+    assert isinstance(fv, RichFeatureVector)
+    assert fv.design_name == "uart"
+    assert fv.interface_count == 1
+    assert fv.total_signals == 3
+    assert fv.register_count == 2
+    assert "tx" in fv.signal_names
+    assert "rx" in fv.signal_names
+    assert "ctrl" in fv.register_names
+    assert "status" in fv.register_names
+    assert fv.protocol_type == "uart"
+
+    fp = fv.fingerprint()
+    assert len(fp) == 16
+    assert isinstance(fp, str)
+
+
+def test_similarity_index():
+    """Test similarity index for spec retrieval."""
+    from src.features.extractors import RichSpecFeatureExtractor
+    from src.models.similarity_index import SimilarityIndex
+
+    spec1 = DesignSpec(**DEMO_SPEC)
+    spec2 = DesignSpec(**SIMILAR_UART_SPEC)
+
+    extractor = RichSpecFeatureExtractor()
+    fv1 = extractor.extract(spec1)
+    fv2 = extractor.extract(spec2)
+
+    index = SimilarityIndex()
+    assert len(index) == 0
+
+    index.add(fv1, DEMO_SPEC)
+    assert len(index) == 1
+
+    index.add(fv2, SIMILAR_UART_SPEC)
+    assert len(index) == 2
+
+    results = index.search(fv1, top_k=2)
+    assert len(results) >= 1
+    assert results[0].similarity >= 0.5
+    assert results[0].protocol_type == "uart"
+
+    fp = fv1.fingerprint()
+    entry = index.get(fp)
+    assert entry is not None
+    assert entry.design_name == "uart"
+
+
+def test_ml_model_config():
+    """Test ML generation model configuration."""
+    from src.models.ml_generation_model import MLModelConfig
+
+    cfg = MLModelConfig()
+    assert cfg.similarity_threshold == 0.75
+    assert cfg.fallback_to_templates is True
+    assert cfg.auto_learn is True
+    assert cfg.top_k_retrieval == 3
+
+    cfg2 = MLModelConfig(
+        similarity_threshold=0.85,
+        auto_learn=False,
+    )
+    assert cfg2.similarity_threshold == 0.85
+    assert cfg2.auto_learn is False
+
+
+def test_ml_generation_model():
+    """Test ML generation model train/predict."""
+    from src.models.ml_generation_model import MLGenerationModel
+    from src.config import PipelineConfig
+
+    spec = DesignSpec(**DEMO_SPEC)
+    model = MLGenerationModel(templates_dir="src/generation/templates")
+
+    assert not model.is_trained
+    meta = model.train([spec])
+    assert model.is_trained
+    assert "index_size" in meta
+
+    cfg = PipelineConfig()
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg.generation.output_dir = tmp
+        result = model.predict(spec, cfg)
+        assert len(result) >= 5
+        assert any("testbench.sv" in k for k in result)
+
+        retrieval = model.last_retrieval
+        assert retrieval is not None
+        assert isinstance(retrieval.used_similarity, bool)
+
+
+def test_combined_similarity():
+    """Test combined similarity metric."""
+    from src.features.extractors import RichSpecFeatureExtractor
+    from src.models.ml_utils import combined_similarity
+
+    spec1 = DesignSpec(**DEMO_SPEC)
+    spec2 = DesignSpec(**SIMILAR_UART_SPEC)
+
+    extractor = RichSpecFeatureExtractor()
+    fv1 = extractor.extract(spec1)
+    fv2 = extractor.extract(spec2)
+
+    sim = combined_similarity(fv1, fv2)
+    assert 0.0 <= sim <= 1.0
+    assert sim > 0.5
+
+    self_sim = combined_similarity(fv1, fv1)
+    assert self_sim == 1.0
+
+
+def test_pipeline_ml_mode():
+    """Test pipeline with ML mode enabled."""
+    with tempfile.TemporaryDirectory() as tmp:
+        spec_path = Path(tmp) / "test_spec.yaml"
+        with open(spec_path, "w") as f:
+            yaml.dump(DEMO_SPEC, f)
+
+        pipeline = TBPipeline()
+        pipeline.cfg.generation.output_dir = tmp
+        pipeline.cfg.tracking.enabled = False
+        pipeline.cfg.evaluation.threshold = 0.5
+
+        pipeline.cfg.ml.enabled = True
+        pipeline.cfg.ml.model_type = "hybrid"
+        pipeline.cfg.ml.similarity_threshold = 0.6
+
+        model = pipeline._create_model()
+        assert model is not None
+
+        from src.models.ml_generation_model import MLGenerationModel
+        assert isinstance(model, MLGenerationModel)
+
+        result = pipeline.run(str(spec_path))
+        assert result["passed"]
+        assert result["design_name"] == "uart"
         assert len(result["generated_files"]) >= 5

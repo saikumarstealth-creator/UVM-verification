@@ -44,10 +44,12 @@ class Reporter:
             print(report.summary())
             outputs["console"] = report.summary()
         if "json" in formats:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
             path = self.output_dir / f"eval_{report.spec_name}.json"
             path.write_text(json.dumps(report.to_dict(), indent=2))
             outputs["json"] = str(path)
         if "markdown" in formats:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
             path = self.output_dir / f"eval_{report.spec_name}.md"
             lines = [
                 f"# Evaluation Report: `{report.spec_name}`",

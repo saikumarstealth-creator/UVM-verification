@@ -11,6 +11,9 @@ from src.evaluation.metrics import TBMetrics
 from src.evaluation.reporters import Reporter, Report
 from src.features.extractors import SpecFeatureExtractor
 from src.generation.engine import GenerationEngine
+from src.models.base_model import GenerationModel
+from src.models.enhanced_ml_model import EnhancedMLGenerationModel
+from src.models.ml_generation_model import MLGenerationModel, MLModelConfig
 from src.models.registry import ModelRegistry
 from src.models.template_model import TemplateModel
 from src.simulation import Simulator
@@ -31,7 +34,7 @@ class TBPipeline:
         self.validator = SpecValidator()
         self.preprocessor = SpecPreprocessor()
         self.feature_extractor = SpecFeatureExtractor()
-        self.model = TemplateModel(templates_dir=self.cfg.generation.templates_dir)
+        self.model = self._create_model()
         self.engine = GenerationEngine(self.model)
         self.metrics_calc = TBMetrics()
         self.reporter = Reporter(output_dir=self.cfg.generation.output_dir)
@@ -40,6 +43,37 @@ class TBPipeline:
         self.simulator: Simulator = self._create_simulator()
         self.coverage_analyzer: Optional[CoverageAnalyzer] = None
         self.coverage_analysis: Optional[Any] = None
+
+    def _create_model(self) -> GenerationModel:
+        """Create the appropriate model based on ML config."""
+        ml_cfg = self.cfg.ml
+
+        if not ml_cfg.enabled:
+            self.logger.info("Using template-based generation (ML disabled)")
+            return TemplateModel(templates_dir=self.cfg.generation.templates_dir)
+
+        model_type = ml_cfg.model_type
+        self.logger.info("ML generation enabled, model_type=%s", model_type)
+
+        if model_type in ("ml", "hybrid"):
+            ml_model_config = MLModelConfig(
+                similarity_threshold=ml_cfg.similarity_threshold,
+                auto_learn=ml_cfg.auto_learn,
+                index_path=ml_cfg.index_path,
+                top_k_retrieval=ml_cfg.top_k_retrieval,
+                fallback_to_templates=ml_cfg.fallback_to_templates,
+            )
+            model = EnhancedMLGenerationModel(
+                name="enhanced_ml_model",
+                config=ml_model_config,
+                templates_dir=self.cfg.generation.templates_dir,
+                strict_validation=True,
+            )
+            self.logger.info("Created EnhancedMLGenerationModel with index size: %d", len(model.index))
+            return model
+
+        self.logger.info("Falling back to template model")
+        return TemplateModel(templates_dir=self.cfg.generation.templates_dir)
 
     def _create_simulator(self) -> Simulator:
         sim_type = self.cfg.auto_train.simulator
