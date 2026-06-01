@@ -2,6 +2,7 @@ import React from 'react'
 import { FileCode, FileText, Package, Database, Cpu, ClipboardCheck, ArrowDownToLine } from 'lucide-react'
 import useAppStore from '../store/appStore'
 import { useGenerationAPI } from '../hooks/useGenerationAPI'
+import { useState } from 'react'
 
 const FileViewer: React.FC = () => {
   const { 
@@ -14,7 +15,8 @@ const FileViewer: React.FC = () => {
     status
   } = useAppStore()
 
-  const { getFileContent, downloadAll } = useGenerationAPI()
+  const { getFileContent, downloadFile, downloadAll } = useGenerationAPI()
+  const [copied, setCopied] = useState(false)
 
   const handleFileSelect = async (file: string) => {
     setSelectedFile(file)
@@ -113,7 +115,7 @@ const FileViewer: React.FC = () => {
   }
 
   const hasFiles = generatedFiles.length > 0
-  const isComplete = status === 'completed' || status === 'pending' && generatedFiles.length > 0
+  const isComplete = (status === 'completed' || status === 'failed') && generatedFiles.length > 0
 
   return (
     <div className="bg-eda-bg-secondary border border-eda-border rounded-lg overflow-hidden flex flex-col" style={{ height: '100%' }}>
@@ -186,7 +188,31 @@ const FileViewer: React.FC = () => {
               <span className={getFileColor(selectedFile)}>
                 {getFileIcon(selectedFile)}
               </span>
-              <span className="text-xs font-mono text-eda-text">{selectedFile}</span>
+              <span className="text-xs font-mono text-eda-text flex-1">{selectedFile}</span>
+              <button
+                onClick={async () => {
+                  if (fileContent) {
+                    await navigator.clipboard.writeText(fileContent)
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2000)
+                  }
+                }}
+                className="flex items-center gap-1 text-xs text-eda-text-tertiary hover:text-eda-accent transition-colors"
+                title="Copy to clipboard"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+              {taskId && (
+                <button
+                  onClick={() => downloadFile(taskId, selectedFile)}
+                  className="flex items-center gap-1 text-xs text-eda-text-tertiary hover:text-eda-accent transition-colors"
+                  title="Download file"
+                >
+                  <ArrowDownToLine className="w-3.5 h-3.5" />
+                  Download
+                </button>
+              )}
             </div>
           )}
           

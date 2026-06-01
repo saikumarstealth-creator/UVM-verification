@@ -83,6 +83,26 @@ export const useGenerationAPI = () => {
     }
   }, [setMetrics])
 
+  const downloadFile = useCallback(async (taskId: string, filename: string) => {
+    try {
+      const response = await axios.get(
+        `${API_BASE}/api/generate/${taskId}/files/${encodeURIComponent(filename)}`,
+        { responseType: 'blob' }
+      )
+
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', filename)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to download file:', err)
+    }
+  }, [])
+
   const downloadAll = useCallback(async (taskId: string) => {
     try {
       const response = await axios.get(
@@ -119,6 +139,7 @@ export const useGenerationAPI = () => {
     getFiles,
     getFileContent,
     getMetrics,
+    downloadFile,
     downloadAll,
     listPipelines
   }
