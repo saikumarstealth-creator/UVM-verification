@@ -20,14 +20,20 @@ jobs:
           cog --version
 
       - name: Cog login
-        run: cog login --token ${{ secrets.REPLICATE_API_TOKEN }}
+        run: echo "${{ secrets.REPLICATE_API_TOKEN }}" | cog login --token-stdin
 
       - name: Push model to Replicate
         id: push
         run: |
           OUTPUT=$(cog push r8.im/${{ inputs.model_name }} 2>&1)
           echo "$OUTPUT"
-          VERSION=$(echo "$OUTPUT" | grep -oP 'Pushed: r8\.im/[^ ]+:(\K[^ ]+)' || echo "")
+          VERSION=$(echo "$OUTPUT" | grep -oP 'Pushed image to \S+:(\S+)' | head -1 || echo "")
+          if [ -z "$VERSION" ]; then
+            VERSION=$(echo "$OUTPUT" | grep -oP 'Pushed \S+:\K(\S+)' | head -1 || echo "latest")
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION="latest"
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create deployment
