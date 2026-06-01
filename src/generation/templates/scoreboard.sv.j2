@@ -8,7 +8,15 @@ typedef struct packed {
   logic       we;
   time        timestamp;
   int         seq_num;
+  int         inj_tag;
 } transaction_t;
+
+typedef struct {
+  int          start_addr;
+  int          length;
+  logic [7:0] data[$];
+  time         start_time;
+} burst_summary_t;
 
 class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   `uvm_component_utils({{ spec.design_name }}_scoreboard)
@@ -18,6 +26,9 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   uvm_analysis_imp_tx #(uart_serial_item, {{ spec.design_name }}_scoreboard) tx_export;
   `uvm_analysis_imp_decl(_rx)
   uvm_analysis_imp_rx #(uart_serial_item, {{ spec.design_name }}_scoreboard) rx_export;
+
+  uvm_analysis_port #(transaction_t) write_ap;
+  uvm_analysis_port #(transaction_t) read_ap;
 
   logic [7:0] shadow_regs[0:7];
   logic [7:0] tx_fifo[$];
@@ -47,9 +58,22 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   int interrupt_expected;
   int interrupt_received;
   int interrupt_mismatch;
+  int irq_rx_data;
+  int irq_tx_empty;
+  int irq_line_status;
+  int irq_modem_status;
+  int irq_unexpected;
+
+  int cov_baud_seen[6];
+  int cov_parity_seen[5];
+  int cov_wordlen_seen[4];
 
   transaction_t write_history[$];
   transaction_t read_history[$];
+  burst_summary_t burst_log[$];
+
+  int max_history_size;
+  int inj_tag_queue[$][$];
 
   uvm_event tx_done_ev;
   uvm_event rx_done_ev;
@@ -67,13 +91,20 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
 
   bit enable_loopback_check = 1;
   bit enable_interrupt_check = 1;
+  int  current_baud_rate;
+  int  current_data_bits;
+  int  current_stop_bits;
+  int  current_parity_mode;
   logic [7:0] last_ier_val;
+  logic [7:0] last_lcr_val;
 
   function new(string n, uvm_component p);
     super.new(n, p);
     item_export = new("item_export", this);
     tx_export = new("tx_export", this);
     rx_export = new("rx_export", this);
+    write_ap = new("write_ap", this);
+    read_ap = new("read_ap", this);
     tx_done_ev = new("tx_done_ev");
     rx_done_ev = new("rx_done_ev");
   endfunction
@@ -99,19 +130,35 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     interrupt_expected = 0;
     interrupt_received = 0;
     interrupt_mismatch = 0;
+    irq_rx_data = 0;
+    irq_tx_empty = 0;
+    irq_line_status = 0;
+    irq_modem_status = 0;
+    irq_unexpected = 0;
     loopback_matches = 0;
     loopback_mismatches = 0;
     test_stats.total = 0;
     test_stats.passed = 0;
     test_stats.failed = 0;
+    max_history_size = 10000;
+    current_baud_rate = 115200;
+    current_data_bits = 8;
+    current_stop_bits = 1;
+    current_parity_mode = 0;
+    last_ier_val = 0;
+    last_lcr_val = 0;
+    foreach (cov_baud_seen[i]) cov_baud_seen[i] = 0;
+    foreach (cov_parity_seen[i]) cov_parity_seen[i] = 0;
+    foreach (cov_wordlen_seen[i]) cov_wordlen_seen[i] = 0;
     tx_fifo.delete();
     rx_fifo.delete();
     expected_rx_fifo.delete();
     write_history.delete();
     read_history.delete();
+    burst_log.delete();
+    inj_tag_queue.delete();
     errors.delete();
     error_msgs.delete();
-    last_ier_val = 0;
   endfunction
 
   function void write({{ spec.design_name }}_seq_item item);
@@ -121,11 +168,14 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     tr.we = item.we;
     tr.timestamp = $time;
     tr.seq_num = transaction_count++;
+    tr.inj_tag = 0;
 
     if (item.we) begin
       process_write(tr);
+      write_ap.write(tr);
     end else begin
       process_read(tr);
+      read_ap.write(tr);
     end
   endfunction
 
@@ -136,6 +186,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     shadow_regs[tr.addr] = tr.data;
     write_count++;
     write_history.push_back(tr);
+    prune_history();
 
     `uvm_info("SB", $sformatf("WRITE[%0d] addr=0x%0h data=0x%02h (old=0x%02h)",
               write_count, tr.addr, tr.data, old_val), UVM_HIGH)
@@ -151,6 +202,10 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       track_interrupt_config(tr.data, old_val);
     end
 
+    if (tr.addr == 3'h3) begin
+      track_uart_config(tr.data, old_val);
+    end
+
     detect_burst(tr);
   endfunction
 
@@ -159,6 +214,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
 
     read_count++;
     read_history.push_back(tr);
+    prune_history();
 
     expected = shadow_regs[tr.addr];
 
@@ -166,8 +222,9 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
               read_count, tr.addr, expected, tr.data), UVM_HIGH)
 
     if (tr.addr == 3'h5) begin
-      `uvm_info("SB_LSR", $sformatf("LSR read: 0x%02h (DR=%b, THRE=%b, TEMT=%b)",
-                tr.data, tr.data[0], tr.data[5], tr.data[6]), UVM_MEDIUM)
+      `uvm_info("SB_LSR", $sformatf("LSR read: 0x%02h (DR=%b, OE=%b, PE=%b, FE=%b, BI=%b, THRE=%b, TEMT=%b)",
+                tr.data, tr.data[0], tr.data[1], tr.data[2], tr.data[3], tr.data[4], tr.data[5], tr.data[6]), UVM_MEDIUM)
+      check_injected_errors(tr);
     end
     else if (tr.addr == 3'h0) begin
       if (shadow_regs[3'h3][7]) begin
@@ -188,6 +245,62 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
                   tr.addr, expected, tr.data));
       end
     end
+
+    if (tr.addr == 3'h2) begin
+      check_interrupt_cause(tr.data);
+    end
+  endfunction
+
+  protected function void prune_history();
+    if (max_history_size > 0 && write_history.size() > max_history_size) begin
+      void'(write_history.pop_front());
+    end
+    if (max_history_size > 0 && read_history.size() > max_history_size) begin
+      void'(read_history.pop_front());
+    end
+  endfunction
+
+  protected function void track_uart_config(logic [7:0] lcr_val, logic [7:0] old_val);
+    last_lcr_val = lcr_val;
+
+    current_data_bits = get_data_bits_from_lcr(lcr_val[1:0]);
+    current_stop_bits = lcr_val[2] ? 2 : 1;
+    current_parity_mode = get_parity_mode(lcr_val);
+
+    cov_wordlen_seen[current_data_bits - 5] = 1;
+    cov_parity_seen[current_parity_mode] = 1;
+
+    if (shadow_regs[3'h0] != 8'hXX) begin
+      current_baud_rate = calc_baud_rate({shadow_regs[3'h1], shadow_regs[3'h0]});
+    end
+
+    if (current_baud_rate inside {9600, 19200, 38400, 57600, 115200, 230400}) begin
+      cov_baud_seen[current_baud_rate / 9600 - 1] = 1;
+    end
+
+    `uvm_info("SB_CFG", $sformatf("UART config: baud=%0d data_bits=%0d stop_bits=%0d parity=%0d LCR=0x%02h",
+              current_baud_rate, current_data_bits, current_stop_bits, current_parity_mode, lcr_val), UVM_MEDIUM)
+  endfunction
+
+  protected function int get_data_bits_from_lcr(logic [1:0] wls);
+    case (wls)
+      2'b00: return 5;
+      2'b01: return 6;
+      2'b10: return 7;
+      2'b11: return 8;
+      default: return 8;
+    endcase
+  endfunction
+
+  protected function int get_parity_mode(logic [7:0] lcr);
+    if (!lcr[3]) return 0;
+    if (lcr[5]) return lcr[4] ? 4 : 3;
+    return lcr[4] ? 2 : 1;
+  endfunction
+
+  protected function int calc_baud_rate(logic [15:0] divisor);
+    if (divisor == 0) return 115200;
+    return 100_000_000 / (16 * divisor);
   endfunction
 
   protected function void detect_burst(transaction_t tr);
@@ -210,13 +323,26 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
         end
       end else begin
         if (burst_len > 2) begin
-          `uvm_info("SB_BURST", $sformatf("Burst ended, total len=%0d", burst_len), UVM_MEDIUM)
+          log_burst_summary(write_history[$ - burst_len + 1], write_history[$], burst_len);
         end
         burst_len = 1;
       end
     end else begin
       burst_len = 1;
     end
+  endfunction
+
+  protected function void log_burst_summary(transaction_t first, transaction_t last, int len);
+    burst_summary_t bs;
+    bs.start_addr = first.addr;
+    bs.length = len;
+    bs.start_time = first.timestamp;
+    for (int i = write_history.size() - len; i < write_history.size(); i++) begin
+      bs.data.push_back(write_history[i].data);
+    end
+    burst_log.push_back(bs);
+    `uvm_info("SB_BURST", $sformatf("Burst summary: start_addr=0x%0h len=%0d data=%p",
+              bs.start_addr, bs.length, bs.data), UVM_MEDIUM)
   endfunction
 
   function void write_tx(uart_serial_item item);
@@ -315,12 +441,80 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     `uvm_info("SB_INT", $sformatf("Interrupt received, IIR=0x%02h, signal=%b", iir_val, int_signal), UVM_MEDIUM)
   endfunction
 
-  function void configure_injection(int parity = 0, int framing = 0, int break_cond = 0);
-    injected_parity_errors = parity;
-    injected_framing_errors = framing;
-    injected_break_errors = break_cond;
-    `uvm_info("SB_INJ", $sformatf("Error injection configured: parity=%0d framing=%0d break=%0d",
-              parity, framing, break_cond), UVM_LOW)
+  function void check_interrupt_cause(logic [7:0] iir_val);
+    logic [2:0] cause;
+    cause = iir_val[3:1];
+
+    if (!enable_interrupt_check) return;
+    if (iir_val[0]) begin
+      `uvm_info("SB_INT", $sformatf("IIR read: no interrupt pending (IIR=0x%02h)", iir_val), UVM_HIGH)
+      return;
+    end
+
+    interrupt_received++;
+
+    case (cause)
+      3'b001: begin
+        irq_rx_data++;
+        if (!last_ier_val[0]) irq_unexpected++;
+        `uvm_info("SB_INT", $sformatf("Cause: RX data available (IIR=0x%02h)", iir_val), UVM_MEDIUM)
+      end
+      3'b010: begin
+        irq_tx_empty++;
+        if (!last_ier_val[1]) irq_unexpected++;
+        `uvm_info("SB_INT", $sformatf("Cause: TX holding register empty (IIR=0x%02h)", iir_val), UVM_MEDIUM)
+      end
+      3'b100: begin
+        irq_line_status++;
+        if (!last_ier_val[2]) irq_unexpected++;
+        `uvm_info("SB_INT", $sformatf("Cause: Receiver line status (IIR=0x%02h)", iir_val), UVM_MEDIUM)
+      end
+      3'b000: begin
+        irq_modem_status++;
+        if (!last_ier_val[3]) irq_unexpected++;
+        `uvm_info("SB_INT", $sformatf("Cause: Modem status (IIR=0x%02h)", iir_val), UVM_MEDIUM)
+      end
+      default: begin
+        irq_unexpected++;
+        `uvm_warning("SB_INT", $sformatf("Unknown interrupt cause: IIR=0x%02h", iir_val))
+      end
+    endcase
+  endfunction
+
+  function void configure_injection(string name = "", int count = 0);
+    if (name == "parity") injected_parity_errors = count;
+    else if (name == "framing") injected_framing_errors = count;
+    else if (name == "break") injected_break_errors = count;
+    else if (name == "all") begin
+      injected_parity_errors = count;
+      injected_framing_errors = count;
+      injected_break_errors = count;
+    end
+    `uvm_info("SB_INJ", $sformatf("Error injection configured: %s=%0d", name, count), UVM_LOW)
+  endfunction
+
+  function void tag_injection(int seq_num, int inj_type);
+    int q[$];
+    q = {seq_num, inj_type};
+    inj_tag_queue.push_back(q);
+  endfunction
+
+  protected function void check_injected_errors(transaction_t tr);
+    int tag_match;
+    if (tr.addr != 3'h5) return;
+
+    foreach (inj_tag_queue[i]) begin
+      if (inj_tag_queue[i][0] == tr.seq_num) begin
+        tag_match = inj_tag_queue[i][1];
+        inj_tag_queue.delete(i);
+        break;
+      end
+    end
+
+    if (tag_match > 0) begin
+      `uvm_info("SB_INJ", $sformatf("Injected error tag matched: seq=%0d type=%0d LSR=0x%02h",
+                tr.seq_num, tag_match, tr.data), UVM_MEDIUM)
+    end
   endfunction
 
   task wait_for_tx_complete(int timeout = 1000000);
@@ -369,6 +563,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       "    Bursts Detected:     %0d\n"
       "    Max Burst Length:    %0d\n"
       "    Total Burst Words:   %0d\n"
+      "    Bursts Logged:       %0d\n"
       "\n"
       "  [ Serial Transactions ]\n"
       "    TX Bytes Sent:       %0d\n"
@@ -381,9 +576,19 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       "    Break Conditions:  %0d        %0d        %0d\n"
       "\n"
       "  [ Interrupt Validation ]\n"
-      "    Expected:          %0d\n"
-      "    Received:          %0d\n"
+      "    Expected (IER):    %0d\n"
+      "    Received (IIR):    %0d\n"
       "    Mismatches:        %0d\n"
+      "    Unexpected:        %0d\n"
+      "    Cause: RX Data     %0d\n"
+      "    Cause: TX Empty    %0d\n"
+      "    Cause: Line Status %0d\n"
+      "    Cause: Modem Status%0d\n"
+      "\n"
+      "  [ Coverage Summary ]\n"
+      "    Baud Rates Seen:    %0d\n"
+      "    Parity Modes Seen:  %0d\n"
+      "    Word Lengths Seen:  %0d\n"
       "\n"
       "  [ Loopback Test ]\n"
       "    Matches:           %0d\n"
@@ -391,17 +596,22 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       "\n"
       "  [ FIFO Status ]\n"
       "    TX FIFO remaining: %0d\n"
-      "    RX FIFO remaining: %0d\n",
+      "    RX FIFO remaining: %0d\n"
+      "    History size (wr): %0d\n"
+      "    History size (rd): %0d\n",
       transaction_count, write_count, read_count,
       match_count, mismatch_count,
-      burst_count, max_burst_len, total_burst_words,
+      burst_count, max_burst_len, total_burst_words, burst_log.size(),
       tx_serial_count, rx_serial_count,
       injected_parity_errors, observed_parity_errors, unaccounted_parity,
       injected_framing_errors, observed_framing_errors, unaccounted_framing,
       injected_break_errors, observed_break_errors, unaccounted_break,
-      interrupt_expected, interrupt_received, interrupt_mismatch,
+      interrupt_expected, interrupt_received, interrupt_mismatch, irq_unexpected,
+      irq_rx_data, irq_tx_empty, irq_line_status, irq_modem_status,
+      cov_baud_seen.sum(), cov_parity_seen.sum(), cov_wordlen_seen.sum(),
       loopback_matches, loopback_mismatches,
-      tx_fifo.size(), rx_fifo.size()
+      tx_fifo.size(), rx_fifo.size(),
+      write_history.size(), read_history.size()
     );
 
     if (status_pass) begin
@@ -433,18 +643,21 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
                 write_history.size() < 10 ? write_history.size() : 10), UVM_HIGH)
       for (int i = write_history.size() > 10 ? write_history.size()-10 : 0;
            i < write_history.size(); i++) begin
-        `uvm_info("SB_HIST", $sformatf("    [%0d] 0x%0h:0x%02h @%0t",
-                  i, write_history[i].addr, write_history[i].data, write_history[i].timestamp), UVM_HIGH)
+        `uvm_info("SB_HIST", $sformatf("    [%0d] 0x%0h:0x%02h @%0t tag=%0d",
+                  i, write_history[i].addr, write_history[i].data,
+                  write_history[i].timestamp, write_history[i].inj_tag), UVM_HIGH)
       end
     end
   endfunction
 
   function void extract_coverage(output int cov_write, output int cov_read,
-                                  output int cov_addr_hit, output int cov_data_pattern);
+                                  output int cov_addr_hit, output int cov_data_pattern,
+                                  output int cov_baud, output int cov_parity,
+                                  output int cov_wordlen);
     int addr_bits[8];
-    int alt_bits;     // alternating 0xAA/0x55 seen
-    int walk_bits;    // walking-1 patterns seen
-    int edge_bits;    // all-0 and all-FF seen
+    int alt_bits;
+    int walk_bits;
+    int edge_bits;
     logic [7:0] data_val;
 
     cov_write = write_count;
@@ -468,5 +681,8 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
 
     cov_addr_hit = addr_bits.sum() with (int'(item));
     cov_data_pattern = alt_bits + walk_bits + edge_bits;
+    cov_baud = cov_baud_seen.sum() with (int'(item));
+    cov_parity = cov_parity_seen.sum() with (int'(item));
+    cov_wordlen = cov_wordlen_seen.sum() with (int'(item));
   endfunction
 endclass
