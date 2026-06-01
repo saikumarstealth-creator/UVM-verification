@@ -11,7 +11,7 @@ import os
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -71,6 +71,8 @@ class PipelineResponse(BaseModel):
 # ── Pipeline singleton ─────────────────────────────────────────────
 
 pipeline_instance: Optional[TBPipeline] = None
+_last_generated_files: Dict[str, str] = {}
+_last_design_name: str = "unknown"
 
 
 @asynccontextmanager
@@ -149,6 +151,11 @@ async def run_pipeline(req: PipelineRequest):
         except OSError:
             pass
 
+        # Store last result for ZIP export
+        global _last_generated_files, _last_design_name
+        _last_generated_files = result.get("generated_files", {})
+        _last_design_name = result.get("design_name", "unknown")
+
         analysis = result.get("coverage_analysis") or {}
         gaps = [{"bin": g["bin"], "addr": g.get("addr"), "dir": g.get("dir")}
                 for g in (analysis.get("gaps") or [])]
@@ -184,6 +191,27 @@ async def run_pipeline(req: PipelineRequest):
     except Exception as e:
         logger.error("Pipeline failed: %s", e)
         raise HTTPException(500, detail=str(e))
+
+
+@app.get("/api/export-zip")
+async def export_zip():
+    """Download all generated files as a single ZIP archive."""
+    global _last_generated_files, _last_design_name
+    if not _last_generated_files:
+        raise HTTPException(404, "No generated files available — run pipeline first")
+
+    from src.utils.export import create_project_zip
+    buf = create_project_zip(_last_generated_files, _last_design_name)
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_last_design_name}_uvm_tb.zip"',
+            "Content-Length": str(len(buf.getvalue())),
+        },
+    )
 
 
 @app.post("/api/validate-spec")
@@ -735,9 +763,9 @@ protocol: i2c`
                 // Fetch file contents
                 generatedFiles = {};
                 if (result.artifacts && result.artifacts.length > 0) {
-                    // For now, we'll use the artifact info. In a real deployment, 
-                    // we'd need endpoints to download individual files.
-                    log('Note: File download requires artifact endpoints', 'warning');
+                // Show download button
+                downloadBtn.classList.remove('hidden');
+                log('Files ready: click "Download ZIP" to export', 'success');
                 }
                 
                 updateStatus('Complete', 'UVM testbench generated successfully', 'success');
@@ -778,6 +806,11 @@ protocol: i2c`
         // Event listeners
         runBtn.addEventListener('click', runPipeline);
         
+        downloadBtn.addEventListener('click', () => {
+            window.location.href = '/api/export-zip';
+            log('Downloading ZIP archive...', 'info');
+        });
+        
         clearLogsBtn.addEventListener('click', () => {
             logsDiv.innerHTML = '';
         });
@@ -795,9 +828,6 @@ protocol: i2c`
 </body>
 </html>
 """
-
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-
 
 @app.get("/", include_in_schema=False)
 @app.get("/index.html", include_in_schema=False)

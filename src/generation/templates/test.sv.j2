@@ -55,8 +55,10 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   task run_phase(uvm_phase phase);
     phase.raise_objection(this);
     `uvm_info("TEST", "Starting test...", UVM_LOW)
+{% if p == "uart" %}
     vif.uart_rx <= 1'b1;
     vif.cts_n <= 1'b0;
+{% endif %}
     run_top_sequence();
     phase.drop_objection(this);
   endtask

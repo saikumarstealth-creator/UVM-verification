@@ -21,6 +21,8 @@ from src.simulation import Simulator
 from src.simulation.base import CoverageDB
 from src.simulation.icarus import IcarusSimulator
 from src.simulation.stub_sim import StubSimulator
+from src.evaluation.quality_score import compute_quality_score
+from src.evaluation.sv_checker import check_directory as sv_check_directory, summarize as sv_summarize
 from src.tracking.experiments import ExperimentTracker
 from src.tracking.logger import setup_logging
 from src.utils.decorators import timer
@@ -158,6 +160,8 @@ class TBPipeline:
         all_versions: List[str] = []
         final_metrics: Dict[str, float] = {}
         all_generated: Dict[str, str] = {}
+        sv_metrics: Dict[str, float] = {"sv_compile_confidence": 0.0, "sv_errors": 0, "sv_warnings": 0, "sv_files_passed": 0, "sv_files_total": 0}
+        quality_score = None
         auto_train = self.cfg.auto_train
 
         for iteration in range(1, auto_train.max_iterations + 1):
@@ -176,12 +180,39 @@ class TBPipeline:
                 cov_expected = cov_prediction.get("coverage", {}).get("expected", 0)
                 self.logger.info("ML coverage prediction: %.1f%%", cov_expected)
 
+            # 6a2. Run SV syntax check on generated files
+            sv_results = sv_check_directory(generated, protocol=design_spec.protocol)
+            sv_metrics = sv_summarize(sv_results)
+            self.logger.info("SV syntax check: confidence=%.2f, errors=%d, warnings=%d, passed=%d/%d",
+                             sv_metrics["sv_compile_confidence"],
+                             sv_metrics["sv_errors"],
+                             sv_metrics["sv_warnings"],
+                             sv_metrics["sv_files_passed"],
+                             sv_metrics["sv_files_total"])
+            for fname, res in sv_results.items():
+                if res.issues:
+                    for iss in res.issues[:5]:
+                        self.logger.debug("  [%s] %s:%d %s", iss.severity.upper(), fname, iss.line, iss.message)
+
             # 6b. Evaluate static metrics (against all accumulated files)
             eval_metrics = self.metrics_calc.evaluate_all(
                 design_spec, list(all_generated.keys()),
                 coverage_analysis=self.coverage_analysis
             )
+            eval_metrics.update(sv_metrics)
+            # Recompute quality score with full metrics
+            quality_score = compute_quality_score(
+                metrics=eval_metrics,
+                num_regs=len(design_spec.registers)
+            )
+            eval_metrics["quality_overall"] = quality_score.overall
+            eval_metrics["quality_syntax"] = quality_score.syntax_score
+            eval_metrics["quality_ral"] = quality_score.ral_readiness
             final_metrics = eval_metrics
+            self.logger.info("Quality score: overall=%.2f, syntax=%.2f, completeness=%.2f, ral=%s",
+                             quality_score.overall, quality_score.syntax_score,
+                             quality_score.completeness_score,
+                             quality_score.details.get("ral_readiness", "?"))
 
             # 6c. Simulate (multi-seed regression)
             sim_result = None
@@ -294,6 +325,8 @@ class TBPipeline:
             "coverage_trend": trend,
             "auto_train_iterations": len(all_versions),
             "simulator": self.simulator.name(),
+            "sv_check": sv_metrics,
+            "quality_score": quality_score.overall if quality_score else 0.0,
             "coverage_analysis": {
                 "total_bins": self.coverage_analysis.sim_result.total_bins if self.coverage_analysis else 0,
                 "covered_bins": self.coverage_analysis.sim_result.covered_bins if self.coverage_analysis else 0,

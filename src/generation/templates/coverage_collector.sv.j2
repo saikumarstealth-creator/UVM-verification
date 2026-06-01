@@ -1,32 +1,45 @@
 // UVM Coverage Collector for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
 {% set p = spec.protocol|default("wishbone") %}
+{% set regs = spec.registers if spec.registers else [] %}
+{% set max_addr_val = 0 %}
+{% for r in regs %}
+  {% set addr_int = r.address.replace('0x', '').replace('h', '') %}
+  {% if addr_int|int(16) > max_addr_val %}
+    {% set _ = max_addr_val.__setitem__(0, addr_int|int(16)) %}
+  {% endif %}
+{% endfor %}
+{% set addr_width = [max_addr_val.bit_length(), 3]|max %}
+{% set data_width = 8 %}
+{% for r in regs %}
+  {% if r.size and r.size > data_width %}
+    {% set _ = data_width.__setitem__(0, r.size) %}
+  {% endif %}
+{% endfor %}
+
 class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_coverage_collector)
 
-  // Register address coverage
-  covergroup reg_address_cg with function sample(bit we, bit [2:0] addr, bit [7:0] data);
+  // Register address coverage — dynamically sized from YAML registers
+  covergroup reg_address_cg with function sample(bit we, bit [{{ addr_width-1 }}:0] addr, bit [{{ data_width-1 }}:0] data);
     option.per_instance = 1;
     cp_addr: coverpoint addr;
     cp_we:   coverpoint we;
     cp_data: coverpoint data {
-      bins zero   = {8'h00};
-      bins max    = {8'hFF};
+      bins zero   = {0};
+      bins max    = {({ {data_width{1'b1}} })};
       bins others = default;
     }
     addr_x_we: cross cp_addr, cp_we;
   endgroup
 
   // Data pattern coverage: alternating, walking-1, edge values
-  covergroup data_pattern_cg with function sample(bit [7:0] data);
+  covergroup data_pattern_cg with function sample(bit [{{ data_width-1 }}:0] data);
     option.per_instance = 1;
     cp_pattern: coverpoint data {
-      bins alternating[] = {8'hAA, 8'h55, 8'hCC, 8'h33};
-      bins walking_one[] = {8'h01, 8'h02, 8'h04, 8'h08, 8'h10, 8'h20, 8'h40, 8'h80};
-      bins walking_zero[] = {8'hFE, 8'hFD, 8'hFB, 8'hF7, 8'hEF, 8'hDF, 8'hBF, 8'h7F};
-      bins edge[]        = {8'h00, 8'hFF};
-      bins incrementing  = {8'h11, 8'h22, 8'h33, 8'h44, 8'h55, 8'h66, 8'h77, 8'h88,
-                            8'h99, 8'hAA, 8'hBB, 8'hCC, 8'hDD, 8'hEE};
-      bins others        = default;
+{% for pattern_name, pattern_values in [("alternating", ["AA", "55", "CC", "33"]), ("walking_one", ["01", "02", "04", "08", "10", "20", "40", "80"]), ("walking_zero", ["FE", "FD", "FB", "F7", "EF", "DF", "BF", "7F"]), ("edge", ["00", "FF"]), ("incrementing", ["11", "22", "33", "44", "55", "66", "77", "88", "99", "AA", "BB", "CC", "DD", "EE"])] %}
+      bins {{ pattern_name }}[] = { {% for v in pattern_values %}{{ data_width }}'h{{ v }}{% if not loop.last %}, {% endif %}{% endfor %} };
+{% endfor %}
+      bins others = default;
     }
   endgroup
 
@@ -57,6 +70,47 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   endfunction
 {% endif %}
 
+{% if regs %}
+  // ---------------------------------------------------------------------------
+  // Per-register field-level covergroups — auto-generated from YAML spec
+  // ---------------------------------------------------------------------------
+{% for r in regs %}
+  covergroup reg_{{ r.name|lower }}_cg with function sample(bit we, bit [{{ data_width-1 }}:0] data);
+    option.per_instance = 1;
+    cp_access: coverpoint we;
+{% if r.fields %}
+    // Fields defined in spec for {{ r.name }}
+{% for f in r.fields %}
+  {% if ':' in f.bits %}
+    {% set parts = f.bits.split(':') %}
+    {% set msb = parts[0]|int %}
+    {% set lsb = parts[1]|int %}
+    {% set f_width = msb - lsb + 1 %}
+  {% else %}
+    {% set f_width = f.bits|int %}
+    {% if f_width <= 0 %}{% set f_width = 1 %}{% endif %}
+    {% set msb = f_width - 1 %}
+    {% set lsb = 0 %}
+  {% endif %}
+    {{ f.name|lower }}_cp: coverpoint data[{{ msb }}:{{ lsb }}] {
+      bins zero  = {0};
+      bins max   = {{{ f_width }}{1'b1}};
+      bins others = default;
+    }
+{% endfor %}
+{% else %}
+    cp_data: coverpoint data {
+      bins zero  = {0};
+      bins max   = {{{ data_width }}{1'b1}};
+      bins others = default;
+    }
+{% endif %}
+    {{ r.name|lower }}_access: cross cp_access{% if r.fields %}{% for f in r.fields %}, {{ f.name|lower }}_cp{% endfor %}{% else %}, cp_data{% endif %};
+  endgroup
+
+{% endfor %}
+{% endif %}
+
   function new(string n, uvm_component p);
     super.new(n, p);
     reg_address_cg = new();
@@ -64,10 +118,23 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
 {% if p == "uart" %}
     uart_config_cg = new();
 {% endif %}
+{% if regs %}
+{% for r in regs %}
+    reg_{{ r.name|lower }}_cg = new();
+{% endfor %}
+{% endif %}
   endfunction
 
   function void write({{ spec.design_name }}_seq_item item);
     reg_address_cg.sample(item.we, item.addr, item.data);
     data_pattern_cg.sample(item.data);
+{% if regs %}
+    // Sample per-register covergroups based on address
+{% for r in regs %}
+    if (item.addr == {{ r.size|default(data_width) }}'h{{ r.address.replace('0x', '').replace('h', '') }}) begin
+      reg_{{ r.name|lower }}_cg.sample(item.we, item.data);
+    end
+{% endfor %}
+{% endif %}
   endfunction
 endclass

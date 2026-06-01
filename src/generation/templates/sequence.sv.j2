@@ -1,6 +1,15 @@
 // Enhanced UVM Sequences for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
 // Includes: RAL-based sequences, UART TX/RX, baud config, interrupt tests
 {% set p = spec.protocol|default("wishbone") %}
+{% set regs = spec.registers if spec.registers else [] %}
+{% set num_regs = regs|length %}
+{% if num_regs == 0 %}{% set num_regs = 8 %}{% endif %}
+{% set max_addr_val = 0 %}
+{% for r in regs %}
+  {% set a = r.address.replace('0x', '').replace('h', '')|int(16) %}
+  {% if a > max_addr_val %}{% set _ = max_addr_val.__setitem__(0, a) %}{% endif %}
+{% endfor %}
+{% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
 
 class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_base_seq)
@@ -26,10 +35,10 @@ endclass
 class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item});
   `uvm_object_utils({{ spec.design_name }}_write_reg_seq)
 
-  rand logic [2:0] reg_addr;
+  rand logic [{{ addr_bits-1 }}:0] reg_addr;
   rand logic [7:0] write_data;
 
-  constraint c_reg_addr { reg_addr inside {0,1,2,3,4,5,6,7}; }
+  constraint c_reg_addr { reg_addr inside {[0:{{ num_regs-1 }}]}; }
 
   function new(string n = "{{ spec.design_name }}_write_reg_seq");
     super.new(n);
@@ -47,10 +56,10 @@ endclass
 class {{ spec.design_name }}_read_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_read_reg_seq)
 
-  rand logic [2:0] reg_addr;
+  rand logic [{{ addr_bits-1 }}:0] reg_addr;
   logic [7:0] read_data;
 
-  constraint c_reg_addr { reg_addr inside {0,1,2,3,4,5,6,7}; }
+  constraint c_reg_addr { reg_addr inside {[0:{{ num_regs-1 }}]}; }
 
   function new(string n = "{{ spec.design_name }}_read_reg_seq");
     super.new(n);
@@ -74,7 +83,7 @@ class {{ spec.design_name }}_all_regs_seq extends uvm_sequence #({{ spec.design_
   endfunction
 
   task body;
-    for (int i = 0; i < 8; i++) begin
+    for (int i = 0; i < {{ num_regs }}; i++) begin
       {{ spec.design_name }}_write_reg_seq wseq;
       {{ spec.design_name }}_read_reg_seq  rseq;
       wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
@@ -91,7 +100,7 @@ endclass
 class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_random_regs_seq)
 
-  rand logic [7:0] write_data[8];
+  rand logic [7:0] write_data[{{ num_regs }}];
   rand bit         pattern_type;
 
   constraint c_patterns {
@@ -112,7 +121,7 @@ class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    for (int i = 0; i < 8; i++) begin
+    for (int i = 0; i < {{ num_regs }}; i++) begin
       {{ spec.design_name }}_write_reg_seq wseq;
       {{ spec.design_name }}_read_reg_seq  rseq;
       wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
