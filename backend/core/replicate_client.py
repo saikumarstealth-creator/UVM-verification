@@ -109,8 +109,9 @@ class ReplicateClient:
         return {"files": files, "metrics": metrics}
 
     async def _create_prediction(self, body: Dict) -> Dict:
-        url = f"{API_BASE}/models/{self.model}/predictions"
-        logger.info("Creating prediction: POST %s", url)
+        url = f"{API_BASE}/predictions"
+        body["model"] = self.model
+        logger.info("Creating prediction: POST %s model=%s", url, self.model)
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, headers=self.headers, json=body, timeout=30)
