@@ -6,10 +6,6 @@ on:
         description: 'Replicate model name (e.g., saikumarstealth-creator/uvmgenerator)'
         required: true
         default: 'saikumarstealth-creator/uvmgenerator'
-      hardware:
-        description: 'Hardware type (cpu, gpu-t4, gpu-a100)'
-        required: true
-        default: 'cpu'
 
 jobs:
   push:
@@ -21,23 +17,31 @@ jobs:
         run: |
           sudo curl -o /usr/local/bin/cog -L "https://github.com/replicate/cog/releases/latest/download/cog_$(uname -s)_$(uname -m)"
           sudo chmod +x /usr/local/bin/cog
+          cog --version
 
       - name: Cog login
         run: cog login --token ${{ secrets.REPLICATE_API_TOKEN }}
 
-      - name: Push to Replicate
-        run: cog push r8.im/${{ inputs.model_name }}
+      - name: Push model to Replicate
+        id: push
+        run: |
+          OUTPUT=$(cog push r8.im/${{ inputs.model_name }} 2>&1)
+          echo "$OUTPUT"
+          VERSION=$(echo "$OUTPUT" | grep -oP 'Pushed: r8\.im/[^ ]+:(\K[^ ]+)' || echo "")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create deployment
         run: |
+          VERSION="${{ steps.push.outputs.version }}"
+          echo "Pushed version: $VERSION"
           curl -s -X POST "https://api.replicate.com/v1/deployments" \
             -H "Authorization: Bearer ${{ secrets.REPLICATE_API_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "name": "uvm-generator",
-              "model": "${{ inputs.model_name }}",
-              "version": "${{ steps.push.outputs.version }}",
-              "hardware": "${{ inputs.hardware }}",
-              "min_instances": 0,
-              "max_instances": 1
-            }'
+            -d "{
+              \"name\": \"uvm-generator\",
+              \"model\": \"${{ inputs.model_name }}\",
+              \"version\": \"$VERSION\",
+              \"hardware\": \"cpu\",
+              \"min_instances\": 0,
+              \"max_instances\": 1
+            }"
