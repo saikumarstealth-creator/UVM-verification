@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 export type PipelineStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type PipelineStep = 'spec_parse' | 'feature_extract' | 'ml_generation' | 'uvm_validation' | 'coverage_analysis' | 'export'
@@ -207,71 +208,96 @@ sequences:
     description: Error injection test`
 }
 
-const useAppStore = create<AppState>((set) => ({
-  // Pipeline state
-  taskId: null,
-  status: 'pending',
-  currentStep: null,
-  progress: 0,
-  message: 'Ready to generate',
-  logs: [],
-  completedSteps: [],
-  metrics: null,
-  generatedFiles: [],
-  selectedFile: null,
-  fileContent: null,
-  error: null,
-  wsConnected: false,
-  
-  // Config
-  config: defaultConfig,
-  
-  // Actions
-  setTaskId: (id) => set({ taskId: id }),
-  setStatus: (status) => set({ status }),
-  setCurrentStep: (step) => set({ currentStep: step }),
-  setProgress: (progress) => set({ progress }),
-  setMessage: (message) => set({ message }),
-  addLogs: (newLogs) => set((state) => ({ logs: [...state.logs, ...newLogs] })),
-  clearLogs: () => set({ logs: [] }),
-  setCompletedSteps: (steps) => set({ completedSteps: steps }),
-  setMetrics: (metrics) => set({ metrics }),
-  setGeneratedFiles: (files) => set({ generatedFiles: files }),
-  setSelectedFile: (file) => set({ selectedFile: file }),
-  setFileContent: (content) => set({ fileContent: content }),
-  setError: (error) => set({ error }),
-  setWsConnected: (connected) => set({ wsConnected: connected }),
-  
-  updateFromWs: (data) => set((state) => {
-    const updated: Partial<PipelineState> = {}
-    if (data.status) updated.status = data.status
-    if (data.currentStep !== undefined) updated.currentStep = data.currentStep
-    if (data.progress !== undefined) updated.progress = data.progress
-    if (data.message) updated.message = data.message
-    if (data.logs) updated.logs = [...state.logs, ...data.logs.filter(l => !state.logs.includes(l))]
-    if (data.completedSteps) updated.completedSteps = data.completedSteps
-    if (data.metrics) updated.metrics = data.metrics
-    return updated
-  }),
-  
-  resetPipeline: () => set({
-    taskId: null,
-    status: 'pending',
-    currentStep: null,
-    progress: 0,
-    message: 'Ready to generate',
-    logs: [],
-    completedSteps: [],
-    metrics: null,
-    generatedFiles: [],
-    selectedFile: null,
-    fileContent: null,
-    error: null,
-  }),
-  
-  updateConfig: (updates) => set((state) => ({
-    config: { ...state.config, ...updates }
-  })),
-}))
+const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      // Pipeline state
+      taskId: null,
+      status: 'pending',
+      currentStep: null,
+      progress: 0,
+      message: 'Ready to generate',
+      logs: [],
+      completedSteps: [],
+      metrics: null,
+      generatedFiles: [],
+      selectedFile: null,
+      fileContent: null,
+      error: null,
+      wsConnected: false,
+      
+      // Config
+      config: defaultConfig,
+      
+      // Actions
+      setTaskId: (id) => set({ taskId: id }),
+      setStatus: (status) => set({ status }),
+      setCurrentStep: (step) => set({ currentStep: step }),
+      setProgress: (progress) => set({ progress }),
+      setMessage: (message) => set({ message }),
+      addLogs: (newLogs) => set((state) => ({ logs: [...state.logs, ...newLogs] })),
+      clearLogs: () => set({ logs: [] }),
+      setCompletedSteps: (steps) => set({ completedSteps: steps }),
+      setMetrics: (metrics) => set({ metrics }),
+      setGeneratedFiles: (files) => set({ generatedFiles: files }),
+      setSelectedFile: (file) => set({ selectedFile: file }),
+      setFileContent: (content) => set({ fileContent: content }),
+      setError: (error) => set({ error }),
+      setWsConnected: (connected) => set({ wsConnected: connected }),
+      
+      updateFromWs: (data) => set((state) => {
+        const updated: Partial<PipelineState> = {}
+        if (data.status) updated.status = data.status
+        if (data.currentStep !== undefined) updated.currentStep = data.currentStep
+        if (data.progress !== undefined) updated.progress = data.progress
+        if (data.message) updated.message = data.message
+        if (data.logs) updated.logs = [...state.logs, ...data.logs.filter(l => !state.logs.includes(l))]
+        if (data.completedSteps) updated.completedSteps = data.completedSteps
+        if (data.metrics) updated.metrics = data.metrics
+        return updated
+      }),
+      
+      resetPipeline: () => set({
+        taskId: null,
+        status: 'pending',
+        currentStep: null,
+        progress: 0,
+        message: 'Ready to generate',
+        logs: [],
+        completedSteps: [],
+        metrics: null,
+        generatedFiles: [],
+        selectedFile: null,
+        fileContent: null,
+        error: null,
+      }),
+      
+      updateConfig: (updates) => set((state) => ({
+        config: { ...state.config, ...updates }
+      })),
+    }),
+    {
+      name: 'uvm-generator-config',
+      partialize: (state) => ({ config: state.config }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.taskId = null
+          state.status = 'pending'
+          state.currentStep = null
+          state.progress = 0
+          state.message = 'Ready to generate'
+          state.logs = []
+          state.completedSteps = []
+          state.metrics = null
+          state.generatedFiles = []
+          state.selectedFile = null
+          state.fileContent = null
+          state.error = null
+          state.wsConnected = false
+        }
+      },
+    }
+  )
+)
 
 export default useAppStore
