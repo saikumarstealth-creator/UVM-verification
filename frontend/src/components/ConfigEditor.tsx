@@ -1,5 +1,5 @@
 import React from 'react'
-import { Settings2, FileText, Brain, Zap, Play, RotateCcw } from 'lucide-react'
+import { Settings2, FileText, Brain, Zap, Cloud, Play, RotateCcw } from 'lucide-react'
 import useAppStore from '../store/appStore'
 
 const PRESETS: Record<string, { label: string; protocol: string; desc: string }> = {
@@ -181,6 +181,32 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
                 </select>
               </div>
             )}
+
+            {/* Replicate toggle */}
+            <div>
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-xs font-medium text-eda-text-secondary flex items-center gap-2">
+                  <Cloud className="w-3.5 h-3.5" />
+                  Replicate ML Backend
+                </span>
+                <button
+                  onClick={() => updateConfig({ use_replicate: !config.use_replicate })}
+                  disabled={isGenerating}
+                  className={`relative w-10 h-5 rounded-full transition-all ${
+                    config.use_replicate ? 'bg-eda-accent' : 'bg-eda-bg-tertiary/50'
+                  } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                    config.use_replicate ? 'translate-x-5' : ''
+                  }`} />
+                </button>
+              </label>
+              <div className="text-[11px] text-eda-text-tertiary mt-1.5">
+                {config.use_replicate
+                  ? 'Generation runs on Replicate GPU cloud — faster for V2 model'
+                  : 'Generation runs locally on Hugging Face CPU'}
+              </div>
+            </div>
 
             {/* Iterations */}
             <div>
