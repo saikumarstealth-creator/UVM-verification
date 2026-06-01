@@ -1,7 +1,7 @@
 """
 Replicate API client for UVM generation.
 Calls the saikumarstealth-creator/uvmgenerator model via
-replicate.run() and returns generated files.
+the Replicate models predictions API.
 """
 
 from __future__ import annotations
@@ -11,13 +11,17 @@ import io
 import json
 import logging
 import os
+import time
 import zipfile
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
-import replicate
 
 logger = logging.getLogger("replicate_client")
+
+API_BASE = "https://api.replicate.com/v1"
+POLL_INTERVAL = 2.0
+MAX_POLL_TIME = 600.0
 
 
 class ReplicateClient:
@@ -26,14 +30,41 @@ class ReplicateClient:
         self.model: str = os.environ.get(
             "REPLICATE_MODEL", "saikumarstealth-creator/uvmgenerator"
         )
+        self._headers: Optional[Dict[str, str]] = None
 
     @property
     def available(self) -> bool:
         return bool(self.api_token)
 
+    @property
+    def headers(self) -> Dict[str, str]:
+        if self._headers is None:
+            self._headers = {
+                "Authorization": f"Bearer {self.api_token}",
+                "Content-Type": "application/json",
+            }
+        return self._headers
+
+    def _build_payload(self, **kwargs) -> Dict:
+        payload = {
+            "input": {
+                "spec_yaml": kwargs.get("spec_yaml", ""),
+                "design_name": kwargs.get("design_name", "uart_top"),
+                "protocol": kwargs.get("protocol", "uart"),
+                "model_type": kwargs.get("model_type", "v2"),
+                "rl_strategy": kwargs.get("rl_strategy", "ucb"),
+                "enable_learning": kwargs.get("enable_learning", True),
+                "strict_uvm": kwargs.get("strict_uvm", True),
+                "max_iterations": kwargs.get("max_iterations", 1),
+                "coverage_target": kwargs.get("coverage_target", 90.0),
+                "optimize_parameters": kwargs.get("optimize_parameters", True),
+            },
+        }
+        return payload
+
     async def generate(
         self,
-        spec_yaml: str,
+        spec_yaml: str = "",
         design_name: str = "uart_top",
         protocol: str = "uart",
         model_type: str = "v2",
@@ -50,42 +81,67 @@ class ReplicateClient:
                 "Add it to your Hugging Face Space secrets or env."
             )
 
-        os.environ["REPLICATE_API_TOKEN"] = self.api_token
+        body = self._build_payload(
+            spec_yaml=spec_yaml,
+            design_name=design_name,
+            protocol=protocol,
+            model_type=model_type,
+            rl_strategy=rl_strategy,
+            enable_learning=enable_learning,
+            strict_uvm=strict_uvm,
+            max_iterations=max_iterations,
+            coverage_target=coverage_target,
+            optimize_parameters=optimize_parameters,
+        )
 
-        logger.info("Calling replicate.run(%s) ...", self.model)
+        prediction = await self._create_prediction(body)
+        prediction = await self._poll_until_done(prediction["id"])
 
-        try:
-            output = await asyncio.to_thread(
-                replicate.run,
-                self.model,
-                input={
-                    "spec_yaml": spec_yaml,
-                    "design_name": design_name,
-                    "protocol": protocol,
-                    "model_type": model_type,
-                    "rl_strategy": rl_strategy,
-                    "enable_learning": enable_learning,
-                    "strict_uvm": strict_uvm,
-                    "max_iterations": max_iterations,
-                    "coverage_target": coverage_target,
-                    "optimize_parameters": optimize_parameters,
-                },
-            )
-        except Exception as e:
-            if "not found" in str(e).lower() or "404" in str(e):
-                raise RuntimeError(
-                    f"Model '{self.model}' not found on Replicate. "
-                    "Make sure you pushed the model with: cog push r8.im/{self.model}"
-                ) from e
-            raise
+        if prediction["status"] == "failed":
+            error = prediction.get("error", "unknown error")
+            raise RuntimeError(f"Replicate prediction failed: {error}")
 
-        logger.info("Replicate run completed — output type=%s", type(output).__name__)
-
+        output = prediction.get("output")
         if not output:
-            raise RuntimeError("Replicate returned no output")
+            raise RuntimeError(f"Replicate returned no output (status={prediction['status']})")
 
         files, metrics = self._extract_zip(output)
         return {"files": files, "metrics": metrics}
+
+    async def _create_prediction(self, body: Dict) -> Dict:
+        url = f"{API_BASE}/models/{self.model}/predictions"
+        logger.info("Creating prediction: POST %s", url)
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(url, headers=self.headers, json=body, timeout=30)
+            if resp.status_code == 404:
+                raise RuntimeError(
+                    f"Model '{self.model}' not found on Replicate. "
+                    "Make sure you pushed the model with: cog push r8.im/{self.model}"
+                )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _poll_until_done(self, pred_id: str) -> Dict:
+        url = f"{API_BASE}/predictions/{pred_id}"
+        start = time.monotonic()
+
+        while True:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, headers=self.headers, timeout=30)
+                resp.raise_for_status()
+                prediction = resp.json()
+
+            status = prediction["status"]
+            logger.info("Prediction %s — status=%s", pred_id, status)
+
+            if status in ("succeeded", "failed", "canceled"):
+                return prediction
+
+            if time.monotonic() - start > MAX_POLL_TIME:
+                raise RuntimeError(f"Prediction {pred_id} timed out after {MAX_POLL_TIME}s")
+
+            await asyncio.sleep(POLL_INTERVAL)
 
     def _extract_zip(self, url: str) -> Tuple[Dict[str, str], Dict[str, Any]]:
         logger.info("Downloading output from %s", url)
