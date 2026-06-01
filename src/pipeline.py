@@ -170,6 +170,12 @@ class TBPipeline:
             all_generated.update(generated)
             self.logger.info("Generated %d files (total %d)", len(generated), len(all_generated))
 
+            # 6a1. Collect coverage prediction from model (if available)
+            cov_prediction = getattr(self.model, 'last_coverage_prediction', None)
+            if cov_prediction:
+                cov_expected = cov_prediction.get("coverage", {}).get("expected", 0)
+                self.logger.info("ML coverage prediction: %.1f%%", cov_expected)
+
             # 6b. Evaluate static metrics (against all accumulated files)
             eval_metrics = self.metrics_calc.evaluate_all(
                 design_spec, list(all_generated.keys()),
@@ -273,6 +279,9 @@ class TBPipeline:
         # 8. Coverage trend
         trend = self.registry.coverage_trend() if auto_train.enabled else []
 
+        # Collect ML coverage prediction from model
+        ml_cov_prediction = getattr(self.model, 'last_coverage_prediction', None)
+
         return {
             "design_name": design_spec.design_name,
             "generated_files": all_generated,
@@ -292,6 +301,7 @@ class TBPipeline:
                 "gaps": [{"bin": g.bin_name, "addr": g.register_addr, "dir": g.direction}
                          for g in (self.coverage_analysis.gaps if self.coverage_analysis else [])],
             } if self.coverage_analysis else None,
+            "ml_coverage_prediction": ml_cov_prediction,
         }
 
 
