@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import yaml
 
 
@@ -25,6 +25,15 @@ class FieldDef(BaseModel):
     name: str
     bits: str
     description: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def alias_width(cls, data):
+        if isinstance(data, dict):
+            if "width" in data and "bits" not in data:
+                w = data.pop("width")
+                data["bits"] = str(w) if isinstance(w, int) else w
+        return data
 
 class RegisterDef(BaseModel):
     name: str
