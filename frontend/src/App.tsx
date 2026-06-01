@@ -119,9 +119,7 @@ const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         {/* Left column: Config */}
         <div className="w-96 flex flex-col border-r border-eda-border overflow-hidden">
-          <div className="flex-1 overflow-hidden">
-            <ConfigEditor onGenerate={handleGenerate} />
-          </div>
+          <ConfigEditor onGenerate={handleGenerate} />
         </div>
 
         {/* Right column: Pipeline, Metrics, Files */}

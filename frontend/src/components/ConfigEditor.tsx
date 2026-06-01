@@ -44,7 +44,7 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
   }
 
   return (
-    <div className="bg-eda-bg-secondary border border-eda-border rounded-lg overflow-hidden flex flex-col">
+    <div className="bg-eda-bg-secondary border border-eda-border rounded-lg overflow-hidden flex flex-col flex-1">
       {/* Header with tabs */}
       <div className="flex items-center justify-between bg-eda-bg-tertiary/50 border-b border-eda-border">
         <div className="flex">
