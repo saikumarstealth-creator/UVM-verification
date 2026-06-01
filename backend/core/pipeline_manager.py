@@ -81,10 +81,6 @@ class PipelineManager:
         try:
             cfg = pipeline.config
 
-            # ── Replicate path ──────────────────────────────────────────────
-            if cfg.use_replicate:
-                return await self._run_replicate(pipeline)
-
             # ── Local path ──────────────────────────────────────────────────
             import sys
             import os
@@ -245,88 +241,6 @@ class PipelineManager:
                 message=pipeline.message
             )
 
-    async def _run_replicate(self, pipeline: PipelineState) -> GenerationResponse:
-        """Run generation via Replicate deployment."""
-        from .replicate_client import replicate_client
-        
-        task_id = pipeline.task_id
-        cfg = pipeline.config
-        
-        pipeline.update_step(PipelineStep.SPEC_PARSE, 10, "Sending to Replicate ML backend...")
-        pipeline.add_log(f"Replicate model: {cfg.replicate_deployment}")
-        await asyncio.sleep(0.1)
-        
-        pipeline.update_step(PipelineStep.SPEC_PARSE, 20, "Specification sent")
-        pipeline.complete_step(PipelineStep.SPEC_PARSE)
-        await asyncio.sleep(0.1)
-        
-        pipeline.update_step(PipelineStep.FEATURE_EXTRACT, 25, "Extracting features...")
-        spec_dict = __import__('yaml').safe_load(cfg.spec_yaml)
-        num_ifaces = len(spec_dict.get('interfaces', []))
-        num_regs = len(spec_dict.get('registers', []))
-        pipeline.update_step(PipelineStep.FEATURE_EXTRACT, 35,
-            f"Found {num_ifaces} interfaces, {num_regs} registers")
-        pipeline.complete_step(PipelineStep.FEATURE_EXTRACT)
-        await asyncio.sleep(0.1)
-        
-        pipeline.update_step(PipelineStep.ML_GENERATION, 40, "Calling Replicate ML engine...")
-        await asyncio.sleep(0.1)
-        
-        result = await replicate_client.generate(
-            spec_yaml=cfg.spec_yaml,
-            design_name=cfg.design_name,
-            protocol=cfg.protocol,
-            model_type=cfg.model_type,
-            rl_strategy=cfg.rl_strategy,
-            enable_learning=cfg.enable_learning,
-            strict_uvm=cfg.strict_uvm,
-            max_iterations=cfg.max_iterations,
-        )
-        
-        pipeline.generated_files = result.get("files", {})
-        rep_metrics = result.get("metrics", {})
-        
-        pipeline.metrics = {
-            "completeness": rep_metrics.get("predicted_coverage", 0) / 100.0,
-            "signal_coverage": 0,
-            "register_coverage": 0,
-            "files_generated": len(pipeline.generated_files),
-            "passed": True,
-            "replicate_report": rep_metrics,
-        }
-        
-        n_files = len(pipeline.generated_files)
-        pipeline.update_step(PipelineStep.ML_GENERATION, 75,
-            f"Generated {n_files} files via Replicate")
-        pipeline.complete_step(PipelineStep.ML_GENERATION)
-        await asyncio.sleep(0.1)
-        
-        pipeline.update_step(PipelineStep.UVM_VALIDATION, 80, "Replicate ML validation passed")
-        pipeline.complete_step(PipelineStep.UVM_VALIDATION)
-        await asyncio.sleep(0.1)
-        
-        pipeline.update_step(PipelineStep.COVERAGE_ANALYSIS, 90, "Coverage analyzed by Replicate ML")
-        pipeline.complete_step(PipelineStep.COVERAGE_ANALYSIS)
-        await asyncio.sleep(0.1)
-        
-        pipeline.update_step(PipelineStep.EXPORT, 100, "Generation complete via Replicate!")
-        pipeline.complete_step(PipelineStep.EXPORT)
-        
-        pipeline.status = PipelineStatus.COMPLETED
-        pipeline.progress = 100
-        pipeline.message = f"Replicate generation complete: {n_files} files"
-        pipeline.add_log("Pipeline complete via Replicate ML backend")
-        
-        return GenerationResponse(
-            task_id=task_id,
-            status=pipeline.status,
-            current_step=PipelineStep.EXPORT,
-            progress=100,
-            message=pipeline.message,
-            generated_files=pipeline.generated_files,
-            metrics=pipeline.metrics,
-        )
-    
     def get_response(self, task_id: str) -> Optional[GenerationResponse]:
         pipeline = self.get_pipeline(task_id)
         if not pipeline:

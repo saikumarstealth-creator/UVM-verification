@@ -35,8 +35,6 @@ export interface GenerationConfig {
   strict_uvm: boolean
   max_iterations: number
   spec_yaml: string
-  use_replicate: boolean
-  replicate_deployment: string
 }
 
 interface AppState extends PipelineState {
@@ -71,8 +69,6 @@ const defaultConfig: GenerationConfig = {
   enable_learning: true,
   strict_uvm: true,
   max_iterations: 1,
-  use_replicate: false,
-  replicate_deployment: 'saikumarstealth-creator/uvm-generator',
   spec_yaml: `design_name: uart
 protocol: uart
 clock_reset:

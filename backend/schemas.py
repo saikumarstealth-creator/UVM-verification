@@ -32,8 +32,6 @@ class GenerationConfig(BaseModel):
     strict_uvm: bool = True
     max_iterations: int = 1
     spec_yaml: str
-    use_replicate: bool = False
-    replicate_deployment: str = "saikumarstealth-creator/uvmgenerator"
 
 
 class GenerationResponse(BaseModel):
