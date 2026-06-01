@@ -178,6 +178,7 @@ class PipelineManager:
             pipeline.generated_files = result.get('generated_files', {})
             sv_check = result.get('sv_check', {})
             quality = result.get('quality_score', 0.0)
+            cross_val = result.get('cross_file_validation', {}) or {}
             pipeline.metrics = {
                 "completeness": eval_metrics.get('completeness', 0),
                 "signal_coverage": eval_metrics.get('interface_signal_coverage', 0),
@@ -190,6 +191,8 @@ class PipelineManager:
                 "quality_overall": quality,
                 "quality_syntax": eval_metrics.get('quality_syntax', 0.0),
                 "quality_ral": eval_metrics.get('quality_ral', 0.0),
+                "spec_coverage_score": eval_metrics.get('spec_coverage_score', 0.0),
+                "hallucination_count": eval_metrics.get('hallucination_count', 0),
             }
             
             validation_status = "PASSED" if passed else "COMPLETED"

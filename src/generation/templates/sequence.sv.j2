@@ -7,6 +7,8 @@
 {% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
 {% set max_addr_val = addr_ints|max if addr_ints else 0 %}
 {% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
+{% set sizes = regs|map(attribute='size')|select('number')|list %}
+{% set data_width = sizes|max if sizes else 8 %}
 
 class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_base_seq)
@@ -29,11 +31,11 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   endtask
 endclass
 
-class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item});
+class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_write_reg_seq)
 
   rand logic [{{ addr_bits-1 }}:0] reg_addr;
-  rand logic [7:0] write_data;
+  rand logic [{{ data_width-1 }}:0] write_data;
 
   constraint c_reg_addr { reg_addr inside {[0:{{ num_regs-1 }}]}; }
 
@@ -54,7 +56,7 @@ class {{ spec.design_name }}_read_reg_seq extends uvm_sequence #({{ spec.design_
   `uvm_object_utils({{ spec.design_name }}_read_reg_seq)
 
   rand logic [{{ addr_bits-1 }}:0] reg_addr;
-  logic [7:0] read_data;
+  logic [{{ data_width-1 }}:0] read_data;
 
   constraint c_reg_addr { reg_addr inside {[0:{{ num_regs-1 }}]}; }
 
@@ -97,7 +99,7 @@ endclass
 class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_random_regs_seq)
 
-  rand logic [7:0] write_data[{{ num_regs }}];
+  rand logic [{{ data_width-1 }}:0] write_data[{{ num_regs }}];
   rand bit         pattern_type;
 
   constraint c_patterns {

@@ -198,6 +198,8 @@ async def get_generation_metrics(task_id: str):
         quality_overall=pipeline.metrics.get("quality_overall", 0.0),
         quality_syntax=pipeline.metrics.get("quality_syntax", 0.0),
         quality_ral=pipeline.metrics.get("quality_ral", 0.0),
+        spec_coverage_score=pipeline.metrics.get("spec_coverage_score", 0.0),
+        hallucination_count=pipeline.metrics.get("hallucination_count", 0),
     )
 
 

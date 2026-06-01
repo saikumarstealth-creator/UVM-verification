@@ -23,6 +23,7 @@ from src.simulation.icarus import IcarusSimulator
 from src.simulation.stub_sim import StubSimulator
 from src.evaluation.quality_score import compute_quality_score
 from src.evaluation.sv_checker import check_directory as sv_check_directory, summarize as sv_summarize
+from src.evaluation.cross_file_validator import validate_generated_files
 from src.tracking.experiments import ExperimentTracker
 from src.tracking.logger import setup_logging
 from src.utils.decorators import timer
@@ -162,6 +163,8 @@ class TBPipeline:
         all_generated: Dict[str, str] = {}
         sv_metrics: Dict[str, float] = {"sv_compile_confidence": 0.0, "sv_errors": 0, "sv_warnings": 0, "sv_files_passed": 0, "sv_files_total": 0}
         quality_score = None
+        cross_result = None
+        hallucination_count = 0
         auto_train = self.cfg.auto_train
 
         for iteration in range(1, auto_train.max_iterations + 1):
@@ -194,20 +197,34 @@ class TBPipeline:
                     for iss in res.issues[:5]:
                         self.logger.debug("  [%s] %s:%d %s", iss.severity.upper(), fname, iss.line, iss.message)
 
+            # 6a3. Cross-file reference validation (catch hallucinations)
+            cross_result = validate_generated_files(all_generated, design_spec)
+            if cross_result.issues:
+                for iss in cross_result.issues:
+                    self.logger.warning("[CROSS-FILE] %s:%d %s", iss.file, iss.line, iss.message)
+            self.logger.info("Cross-file validation: spec register ref coverage=%.0f%%, interface ref coverage=%.0f%%, hallucinations=%d",
+                             cross_result.spec_coverage.get("register_reference_coverage", 0) * 100,
+                             cross_result.spec_coverage.get("interface_reference_coverage", 0) * 100,
+                             len([i for i in cross_result.issues if i.severity == "error"]))
+
             # 6b. Evaluate static metrics (against all accumulated files)
             eval_metrics = self.metrics_calc.evaluate_all(
                 design_spec, list(all_generated.keys()),
                 coverage_analysis=self.coverage_analysis
             )
             eval_metrics.update(sv_metrics)
-            # Recompute quality score with full metrics
+            hallucination_count = len([i for i in cross_result.issues if i.severity == "error"])
             quality_score = compute_quality_score(
                 metrics=eval_metrics,
-                num_regs=len(design_spec.registers)
+                num_regs=len(design_spec.registers),
+                spec_coverage=cross_result.spec_coverage,
+                hallucination_count=hallucination_count,
             )
             eval_metrics["quality_overall"] = quality_score.overall
             eval_metrics["quality_syntax"] = quality_score.syntax_score
             eval_metrics["quality_ral"] = quality_score.ral_readiness
+            eval_metrics["spec_coverage_score"] = quality_score.spec_coverage_score
+            eval_metrics["hallucination_count"] = quality_score.hallucination_count
             final_metrics = eval_metrics
             self.logger.info("Quality score: overall=%.2f, syntax=%.2f, completeness=%.2f, ral=%s",
                              quality_score.overall, quality_score.syntax_score,
@@ -327,6 +344,14 @@ class TBPipeline:
             "simulator": self.simulator.name(),
             "sv_check": sv_metrics,
             "quality_score": quality_score.overall if quality_score else 0.0,
+            "cross_file_validation": {
+                "passed": cross_result.passed,
+                "hallucinations": hallucination_count,
+                "spec_reg_coverage": cross_result.spec_coverage.get("register_reference_coverage", 0.0),
+                "spec_intf_coverage": cross_result.spec_coverage.get("interface_reference_coverage", 0.0),
+                "issues": [{"file": i.file, "line": i.line, "msg": i.message}
+                           for i in cross_result.issues],
+            } if cross_result else None,
             "coverage_analysis": {
                 "total_bins": self.coverage_analysis.sim_result.total_bins if self.coverage_analysis else 0,
                 "covered_bins": self.coverage_analysis.sim_result.covered_bins if self.coverage_analysis else 0,

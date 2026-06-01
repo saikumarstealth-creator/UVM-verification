@@ -70,6 +70,8 @@ class MetricsResponse(BaseModel):
     quality_overall: float = 0.0
     quality_syntax: float = 0.0
     quality_ral: float = 0.0
+    spec_coverage_score: float = 0.0
+    hallucination_count: int = 0
 
 
 class ProjectConfig(BaseModel):
