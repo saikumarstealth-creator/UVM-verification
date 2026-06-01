@@ -24,11 +24,10 @@ logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("replicate.predictor")
 
 try:
-    from cog import BasePredictor, Input, Path as CogPath
+    from cog import BasePredictor, Input
 except ImportError:
     class BasePredictor: pass
     def Input(**kw): return None
-    class CogPath: pass
 
 
 class Predictor(BasePredictor):
@@ -79,7 +78,7 @@ class Predictor(BasePredictor):
         self.cfg_loader = ConfigLoader()
         self.logger.info("System ready")
 
-    def predict(
+    def run(
         self,
         spec_yaml: str = Input(
             description="YAML specification for the UART/SPI/I2C/AXI/Wishbone design",
@@ -127,7 +126,7 @@ class Predictor(BasePredictor):
             description="Use ML to predict optimal test parameters",
             default=True,
         ),
-    ) -> CogPath:
+    ) -> Path:
         """Generate a UVM testbench with ML-optimized coverage."""
         with tempfile.TemporaryDirectory() as tmpdir:
             outdir = Path(tmpdir) / "output"
@@ -164,7 +163,7 @@ class Predictor(BasePredictor):
             zip_path = outdir / "uvm_testbench.zip"
             self._zip_output(outdir, zip_path, results.get("files", {}))
 
-            return CogPath(str(zip_path))
+            return Path(str(zip_path))
 
     def _build_spec(self, spec_yaml: str, design_name: str, protocol: str) -> Any:
         from src.config import DesignSpec
