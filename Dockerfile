@@ -12,24 +12,16 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy all source files first
+COPY . .
 
-COPY backend/requirements.txt backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r backend/requirements.txt
 
 # Build frontend
-COPY frontend/package.json frontend/package-lock.json frontend/
-RUN cd frontend && npm ci
-
-COPY frontend/ frontend/
-RUN cd frontend && npm run build
-
-# Copy backend and rest of the app
-COPY . .
-RUN rm -rf frontend/node_modules
+RUN cd frontend && npm ci && npm run build
 
 ENV PYTHONPATH=/app
 ENV UVMGEN_OUTPUT_DIR=/tmp/uvmgen_output

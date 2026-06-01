@@ -127,6 +127,8 @@ async def send_pipeline_update(websocket: WebSocket, pipeline):
 
 @app.get("/")
 async def root():
+    if os.path.exists(INDEX_HTML):
+        return FileResponse(INDEX_HTML)
     return {
         "name": "UVM Generator API",
         "version": "2.1.0",
