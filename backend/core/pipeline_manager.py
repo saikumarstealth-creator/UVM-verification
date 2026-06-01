@@ -253,7 +253,7 @@ class PipelineManager:
         cfg = pipeline.config
         
         pipeline.update_step(PipelineStep.SPEC_PARSE, 10, "Sending to Replicate ML backend...")
-        pipeline.add_log(f"Replicate deployment: {cfg.replicate_deployment}")
+        pipeline.add_log(f"Replicate model: {cfg.replicate_deployment}")
         await asyncio.sleep(0.1)
         
         pipeline.update_step(PipelineStep.SPEC_PARSE, 20, "Specification sent")
