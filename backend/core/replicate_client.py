@@ -1,8 +1,7 @@
 """
 Replicate API client for UVM generation.
 Calls the saikumarstealth-creator/uvmgenerator model via
-the Replicate predictions API (not deployments API, since
-no deployment was created).
+replicate.run() and returns generated files.
 """
 
 from __future__ import annotations
@@ -12,17 +11,13 @@ import io
 import json
 import logging
 import os
-import time
 import zipfile
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
+import replicate
 
 logger = logging.getLogger("replicate_client")
-
-API_BASE = "https://api.replicate.com/v1"
-POLL_INTERVAL = 2.0
-MAX_POLL_TIME = 300.0
 
 
 class ReplicateClient:
@@ -31,20 +26,10 @@ class ReplicateClient:
         self.model: str = os.environ.get(
             "REPLICATE_MODEL", "saikumarstealth-creator/uvmgenerator"
         )
-        self._headers: Optional[Dict[str, str]] = None
 
     @property
     def available(self) -> bool:
         return bool(self.api_token)
-
-    @property
-    def headers(self) -> Dict[str, str]:
-        if self._headers is None:
-            self._headers = {
-                "Authorization": f"Bearer {self.api_token}",
-                "Content-Type": "application/json",
-            }
-        return self._headers
 
     async def generate(
         self,
@@ -59,71 +44,43 @@ class ReplicateClient:
         coverage_target: float = 90.0,
         optimize_parameters: bool = True,
     ) -> Dict[str, Any]:
-        """Call Replicate model prediction and return generated files."""
         if not self.available:
             raise RuntimeError(
                 "REPLICATE_API_TOKEN not set. "
                 "Add it to your Hugging Face Space secrets or env."
             )
 
-        url = f"{API_BASE}/models/{self.model}/predictions"
-        body = {
-            "input": {
-                "spec_yaml": spec_yaml,
-                "design_name": design_name,
-                "protocol": protocol,
-                "model_type": model_type,
-                "rl_strategy": rl_strategy,
-                "enable_learning": enable_learning,
-                "strict_uvm": strict_uvm,
-                "max_iterations": max_iterations,
-                "coverage_target": coverage_target,
-                "optimize_parameters": optimize_parameters,
-            },
-        }
+        os.environ["REPLICATE_API_TOKEN"] = self.api_token
 
-        logger.info("Creating prediction: POST %s", url)
+        logger.info("Calling replicate.run(%s) ...", self.model)
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, headers=self.headers, json=body, timeout=30)
-            if resp.status_code == 404:
-                raise RuntimeError(
-                    f"Model '{self.model}' not found on Replicate. "
-                    "Make sure you ran cog push r8.im/saikumarstealth-creator/uvmgenerator successfully."
-                )
-            resp.raise_for_status()
-            prediction = resp.json()
+        try:
+            output = await asyncio.to_thread(
+                replicate.run,
+                self.model,
+                input={
+                    "spec_yaml": spec_yaml,
+                    "design_name": design_name,
+                    "protocol": protocol,
+                    "model_type": model_type,
+                    "rl_strategy": rl_strategy,
+                    "enable_learning": enable_learning,
+                    "strict_uvm": strict_uvm,
+                    "max_iterations": max_iterations,
+                    "coverage_target": coverage_target,
+                    "optimize_parameters": optimize_parameters,
+                },
+            )
+        except replicate.exceptions.ModelNotFound as e:
+            raise RuntimeError(
+                f"Model '{self.model}' not found on Replicate. "
+                "Make sure you pushed the model with: cog push r8.im/{self.model}"
+            ) from e
 
-        pred_id = prediction["id"]
-        status = prediction["status"]
-        logger.info("Prediction %s — status=%s", pred_id, status)
+        logger.info("Replicate run completed — output type=%s", type(output).__name__)
 
-        # Poll until done
-        start = time.monotonic()
-        while status in ("starting", "processing"):
-            if time.monotonic() - start > MAX_POLL_TIME:
-                raise RuntimeError(f"Prediction {pred_id} timed out after {MAX_POLL_TIME}s")
-
-            await asyncio.sleep(POLL_INTERVAL)
-
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{API_BASE}/predictions/{pred_id}",
-                    headers=self.headers,
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                prediction = resp.json()
-                status = prediction["status"]
-                logger.info("Prediction %s — status=%s", pred_id, status)
-
-        if status == "failed":
-            error = prediction.get("error", "unknown error")
-            raise RuntimeError(f"Replicate prediction failed: {error}")
-
-        output = prediction.get("output")
         if not output:
-            raise RuntimeError(f"Replicate returned no output (status={status})")
+            raise RuntimeError("Replicate returned no output")
 
         files, metrics = self._extract_zip(output)
         return {"files": files, "metrics": metrics}
@@ -178,5 +135,4 @@ class ReplicateClient:
             return {"expected": 0, "gaps": [], "error": str(e)}
 
 
-# Global singleton
 replicate_client = ReplicateClient()
