@@ -71,11 +71,13 @@ class ReplicateClient:
                     "optimize_parameters": optimize_parameters,
                 },
             )
-        except replicate.exceptions.ModelNotFound as e:
-            raise RuntimeError(
-                f"Model '{self.model}' not found on Replicate. "
-                "Make sure you pushed the model with: cog push r8.im/{self.model}"
-            ) from e
+        except Exception as e:
+            if "not found" in str(e).lower() or "404" in str(e):
+                raise RuntimeError(
+                    f"Model '{self.model}' not found on Replicate. "
+                    "Make sure you pushed the model with: cog push r8.im/{self.model}"
+                ) from e
+            raise
 
         logger.info("Replicate run completed — output type=%s", type(output).__name__)
 
