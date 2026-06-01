@@ -6,7 +6,7 @@ build:
     - "build-essential"
   python_version: "3.11"
   python_requirements: "backend/requirements.txt"
-  run:
-    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && npm install -g npm
+  run: |
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && npm install -g npm
 
 run: "predict.py:Predictor"
