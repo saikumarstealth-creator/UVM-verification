@@ -83,3 +83,5 @@
 ## Known Issues
 - `SpecFeatures.from_spec()` in coverage_predictor.py may fail if spec object doesn't have expected attributes (handled by heuristic fallback)
 - V2 model's `_use_llm` flag defaults to False — coverage-driven hybrid path only activates when `use_llm=True`
+- SV `{N{1'b1}}` concatenation pattern clashes with Jinja2 `{{ }}` — use `'1` (SV fill-ones literal) instead in templates
+- **Docker entrypoint is `backend.main:app`**, not `src.api.server:app` — changes to API must go in `backend/main.py`

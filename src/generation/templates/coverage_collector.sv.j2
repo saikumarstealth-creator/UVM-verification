@@ -94,14 +94,14 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   {% endif %}
     {{ f.name|lower }}_cp: coverpoint data[{{ msb }}:{{ lsb }}] {
       bins zero  = {0};
-      bins max   = {{{ f_width }}{1'b1}};
+      bins max   = '1;
       bins others = default;
     }
 {% endfor %}
 {% else %}
     cp_data: coverpoint data {
       bins zero  = {0};
-      bins max   = {{{ data_width }}{1'b1}};
+      bins max   = '1;
       bins others = default;
     }
 {% endif %}
