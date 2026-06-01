@@ -168,7 +168,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     tr.we = item.we;
     tr.timestamp = $time;
     tr.seq_num = transaction_count++;
-    tr.inj_tag = 0;
+    tr.inj_tag = item.inj_tag;
 
     if (item.we) begin
       process_write(tr);

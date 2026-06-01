@@ -7,6 +7,7 @@ class {{ spec.design_name }}_seq_item extends uvm_sequence_item;
   rand logic [2:0] addr;
   rand logic [7:0] data;
   rand int         delay;
+  rand int         inj_tag;
   {% if p == "spi" %}
   rand logic [7:0] spi_mosi_data;
   rand int         spi_speed_hz;
