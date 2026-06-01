@@ -1,0 +1,43 @@
+name: Push to Replicate
+on:
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: 'Replicate model name (e.g., saikumarstealth-creator/uvmgenerator)'
+        required: true
+        default: 'saikumarstealth-creator/uvmgenerator'
+      hardware:
+        description: 'Hardware type (cpu, gpu-t4, gpu-a100)'
+        required: true
+        default: 'cpu'
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cog
+        run: |
+          sudo curl -o /usr/local/bin/cog -L "https://github.com/replicate/cog/releases/latest/download/cog_$(uname -s)_$(uname -m)"
+          sudo chmod +x /usr/local/bin/cog
+
+      - name: Cog login
+        run: cog login --token ${{ secrets.REPLICATE_API_TOKEN }}
+
+      - name: Push to Replicate
+        run: cog push r8.im/${{ inputs.model_name }}
+
+      - name: Create deployment
+        run: |
+          curl -s -X POST "https://api.replicate.com/v1/deployments" \
+            -H "Authorization: Bearer ${{ secrets.REPLICATE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "uvm-generator",
+              "model": "${{ inputs.model_name }}",
+              "version": "${{ steps.push.outputs.version }}",
+              "hardware": "${{ inputs.hardware }}",
+              "min_instances": 0,
+              "max_instances": 1
+            }'
