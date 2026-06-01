@@ -60,19 +60,26 @@
 ## Template Status (Post-Phase 1)
 | Template | Status | Key Changes |
 |---|---|---|
-| `ral_model.sv.j2` | ✅ Spec-driven | Iterates `spec.registers` → register classes, block, adapter, predictor; no hardcoded UART names |
-| `coverage_collector.sv.j2` | ✅ Spec-driven + reg-level CGs | Dynamic `addr_bits`/`data_bits` from spec; per-register field-level covergroups |
-| `scoreboard.sv.j2` | ✅ Spec-driven | `shadow_regs[0:num_regs-1]`, dynamic addr width, UART sections guarded |
-| `sequence.sv.j2` | ✅ Spec-driven | Dynamic addr width, loop bounds, range constraints from `num_regs` |
+| `ral_model.sv.j2` | ✅ Spec-driven | Iterates `spec.registers` → register classes, block, adapter, predictor; no hardcoded UART names; `addr_bits` computed inline via `map\|max` (no `__setitem__` hack) |
+| `coverage_collector.sv.j2` | ✅ Spec-driven + reg-level CGs | Dynamic `addr_bits`/`data_bits` from spec; per-register field-level covergroups; SV `'1` literal instead of `{N{1'b1}}` to avoid Jinja2 clash |
+| `scoreboard.sv.j2` | ✅ Spec-driven | `shadow_regs[0:num_regs-1]`, dynamic addr width, UART sections guarded; `addr_bits` computed inline |
+| `sequence.sv.j2` | ✅ Spec-driven | Dynamic addr width, loop bounds, range constraints from `num_regs`; `data_width` from spec; fixed stray `}` syntax bug |
+| `sequence_item.sv.j2` | ✅ Enhanced | `uvm_object_utils_begin/end` with field macros, `error_type_e` enum, `do_print()`, `inject_error()` helper, `int unsigned delay` |
 | `test.sv.j2` | ✅ Fixed | UART `vif.uart_rx`/`vif.cts_n` guarded by `{% if p == "uart" %}` |
 
 ## Pipeline additions (Jun 2026)
 - **Step 6a2**: SV syntax check via `SVSyntaxChecker` — block structure, paren balance, type refs, protocol consistency, common pitfalls
-- **Step 6b**: AI quality score via `compute_quality_score()` — weighted composite of completeness (25%), syntax (25%), register coverage (20%), RAL readiness (15%), coverage readiness (15%)
-- Results include `sv_check` dict and `quality_score` float in pipeline return
+- **Step 6a3**: Cross-file reference validation via `validate_generated_files()` — catches `reg_model.xxx` hallucinations where `xxx` not in spec registers; computes spec register/interf reference coverage
+- **Step 6b**: AI quality score via `compute_quality_score()` — weighted composite including spec_coverage_score (35% weight); hallucination_penalty (-0.1 each, max -0.5)
+- Results include `sv_check` dict, `quality_score` float, `cross_file_validation` dict (passed, hallucinations, spec_coverage)
 - ZIP export at `GET /api/export-zip` — downloads all generated files as a single archive (wired to UI Download button)
+- New files: `src/evaluation/cross_file_validator.py`
 
 ## Next Steps
+1. Wire cross_file_validation results into React frontend metrics display
+2. Guard hardcoded UART register references (`reg_model.lcr`, `reg_model.dll`, etc.) in scoreboard/sequence/test behind a check that those registers actually exist in the spec
+3. Add more protocol templates (AXI4, AHB, Wishbone)
+4. Generate architecture diagram from spec
 
 ## Important Paths (Docker/HF Space)
 - Backend root: `/app/backend/`
