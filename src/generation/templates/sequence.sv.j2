@@ -4,11 +4,8 @@
 {% set regs = spec.registers if spec.registers else [] %}
 {% set num_regs = regs|length %}
 {% if num_regs == 0 %}{% set num_regs = 8 %}{% endif %}
-{% set max_addr_val = 0 %}
-{% for r in regs %}
-  {% set a = r.address.replace('0x', '').replace('h', '')|int(16) %}
-  {% if a > max_addr_val %}{% set _ = max_addr_val.__setitem__(0, a) %}{% endif %}
-{% endfor %}
+{% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
+{% set max_addr_val = addr_ints|max if addr_ints else 0 %}
 {% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
 
 class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);

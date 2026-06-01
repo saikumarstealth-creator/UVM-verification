@@ -1,20 +1,11 @@
 // UVM Coverage Collector for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
-{% set max_addr_val = 0 %}
-{% for r in regs %}
-  {% set addr_int = r.address.replace('0x', '').replace('h', '') %}
-  {% if addr_int|int(16) > max_addr_val %}
-    {% set _ = max_addr_val.__setitem__(0, addr_int|int(16)) %}
-  {% endif %}
-{% endfor %}
+{% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
+{% set max_addr_val = addr_ints|max if addr_ints else 0 %}
 {% set addr_width = [max_addr_val.bit_length(), 3]|max %}
-{% set data_width = 8 %}
-{% for r in regs %}
-  {% if r.size and r.size > data_width %}
-    {% set _ = data_width.__setitem__(0, r.size) %}
-  {% endif %}
-{% endfor %}
+{% set sizes = regs|map(attribute='size')|select('number')|list %}
+{% set data_width = sizes|max if sizes else 8 %}
 
 class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_coverage_collector)
