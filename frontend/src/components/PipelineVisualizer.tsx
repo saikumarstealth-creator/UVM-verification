@@ -49,7 +49,7 @@ const PipelineVisualizer: React.FC = () => {
       </div>
 
       {/* Pipeline Steps */}
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 overflow-y-auto max-h-64 scrollbar-thin">
         {STEPS.map((step, index) => {
           const stepStatus = getStepStatus(step.key)
           const isLast = index === STEPS.length - 1
