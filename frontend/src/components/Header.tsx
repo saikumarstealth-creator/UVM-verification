@@ -18,6 +18,9 @@ const Header: React.FC = () => {
           <span className="text-[10px] text-eda-text-tertiary">
             AI-Powered Testbench Generation v2.1
           </span>
+          <span className="text-[9px] text-eda-text-tertiary/60">
+            Developed by Sai Kumar Taraka
+          </span>
         </div>
       </div>
 
