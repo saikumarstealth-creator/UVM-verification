@@ -176,12 +176,20 @@ class PipelineManager:
             passed = result.get('passed', False)
             
             pipeline.generated_files = result.get('generated_files', {})
+            sv_check = result.get('sv_check', {})
+            quality = result.get('quality_score', 0.0)
             pipeline.metrics = {
                 "completeness": eval_metrics.get('completeness', 0),
                 "signal_coverage": eval_metrics.get('interface_signal_coverage', 0),
                 "register_coverage": eval_metrics.get('register_coverage', 0),
                 "files_generated": len(pipeline.generated_files),
-                "passed": passed
+                "passed": passed,
+                "sv_compile_confidence": sv_check.get('sv_compile_confidence', 0.0),
+                "sv_errors": sv_check.get('sv_errors', 0),
+                "sv_warnings": sv_check.get('sv_warnings', 0),
+                "quality_overall": quality,
+                "quality_syntax": eval_metrics.get('quality_syntax', 0.0),
+                "quality_ral": eval_metrics.get('quality_ral', 0.0),
             }
             
             validation_status = "PASSED" if passed else "COMPLETED"

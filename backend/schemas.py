@@ -64,6 +64,12 @@ class MetricsResponse(BaseModel):
     register_coverage: float
     files_generated: int
     passed: bool
+    sv_compile_confidence: float = 0.0
+    sv_errors: int = 0
+    sv_warnings: int = 0
+    quality_overall: float = 0.0
+    quality_syntax: float = 0.0
+    quality_ral: float = 0.0
 
 
 class ProjectConfig(BaseModel):

@@ -191,7 +191,13 @@ async def get_generation_metrics(task_id: str):
         signal_coverage=pipeline.metrics.get("signal_coverage", 0),
         register_coverage=pipeline.metrics.get("register_coverage", 0),
         files_generated=pipeline.metrics.get("files_generated", 0),
-        passed=pipeline.metrics.get("passed", False)
+        passed=pipeline.metrics.get("passed", False),
+        sv_compile_confidence=pipeline.metrics.get("sv_compile_confidence", 0.0),
+        sv_errors=pipeline.metrics.get("sv_errors", 0),
+        sv_warnings=pipeline.metrics.get("sv_warnings", 0),
+        quality_overall=pipeline.metrics.get("quality_overall", 0.0),
+        quality_syntax=pipeline.metrics.get("quality_syntax", 0.0),
+        quality_ral=pipeline.metrics.get("quality_ral", 0.0),
     )
 
 
