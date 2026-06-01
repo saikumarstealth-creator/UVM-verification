@@ -16,12 +16,58 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     addr_x_we: cross cp_addr, cp_we;
   endgroup
 
+  // Data pattern coverage: alternating, walking-1, edge values
+  covergroup data_pattern_cg with function sample(bit [7:0] data);
+    option.per_instance = 1;
+    cp_pattern: coverpoint data {
+      bins alternating[] = {8'hAA, 8'h55, 8'hCC, 8'h33};
+      bins walking_one[] = {8'h01, 8'h02, 8'h04, 8'h08, 8'h10, 8'h20, 8'h40, 8'h80};
+      bins walking_zero[] = {8'hFE, 8'hFD, 8'hFB, 8'hF7, 8'hEF, 8'hDF, 8'hBF, 8'h7F};
+      bins edge[]        = {8'h00, 8'hFF};
+      bins incrementing  = {8'h11, 8'h22, 8'h33, 8'h44, 8'h55, 8'h66, 8'h77, 8'h88,
+                            8'h99, 8'hAA, 8'hBB, 8'hCC, 8'hDD, 8'hEE};
+      bins others        = default;
+    }
+  endgroup
+
+{% if p == "uart" %}
+  // UART-specific coverage: baud rate, frame format, parity mode
+  int baud_rates_covered[$];
+  covergroup uart_config_cg with function sample(int baud_rate, int data_bits, int stop_bits, string parity);
+    option.per_instance = 1;
+    cp_baud: coverpoint baud_rate {
+      bins standard[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800};
+    }
+    cp_frame: coverpoint {data_bits, stop_bits} {
+      bins combos[] = { {5,1}, {5,2}, {6,1}, {6,2}, {7,1}, {7,2}, {8,1}, {8,2} };
+    }
+    cp_parity: coverpoint parity {
+      bins none  = {"none"};
+      bins odd   = {"odd"};
+      bins even  = {"even"};
+      bins mark  = {"mark"};
+      bins space = {"space"};
+    }
+  endgroup
+
+  function void sample_uart_config(int baud, int dbits, int sbits, string parity);
+    uart_config_cg.sample(baud, dbits, sbits, parity);
+    if (!(baud inside {baud_rates_covered}))
+      baud_rates_covered.push_back(baud);
+  endfunction
+{% endif %}
+
   function new(string n, uvm_component p);
     super.new(n, p);
     reg_address_cg = new();
+    data_pattern_cg = new();
+{% if p == "uart" %}
+    uart_config_cg = new();
+{% endif %}
   endfunction
 
   function void write({{ spec.design_name }}_seq_item item);
     reg_address_cg.sample(item.we, item.addr, item.data);
+    data_pattern_cg.sample(item.data);
   endfunction
 endclass

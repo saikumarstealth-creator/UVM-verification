@@ -454,6 +454,229 @@ class uart_baud_change_seq extends {{ spec.design_name }}_base_seq;
   endtask
 endclass
 
+class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_error_injection_seq)
+
+  typedef enum {
+    INJ_PARITY, INJ_FRAMING, INJ_BREAK, INJ_ALL
+  } inj_type_t;
+
+  rand inj_type_t inj_type;
+  rand int        num_injections;
+  int             injected_count;
+  int             observed_errors;
+
+  constraint c_inj_count { num_injections inside {[1:16]}; }
+
+  function new(string n = "uart_error_injection_seq");
+    super.new(n);
+    num_injections = 3;
+    injected_count = 0;
+    observed_errors = 0;
+  endfunction
+
+  task body;
+    uvm_status_e status;
+    logic [7:0] lcr_val;
+    logic [7:0] lsr_val;
+
+    `uvm_info("UART_INJ", $sformatf("Starting error injection: %s, count=%0d",
+              inj_type.name(), num_injections), UVM_LOW)
+
+    if (reg_model) begin
+      reg_model.lcr.read(status, lcr_val, .parent(this));
+    end else begin
+      {{ spec.design_name }}_read_reg_seq rseq;
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+      rseq.reg_addr = 3'h3;
+      rseq.start(m_sequencer);
+      lcr_val = rseq.read_data;
+    end
+
+    for (int i = 0; i < num_injections; i++) begin
+      case (inj_type)
+        INJ_PARITY: begin
+          lcr_val[3] = 1'b1;
+          lcr_val[4] = 1'b0;
+          if (reg_model) begin
+            reg_model.lcr.write(status, lcr_val, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h3;
+            wseq.write_data = lcr_val;
+            wseq.start(m_sequencer);
+          end
+          injected_count++;
+          `uvm_info("UART_INJ", $sformatf("Injected parity error #%0d", injected_count), UVM_MEDIUM)
+
+          if (reg_model) begin
+            reg_model.rbr_thr.write(status, 8'hA5, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h0;
+            wseq.write_data = 8'hA5;
+            wseq.start(m_sequencer);
+          end
+          #20us;
+
+          if (reg_model) begin
+            reg_model.lsr.read(status, lsr_val, .parent(this));
+          end else begin
+            {{ spec.design_name }}_read_reg_seq rseq;
+            rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+            rseq.reg_addr = 3'h5;
+            rseq.start(m_sequencer);
+            lsr_val = rseq.read_data;
+          end
+
+          if (lsr_val[2]) begin
+            observed_errors++;
+            `uvm_info("UART_INJ", $sformatf("Parity error observed in LSR: 0x%02h", lsr_val), UVM_MEDIUM)
+          end else begin
+            `uvm_warning("UART_INJ", "Expected parity error not set in LSR")
+          end
+          lcr_val[3] = 1'b0;
+          if (reg_model) begin
+            reg_model.lcr.write(status, lcr_val, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h3;
+            wseq.write_data = lcr_val;
+            wseq.start(m_sequencer);
+          end
+        end
+        INJ_FRAMING: begin
+          logic [7:0] lcr_stop;
+          lcr_stop = lcr_val;
+          lcr_stop[2] = 1'b0;
+          if (reg_model) begin
+            reg_model.lcr.write(status, lcr_stop, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h3;
+            wseq.write_data = lcr_stop;
+            wseq.start(m_sequencer);
+          end
+          injected_count++;
+          `uvm_info("UART_INJ", $sformatf("Injected framing error #%0d", injected_count), UVM_MEDIUM)
+
+          if (reg_model) begin
+            reg_model.rbr_thr.write(status, 8'h5A, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h0;
+            wseq.write_data = 8'h5A;
+            wseq.start(m_sequencer);
+          end
+          #20us;
+
+          if (reg_model) begin
+            reg_model.lsr.read(status, lsr_val, .parent(this));
+          end else begin
+            {{ spec.design_name }}_read_reg_seq rseq;
+            rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+            rseq.reg_addr = 3'h5;
+            rseq.start(m_sequencer);
+            lsr_val = rseq.read_data;
+          end
+
+          if (lsr_val[3]) begin
+            observed_errors++;
+            `uvm_info("UART_INJ", $sformatf("Framing error observed in LSR: 0x%02h", lsr_val), UVM_MEDIUM)
+          end else begin
+            `uvm_warning("UART_INJ", "Expected framing error not set in LSR")
+          end
+          lcr_val[2] = 1'b1;
+          if (reg_model) begin
+            reg_model.lcr.write(status, lcr_val, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h3;
+            wseq.write_data = lcr_val;
+            wseq.start(m_sequencer);
+          end
+        end
+        INJ_BREAK: begin
+          logic [7:0] lcr_break;
+          lcr_break = lcr_val;
+          lcr_break[6] = 1'b1;
+          if (reg_model) begin
+            reg_model.lcr.write(status, lcr_break, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h3;
+            wseq.write_data = lcr_break;
+            wseq.start(m_sequencer);
+          end
+          injected_count++;
+          `uvm_info("UART_INJ", $sformatf("Injected break condition #%0d", injected_count), UVM_MEDIUM)
+          #200us;
+
+          if (reg_model) begin
+            reg_model.lsr.read(status, lsr_val, .parent(this));
+          end else begin
+            {{ spec.design_name }}_read_reg_seq rseq;
+            rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
+            rseq.reg_addr = 3'h5;
+            rseq.start(m_sequencer);
+            lsr_val = rseq.read_data;
+          end
+
+          if (lsr_val[4]) begin
+            observed_errors++;
+            `uvm_info("UART_INJ", $sformatf("Break condition observed in LSR: 0x%02h", lsr_val), UVM_MEDIUM)
+          end else begin
+            `uvm_warning("UART_INJ", "Expected break condition not set in LSR")
+          end
+          lcr_break[6] = 1'b0;
+          if (reg_model) begin
+            reg_model.lcr.write(status, lcr_break, .parent(this));
+          end else begin
+            {{ spec.design_name }}_write_reg_seq wseq;
+            wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
+            wseq.reg_addr = 3'h3;
+            wseq.write_data = lcr_break;
+            wseq.start(m_sequencer);
+          end
+        end
+        INJ_ALL: begin
+          uart_error_injection_seq sub_seq;
+          sub_seq = uart_error_injection_seq::type_id::create("sub_seq");
+          if (sub_seq.randomize() with {
+            inj_type inside {INJ_PARITY, INJ_FRAMING, INJ_BREAK};
+            num_injections == 1;
+          }) begin
+            sub_seq.start(m_sequencer);
+            injected_count += sub_seq.injected_count;
+            observed_errors += sub_seq.observed_errors;
+          end
+        end
+      endcase
+    end
+
+    // Report injection results
+    if (injected_count > 0) begin
+      `uvm_info("UART_INJ", $sformatf(
+        "\n  === Error Injection Report ==="
+        "\n  Type:           %s"
+        "\n  Injected:       %0d"
+        "\n  Observed in HW: %0d"
+        "\n  Detection Rate: %0d/100",
+        inj_type.name(), injected_count, observed_errors,
+        (injected_count > 0) ? (observed_errors * 100 / injected_count) : 0
+      ), UVM_LOW)
+    end
+  endtask
+endclass
+
+
 class uart_reg_hw_reset_seq extends uvm_reg_hw_reset_seq;
   `uvm_object_utils(uart_reg_hw_reset_seq)
 
