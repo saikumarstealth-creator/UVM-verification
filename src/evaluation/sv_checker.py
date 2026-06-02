@@ -14,11 +14,83 @@ class SVIssue:
 
 
 @dataclass
+class SVSuggestion:
+    code: str
+    message: str
+    fix: str
+
+
+FIX_SUGGESTIONS: Dict[str, SVSuggestion] = {
+    "BLK002": SVSuggestion(
+        "BLK002",
+        "Mismatched block end",
+        "Check that end{keyword} matches the opening keyword at the indicated line. Replace mismatched end{keyword} with the correct terminator.",
+    ),
+    "BLK004": SVSuggestion(
+        "BLK004",
+        "Unexpected 'end' without 'begin'",
+        "Remove the extra 'end' or add a matching 'begin' before this block.",
+    ),
+    "BLK005": SVSuggestion(
+        "BLK005",
+        "Unclosed block",
+        "Add the missing 'end{keyword}' at the end of the unclosed block.",
+    ),
+    "PAR001": SVSuggestion(
+        "PAR001",
+        "Unbalanced parentheses",
+        "Add or remove parentheses to balance — count opening '(' and closing ')' in this line.",
+    ),
+    "TYP001": SVSuggestion(
+        "TYP001",
+        "Undefined type reference",
+        "Add a typedef or class declaration for the referenced type, or ensure the type is imported via `include.",
+    ),
+    "PRO001": SVSuggestion(
+        "PRO001",
+        "Missing protocol signal",
+        "Add port declaration or signal assignment for the missing protocol signal to match the interface.",
+    ),
+    "PIT001": SVSuggestion(
+        "PIT001",
+        "$display used instead of `uvm_info",
+        "Replace `$display(...)` with ```uvm_info(\"ID\", $sformatf(...), UVM_MEDIUM)``` for UVM-compliance.",
+    ),
+    "PIT002": SVSuggestion(
+        "PIT002",
+        "$monitor used instead of `uvm_info",
+        "Replace `$monitor(...)` with ```uvm_info(\"ID\", $sformatf(...), UVM_MEDIUM)```.",
+    ),
+    "PIT003": SVSuggestion(
+        "PIT003",
+        "always @ used instead of always_ff/always_comb",
+        "Replace `always @(...)` with `always_ff @(posedge clk)` for sequential or `always_comb` for combinational logic.",
+    ),
+    "PIT004": SVSuggestion(
+        "PIT004",
+        "Direct .sv include — use filelist instead",
+        "Move `include to a compile.f file list and add the file to the UVM filelist instead of direct include.",
+    ),
+    "REG001": SVSuggestion(
+        "REG001",
+        "Register referenced but not defined in spec",
+        "Remove the hallucinated register reference, or add it to the YAML spec's `registers` list.",
+    ),
+    "SEQ001": SVSuggestion(
+        "SEQ001",
+        "Missing sequence item declaration",
+        "Add `uart_seq_item req;` and `uart_seq_item rsp;` before using them in this task.",
+    ),
+}
+
+
+@dataclass
 class SVCheckResult:
     file_path: str
     passed: bool = False
     confidence: float = 0.0
     issues: List[SVIssue] = field(default_factory=list)
+    suggestions: List[SVSuggestion] = field(default_factory=list)
     total_lines: int = 0
     total_issues: int = 0
     errors: int = 0
@@ -107,6 +179,12 @@ class SVSyntaxChecker:
         result.total_issues = len(result.issues)
         result.passed = result.errors == 0
         result.confidence = self._compute_confidence(result)
+
+        result.suggestions = list({
+            issue.code: FIX_SUGGESTIONS[issue.code]
+            for issue in result.issues
+            if issue.code in FIX_SUGGESTIONS
+        }.values())
 
         return result
 
@@ -355,3 +433,20 @@ def summarize(results: Dict[str, SVCheckResult]) -> Dict[str, float]:
         "sv_files_passed": passed,
         "sv_files_total": total_files,
     }
+
+
+def collect_suggestions(results: Dict[str, SVCheckResult]) -> List[Dict[str, str]]:
+    """Collect unique fix suggestions across all files."""
+    seen: Set[str] = set()
+    suggestions: List[Dict[str, str]] = []
+    for fname, result in results.items():
+        for s in result.suggestions:
+            if s.code not in seen:
+                seen.add(s.code)
+                suggestions.append({
+                    "code": s.code,
+                    "issue": s.message,
+                    "fix": s.fix,
+                    "files": fname,
+                })
+    return suggestions

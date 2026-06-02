@@ -102,7 +102,7 @@ endclass
 // ---------------------------------------------------------------------------
 // Write Register Sequence
 // ---------------------------------------------------------------------------
-class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+class {{ spec.design_name }}_write_reg_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_write_reg_seq)
 
   rand logic [{{ addr_bits-1 }}:0] reg_addr;
@@ -115,13 +115,7 @@ class {{ spec.design_name }}_write_reg_seq extends uvm_sequence #({{ spec.design
   endfunction
 
   task body;
-    {{ spec.design_name }}_seq_item req;
-    {{ spec.design_name }}_seq_item rsp;
-    req = {{ spec.design_name }}_seq_item::type_id::create("req");
-    start_item(req);
-    assert(req.randomize() with { we == 1; addr == reg_addr; data == write_data; delay == 0; });
-    finish_item(req);
-    get_response(rsp);
+    uart_write_reg(reg_addr, write_data);
     `uvm_info("SEQ", $sformatf("Write reg[0x%0h] = 0x%0h", reg_addr, write_data), UVM_MEDIUM)
   endtask
 endclass
@@ -129,7 +123,7 @@ endclass
 // ---------------------------------------------------------------------------
 // Read Register Sequence
 // ---------------------------------------------------------------------------
-class {{ spec.design_name }}_read_reg_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+class {{ spec.design_name }}_read_reg_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_read_reg_seq)
 
   rand logic [{{ addr_bits-1 }}:0] reg_addr;
@@ -142,14 +136,7 @@ class {{ spec.design_name }}_read_reg_seq extends uvm_sequence #({{ spec.design_
   endfunction
 
   task body;
-    {{ spec.design_name }}_seq_item req;
-    {{ spec.design_name }}_seq_item rsp;
-    req = {{ spec.design_name }}_seq_item::type_id::create("req");
-    start_item(req);
-    assert(req.randomize() with { we == 0; addr == reg_addr; delay == 0; });
-    finish_item(req);
-    get_response(rsp);
-    read_data = rsp.data;
+    uart_read_reg(reg_addr, read_data);
     `uvm_info("SEQ", $sformatf("Read reg[0x%0h] => 0x%0h", reg_addr, read_data), UVM_MEDIUM)
   endtask
 endclass
@@ -157,7 +144,7 @@ endclass
 // ---------------------------------------------------------------------------
 // All Registers Sequence
 // ---------------------------------------------------------------------------
-class {{ spec.design_name }}_all_regs_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+class {{ spec.design_name }}_all_regs_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_all_regs_seq)
 
   function new(string n = "{{ spec.design_name }}_all_regs_seq");
@@ -257,7 +244,6 @@ class uart_config_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    uvm_status_e status;
     logic [7:0] lcr_val;
     logic [15:0] divisor;
 
@@ -272,19 +258,11 @@ class uart_config_seq extends {{ spec.design_name }}_base_seq;
     `uvm_info("UART_CFG", $sformatf("Configuring: Baud=%0d, Data bits=%0d, Stop bits=%0d, Parity=%0d",
               baud_rate, data_bits, stop_bits, parity_en), UVM_MEDIUM)
 
-    if (reg_model) begin
-      reg_model.lcr.write(status, lcr_val, .parent(this));
-      reg_model.dll.write(status, divisor[7:0], .parent(this));
-      reg_model.dlm.write(status, divisor[15:8], .parent(this));
-      lcr_val[7] = 1'b0;
-      reg_model.lcr.write(status, lcr_val, .parent(this));
-    end else begin
-      uart_write_reg(3'h3, lcr_val);
-      uart_write_reg(3'h0, divisor[7:0]);
-      uart_write_reg(3'h1, divisor[15:8]);
-      lcr_val[7] = 1'b0;
-      uart_write_reg(3'h3, lcr_val);
-    end
+    uart_write_reg(3'h3, lcr_val);
+    uart_write_reg(3'h0, divisor[7:0]);
+    uart_write_reg(3'h1, divisor[15:8]);
+    lcr_val[7] = 1'b0;
+    uart_write_reg(3'h3, lcr_val);
     if (sb_handle != null) sb_handle.record_config(baud_rate, data_bits, stop_bits, parity_en, even_parity);
   endtask
 
@@ -329,19 +307,12 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    uvm_status_e status;
-    logic [7:0] lsr_val;
-
     `uvm_info("UART_TX", $sformatf("Transmitting %0d bytes: %p", num_bytes, tx_data), UVM_MEDIUM)
 
     for (int i = 0; i < num_bytes; i++) begin
       wait_for_tx_empty();
 
-      if (reg_model) begin
-        reg_model.rbr_thr.write(status, tx_data[i], .parent(this));
-      end else begin
-        uart_write_reg(3'h0, tx_data[i]);
-      end
+      uart_write_reg(3'h0, tx_data[i]);
       if (sb_handle != null) sb_handle.record_tx(3'h0, tx_data[i]);
       `uvm_info("UART_TX", $sformatf("Wrote byte: 0x%02h ('%s')", tx_data[i],
                 (tx_data[i] inside {[8'h20:8'h7E]}) ? string'(tx_data[i]) : "."), UVM_HIGH)
@@ -380,7 +351,6 @@ class uart_rx_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    uvm_status_e status;
     logic [7:0] lsr_val;
     int timeout_cnt = 0;
 
@@ -675,7 +645,6 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    uvm_status_e status;
     logic [7:0] lcr_val;
     logic [7:0] lsr_val;
 
@@ -825,7 +794,6 @@ class uart_reset_test_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    uvm_status_e status;
     uvm_reg_data_t val;
     string regs_to_check[$];
 

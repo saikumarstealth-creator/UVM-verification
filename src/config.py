@@ -50,12 +50,19 @@ class ClockResetDef(BaseModel):
     reset: str = "rst_n"
     reset_active: int = Field(default=0, ge=0, le=1)
 
+class SequenceDef(BaseModel):
+    name: str
+    type: str = "regression"
+    description: str = ""
+
+
 class DesignSpec(BaseModel):
     design_name: str = Field(min_length=1, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
     clock_reset: ClockResetDef = ClockResetDef()
     interfaces: List[InterfaceDef] = Field(min_length=1)
     registers: List[RegisterDef] = []
     protocol: str = Field(default="", pattern=r"^(uart|spi|i2c|axi4lite|apb|wishbone|)$")
+    sequences: List[SequenceDef] = []
 
 
 # ── Pipeline / Engine Config ─────────────────────────────────────────────────

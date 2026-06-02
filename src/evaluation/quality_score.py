@@ -16,15 +16,20 @@ class QualityScore:
     coverage_readiness: float
     spec_coverage_score: float
     sequence_score: float
+    protocol_correctness: float
+    test_mapping_score: float
     hallucination_count: int
     details: Dict[str, str]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "syntax_score": round(self.syntax_score * 100, 1),
+            "completeness_score": round(self.completeness_score * 100, 1),
             "ral_score": round(self.ral_readiness * 100, 1),
             "coverage_score": round(self.coverage_readiness * 100, 1),
             "sequence_score": round(self.sequence_score * 100, 1),
+            "protocol_score": round(self.protocol_correctness * 100, 1),
+            "test_mapping_score": round(self.test_mapping_score * 100, 1),
             "overall_score": round(self.overall * 100, 1),
         }
 
@@ -34,13 +39,15 @@ class QualityScore:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "ai_quality_scores": self.to_dict(),
             "breakdown": {
+                "SV Syntax": f"{self.syntax_score * 100:.0f}% confidence",
                 "Completeness": f"{self.completeness_score * 100:.0f}% files generated",
-                "SV Syntax": f"confidence {self.syntax_score * 100:.0f}%",
                 "Register Coverage": f"{self.register_coverage_score * 100:.0f}%",
                 "RAL Readiness": "ready" if self.ral_readiness > 0.5 else "missing registers",
                 "Coverage Readiness": "ready" if self.coverage_readiness > 0.5 else "needs work",
                 "Spec Coverage": f"{self.spec_coverage_score * 100:.0f}%",
                 "Sequence Quality": f"{self.sequence_score * 100:.0f}%",
+                "Protocol Correctness": f"{self.protocol_correctness * 100:.0f}%",
+                "Test Mapping": f"{self.test_mapping_score * 100:.0f}%",
             },
             "hallucinations": self.hallucination_count,
             "details": self.details,
@@ -71,37 +78,39 @@ def compute_quality_score(
     hallucination_penalty = min(0.5, hallucination_count * 0.1)
 
     sequence_score = extra_metrics.get("sequence_score", 0.85) if extra_metrics else 0.85
+    protocol_correctness = extra_metrics.get("protocol_correctness", 0.85) if extra_metrics else 0.85
+    test_mapping_score = extra_metrics.get("test_mapping_score", 0.85) if extra_metrics else 0.85
 
     weights = {
-        "completeness": 0.12,
-        "syntax": 0.12,
-        "register": 0.12,
-        "ral": 0.08,
-        "coverage_ready": 0.08,
-        "spec_coverage": 0.28,
-        "sequence": 0.20,
+        "syntax": 0.20,
+        "completeness": 0.20,
+        "ral": 0.15,
+        "coverage": 0.15,
+        "protocol": 0.20,
+        "test_mapping": 0.10,
     }
 
     raw = (
-        weights["completeness"] * completeness
-        + weights["syntax"] * syntax_score
-        + weights["register"] * reg_cov
+        weights["syntax"] * syntax_score
+        + weights["completeness"] * completeness
         + weights["ral"] * ral_readiness
-        + weights["coverage_ready"] * coverage_readiness
-        + weights["spec_coverage"] * spec_coverage_score
-        + weights["sequence"] * sequence_score
+        + weights["coverage"] * coverage_readiness
+        + weights["protocol"] * protocol_correctness
+        + weights["test_mapping"] * test_mapping_score
     )
     overall = max(0.0, raw - hallucination_penalty)
 
     details: Dict[str, str] = {}
-    details["completeness"] = f"{completeness * 100:.0f}% files generated"
     details["syntax"] = f"confidence {syntax_conf * 100:.0f}% with {int(sv_errors)} error(s)"
+    details["completeness"] = f"{completeness * 100:.0f}% files generated"
     details["register_coverage"] = f"{reg_cov * 100:.0f}% reg coverage"
     details["ral_readiness"] = "ready" if ral_readiness > 0.5 else "missing registers"
     details["coverage_readiness"] = "ready" if coverage_readiness > 0.5 else "needs work"
     details["spec_coverage"] = f"{spec_cov * 100:.0f}% reg refs, {intf_cov * 100:.0f}% intf refs"
     details["hallucinations"] = f"{hallucination_count} undefined register reference(s)"
     details["sequence_quality"] = f"{sequence_score * 100:.0f}% (virtual seqs, responses, scoreboard integration)"
+    details["protocol_correctness"] = f"{protocol_correctness * 100:.0f}% (signal patterns, protocol compliance)"
+    details["test_mapping"] = f"{test_mapping_score * 100:.0f}% (YAML sequences → generated test classes)"
     if hallucination_count > 0:
         details["hallucinations"] += " -- PENALTY APPLIED"
 
@@ -114,6 +123,8 @@ def compute_quality_score(
         coverage_readiness=round(coverage_readiness, 4),
         spec_coverage_score=round(spec_coverage_score, 4),
         sequence_score=round(sequence_score, 4),
+        protocol_correctness=round(protocol_correctness, 4),
+        test_mapping_score=round(test_mapping_score, 4),
         hallucination_count=hallucination_count,
         details=details,
     )

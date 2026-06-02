@@ -156,3 +156,20 @@ registers:
       - name: scratch
         bits: '7:0'
         description: Scratch register
+
+sequences:
+  - name: uart_smoke
+    type: smoke
+    description: Basic smoke test - configures UART at 115200 8N1
+  - name: uart_reg_access
+    type: reg_access
+    description: Write/read all registers
+  - name: uart_loopback
+    type: loopback
+    description: Internal loopback TX/RX comparison
+  - name: uart_random
+    type: random
+    description: Randomized register write/read with patterns
+  - name: uart_error_injection
+    type: error_injection
+    description: Parity, framing, and break error injection

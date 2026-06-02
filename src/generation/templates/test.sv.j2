@@ -89,62 +89,42 @@ endclass
 
 {% if p == "uart" %}
 
-class uart_smoke_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_smoke_test)
+{% set seqs = spec.sequences if spec.sequences else [] %}
+
+// =========================================================================
+// Auto-generated per-sequence tests from YAML
+// =========================================================================
+{% set seq_to_class = {
+  "uart_smoke": "uart_config_seq",
+  "uart_reg_access": spec.design_name + "_all_regs_seq",
+  "uart_loopback": "uart_loopback_seq",
+  "uart_random": "uart_random_regs_seq",
+  "uart_error_injection": "uart_error_injection_seq"
+} %}
+
+{% for seq in seqs %}
+class {{ seq.name }}_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ seq.name }}_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_config_seq cfg_seq;
-    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
-    cfg_seq.reg_model = reg_model;
-    cfg_seq.baud_rate = 115200;
-    cfg_seq.data_bits = 8;
-    cfg_seq.stop_bits = 1;
-    cfg_seq.start(env.agent.sequencer);
-
-    `uvm_info("TEST_SMOKE", "Smoke test completed - UART configured", UVM_LOW)
+    {%- set sv_class = seq_to_class.get(seq.name, "uart_config_seq") %}
+    {{ sv_class }} seq;
+    seq = {{ sv_class }}::type_id::create("seq");
+    seq.reg_model = reg_model;
+    `uvm_info("TEST_{{ seq.name|upper }}", $sformatf("Starting test: {{ seq.description }}"), UVM_LOW)
+    seq.start(env.agent.sequencer);
+    `uvm_info("TEST_{{ seq.name|upper }}", "Test completed", UVM_LOW)
   endtask
 endclass
 
-class uart_register_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_register_test)
-
-  function new(string n, uvm_component p);
-    super.new(n, p);
-  endfunction
-
-  task run_top_sequence();
-    uvm_status_e status;
-    uvm_reg_data_t data;
-
-    `uvm_info("TEST_REG", "Testing LCR register", UVM_LOW)
-    reg_model.lcr.write(status, 8'h83, .parent(this));
-    reg_model.lcr.read(status, data, .parent(this));
-    if (data[7] !== 1'b1) begin
-      `uvm_error("TEST_REG", "DLAB bit not set")
-    end
-
-    `uvm_info("TEST_REG", "Testing DLL/DLM divisor", UVM_LOW)
-    reg_model.dll.write(status, 8'h0C, .parent(this));
-    reg_model.dlm.write(status, 8'h00, .parent(this));
-
-    reg_model.lcr.write(status, 8'h03, .parent(this));
-
-    `uvm_info("TEST_REG", "Testing SCR scratch register", UVM_LOW)
-    for (int i = 0; i < 256; i++) begin
-      reg_model.scr.write(status, i[7:0], .parent(this));
-      reg_model.scr.read(status, data, .parent(this));
-      if (data !== i[7:0]) begin
-        `uvm_error("TEST_REG", $sformatf("SCR mismatch: wrote 0x%02h, read 0x%02h", i, data))
-      end
-    end
-
-    `uvm_info("TEST_REG", "Register test completed", UVM_LOW)
-  endtask
-endclass
+{% endfor %}
+// =========================================================================
+// Infrastructure tests
+// =========================================================================
 
 class uart_tx_test extends {{ spec.design_name }}_base_test;
   `uvm_component_utils(uart_tx_test)
@@ -165,11 +145,6 @@ class uart_tx_test extends {{ spec.design_name }}_base_test;
     cfg_seq.stop_bits = 1;
     cfg_seq.start(env.agent.sequencer);
 
-    if (env.serial_mon != null) begin
-      env.serial_mon.set_baud_rate(115200);
-      env.serial_mon.set_format(8, 1, uart_serial_item::NONE);
-    end
-
     `uvm_info("TEST_TX", "Starting TX sequence", UVM_LOW)
     tx_seq = uart_tx_seq::type_id::create("tx_seq");
     tx_seq.tx_data = {8'h01, 8'h23, 8'h45, 8'h67, 8'h89, 8'hAB, 8'hCD, 8'hEF};
@@ -178,51 +153,6 @@ class uart_tx_test extends {{ spec.design_name }}_base_test;
 
     #100us;
     `uvm_info("TEST_TX", "TX test completed", UVM_LOW)
-  endtask
-endclass
-
-class uart_loopback_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_loopback_test)
-
-  function new(string n, uvm_component p);
-    super.new(n, p);
-  endfunction
-
-  task run_top_sequence();
-    uart_config_seq cfg_seq;
-    uvm_status_e status;
-    logic [7:0] test_data[];
-    test_data = new[16];
-
-    `uvm_info("TEST_LB", "Configuring UART", UVM_LOW)
-    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
-    cfg_seq.reg_model = reg_model;
-    cfg_seq.baud_rate = 115200;
-    cfg_seq.data_bits = 8;
-    cfg_seq.stop_bits = 1;
-    cfg_seq.start(env.agent.sequencer);
-
-    `uvm_info("TEST_LB", "Enabling loopback mode (MCR[4])", UVM_LOW)
-    reg_model.mcr.write(status, 8'h10, .parent(this));
-
-    if (env.serial_mon != null) begin
-      env.serial_mon.set_baud_rate(115200);
-    end
-
-    for (int i = 0; i < 16; i++) begin
-      test_data[i] = i * 16 + (15 - i);
-    end
-
-    `uvm_info("TEST_LB", "Transmitting test pattern", UVM_LOW)
-    foreach (test_data[i]) begin
-      reg_model.rbr_thr.write(status, test_data[i], .parent(this));
-      #20us;
-    end
-
-    #50us;
-
-    reg_model.mcr.write(status, 8'h00, .parent(this));
-    `uvm_info("TEST_LB", "Loopback test completed", UVM_LOW)
   endtask
 endclass
 
@@ -247,10 +177,6 @@ class uart_baud_rate_test extends {{ spec.design_name }}_base_test;
       cfg_seq.data_bits = 8;
       cfg_seq.stop_bits = 1;
       cfg_seq.start(env.agent.sequencer);
-
-      if (env.serial_mon != null) begin
-        env.serial_mon.set_baud_rate(test_bauds[i]);
-      end
 
       #50us;
     end
@@ -304,23 +230,12 @@ class uart_interrupt_test extends {{ spec.design_name }}_base_test;
   endfunction
 
   task run_top_sequence();
-    uvm_status_e status;
-    uvm_reg_data_t iir_val;
-
-    `uvm_info("TEST_INT", "Testing interrupt enables", UVM_LOW)
-
-    `uvm_info("TEST_INT", "Enabling THR empty interrupt (IER[1])", UVM_LOW)
-    reg_model.ier.write(status, 8'h02, .parent(this));
-
-    reg_model.rbr_thr.write(status, 8'hAA, .parent(this));
-
-    #10us;
-
-    reg_model.iir.read(status, iir_val, .parent(this));
-    `uvm_info("TEST_INT", $sformatf("IIR = 0x%02h (int_pending=%b)", iir_val, iir_val[0]), UVM_LOW)
-
-    reg_model.ier.write(status, 8'h00, .parent(this));
-
+    uart_interrupt_seq int_seq;
+    `uvm_info("TEST_INT", "Starting interrupt test — THR empty", UVM_LOW)
+    int_seq = uart_interrupt_seq::type_id::create("int_seq");
+    int_seq.reg_model = reg_model;
+    int_seq.int_type = uart_interrupt_seq::INT_TX_EMPTY;
+    int_seq.start(env.agent.sequencer);
     `uvm_info("TEST_INT", "Interrupt test completed", UVM_LOW)
   endtask
 endclass
@@ -389,20 +304,10 @@ class uart_regression_test extends {{ spec.design_name }}_base_test;
   endtask
 
   task uart_register_subtest();
-    uvm_status_e status;
-    uvm_reg_data_t data;
-
-    for (int i = 0; i < 8; i++) begin
-      {{ spec.design_name }}_write_reg_seq wseq;
-      {{ spec.design_name }}_read_reg_seq rseq;
-      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
-      wseq.reg_addr = i;
-      wseq.write_data = i * 16 + 5;
-      wseq.start(env.agent.sequencer);
-      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      rseq.reg_addr = i;
-      rseq.start(env.agent.sequencer);
-    end
+    {{ spec.design_name }}_all_regs_seq all_reg;
+    all_reg = {{ spec.design_name }}_all_regs_seq::type_id::create("all_reg");
+    all_reg.reg_model = reg_model;
+    all_reg.start(env.agent.sequencer);
   endtask
 
   task uart_tx_subtest();
@@ -414,10 +319,12 @@ class uart_regression_test extends {{ spec.design_name }}_base_test;
   endtask
 
   task uart_loopback_subtest();
-    uvm_status_e status;
-    reg_model.mcr.write(status, 8'h10, .parent(this));
-    #20us;
-    reg_model.mcr.write(status, 8'h00, .parent(this));
+    uart_loopback_seq lb_seq;
+    lb_seq = uart_loopback_seq::type_id::create("lb_seq");
+    lb_seq.reg_model = reg_model;
+    lb_seq.sb_handle = env.sb;
+    lb_seq.test_data = {8'h55, 8'hAA};
+    lb_seq.start(env.agent.sequencer);
   endtask
 endclass
 

@@ -12,6 +12,13 @@ class CrossFileIssue:
     severity: str
     message: str
     reference: str
+    suggestion: str = ""
+
+
+@dataclass
+class CrossFileSuggestion:
+    issue_code: str
+    fix: str
 
 
 @dataclass
@@ -19,6 +26,7 @@ class CrossFileResult:
     passed: bool
     issues: List[CrossFileIssue]
     spec_coverage: Dict[str, float]
+    suggestions: List[CrossFileSuggestion] = field(default_factory=list)
 
 
 _REG_REF_RE = re.compile(r'reg_model\.(\w+)')
@@ -68,6 +76,7 @@ def validate_generated_files(
                     severity="error",
                     message=f"References register '{reg_name}' not defined in spec registers: {sorted(spec_reg_names)}",
                     reference=reg_name,
+                    suggestion=f"Remove hallucinated '{reg_name}' reference or add '{reg_name}' to the YAML spec's registers section",
                 ))
 
         for i, line in enumerate(content.splitlines(), 1):
@@ -81,6 +90,7 @@ def validate_generated_files(
                             severity="warning",
                             message=f"References interface signal '{sig}' not found in spec interfaces",
                             reference=sig,
+                            suggestion=f"Remove hallucinated signal '{sig}' or add it to the YAML spec's interfaces section",
                         ))
 
     # spec coverage — what % of spec registers are referenced somewhere
@@ -105,8 +115,17 @@ def validate_generated_files(
 
     passed = all(iss.severity == "warning" for iss in issues)
 
+    suggestions = [
+        CrossFileSuggestion(
+            issue_code=f"REG_HALLUCINATION_{iss.reference.upper()}",
+            fix=iss.suggestion,
+        )
+        for iss in issues
+    ]
+
     return CrossFileResult(
         passed=passed,
         issues=issues,
         spec_coverage=spec_coverage,
+        suggestions=suggestions,
     )
