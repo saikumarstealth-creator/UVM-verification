@@ -26,6 +26,11 @@ class {{ spec.design_name }}_base_test extends uvm_test;
 
     uvm_config_db#(uvm_sequence_base)::set(this,
       "env.agent.sequencer.run_phase", "default_sequence", null);
+
+{% if p == "uart" %}
+    vif.uart_rx <= 1'b1;
+    vif.cts_n <= 1'b0;
+{% endif %}
   endfunction
 
   function void end_of_elaboration_phase(uvm_phase phase);
@@ -55,10 +60,6 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   task run_phase(uvm_phase phase);
     phase.raise_objection(this);
     `uvm_info("TEST", "Starting test...", UVM_LOW)
-{% if p == "uart" %}
-    vif.uart_rx <= 1'b1;
-    vif.cts_n <= 1'b0;
-{% endif %}
     run_top_sequence();
     phase.drop_objection(this);
   endtask
@@ -159,7 +160,7 @@ endclass
 class uart_baud_rate_test extends {{ spec.design_name }}_base_test;
   `uvm_component_utils(uart_baud_rate_test)
 
-  int test_bauds[] = '{9600, 19200, 38400, 57600, 115200};
+  int test_bauds[] = '{9600, 19200, 38400, 57600, 115200, 1000000};
 
   function new(string n, uvm_component p);
     super.new(n, p);

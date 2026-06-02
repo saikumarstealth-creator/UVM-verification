@@ -38,7 +38,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   uvm_analysis_port #(transaction_t) write_ap;
   uvm_analysis_port #(transaction_t) read_ap;
 
-  logic [7:0] shadow_regs[0:{{ num_regs-1 }}];
+  logic [7:0] shadow_regs[int];
   logic [7:0] tx_fifo[$];
   logic [7:0] rx_fifo[$];
   logic [7:0] expected_rx_fifo[$];
@@ -55,6 +55,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   int rx_serial_count;
   int loopback_matches;
   int loopback_mismatches;
+  int burst_len;
 
   int observed_parity_errors;
   int observed_framing_errors;
@@ -72,7 +73,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   int irq_modem_status;
   int irq_unexpected;
 
-  int cov_baud_seen[6];
+  int cov_baud_seen[8];
   int cov_parity_seen[5];
   int cov_wordlen_seen[4];
 
@@ -151,6 +152,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     test_stats.total = 0;
     test_stats.passed = 0;
     test_stats.failed = 0;
+    burst_len = 1;
     max_history_size = 10000;
     current_baud_rate = 115200;
     current_data_bits = 8;
@@ -288,12 +290,21 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     cov_wordlen_seen[current_data_bits - 5] = 1;
     cov_parity_seen[current_parity_mode] = 1;
 
-    if (shadow_regs[3'h0] != 8'hXX) begin
+    if (lcr_val[7]) begin
       current_baud_rate = calc_baud_rate({shadow_regs[3'h1], shadow_regs[3'h0]});
     end
 
-    if (current_baud_rate inside {9600, 19200, 38400, 57600, 115200, 230400}) begin
-      cov_baud_seen[current_baud_rate / 9600 - 1] = 1;
+    if (current_baud_rate inside {9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000}) begin
+      case (current_baud_rate)
+        9600:   cov_baud_seen[0] = 1;
+        19200:  cov_baud_seen[1] = 1;
+        38400:  cov_baud_seen[2] = 1;
+        57600:  cov_baud_seen[3] = 1;
+        115200: cov_baud_seen[4] = 1;
+        230400: cov_baud_seen[5] = 1;
+        460800: cov_baud_seen[6] = 1;
+        1000000: cov_baud_seen[7] = 1;
+      endcase
     end
 
     `uvm_info("SB_CFG", $sformatf("UART config: baud=%0d data_bits=%0d stop_bits=%0d parity=%0d LCR=0x%02h",
@@ -322,7 +333,6 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   endfunction
 
   protected function void detect_burst(transaction_t tr);
-    static int burst_len = 1;
     int burst_start_addr;
 
     if (write_history.size() >= 1) begin
@@ -547,8 +557,17 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     current_baud_rate = baud;
     current_data_bits = dbits;
     current_stop_bits = sbits;
-    if (baud inside {9600, 19200, 38400, 57600, 115200, 230400, 460800}) begin
-      cov_baud_seen[baud / 9600 - 1] = 1;
+    if (baud inside {9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000}) begin
+      case (baud)
+        9600:   cov_baud_seen[0] = 1;
+        19200:  cov_baud_seen[1] = 1;
+        38400:  cov_baud_seen[2] = 1;
+        57600:  cov_baud_seen[3] = 1;
+        115200: cov_baud_seen[4] = 1;
+        230400: cov_baud_seen[5] = 1;
+        460800: cov_baud_seen[6] = 1;
+        1000000: cov_baud_seen[7] = 1;
+      endcase
     end
     cov_wordlen_seen[dbits - 5] = 1;
     cov_parity_seen[pen + eps*2] = 1;

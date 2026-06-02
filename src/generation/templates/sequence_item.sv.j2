@@ -1,12 +1,11 @@
 // UVM Sequence Item for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
-// Enhanced with field automation, typed error injection, do_print, dynamic addr/data widths
+// Enhanced with field automation, serial-level error injection flags, dynamic addr/data widths
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
 {% set max_addr_val = addr_ints|max if addr_ints else 0 %}
 {% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
 {% set data_width = spec.data_width or 8 %}
-{% set num_regs = regs|length %}
 
 class {{ spec.design_name }}_seq_item extends uvm_sequence_item;
 
@@ -14,54 +13,36 @@ class {{ spec.design_name }}_seq_item extends uvm_sequence_item;
   rand logic [{{ addr_bits-1 }}:0] addr;
   rand logic [{{ data_width-1 }}:0] data;
   rand int unsigned delay;
-  rand int         inj_tag;
 
-  typedef enum int {
-    NO_ERROR,
-    PARITY_ERROR,
-    FRAMING_ERROR,
-    BREAK_ERROR
-  } error_type_e;
-
-  rand error_type_e error_type;
-
-  {% if p == "spi" %}
-  rand logic [7:0] spi_mosi_data;
-  rand int         spi_speed_hz;
-  {% elif p == "i2c" %}
-  rand logic [6:0] i2c_slave_addr;
-  rand bit         i2c_10bit;
-  {% elif p == "axi4lite" %}
-  rand logic [1:0] awburst;
-  rand logic [2:0] awsize;
-  {% endif %}
+  // Serial-level error injection flags — consumed by the driver to corrupt the
+  // serial bitstream at the pin level (not register-field manipulation)
+  rand bit         corrupt_parity;
+  rand bit         corrupt_stop_bit;
+  rand bit         force_break;
 
   constraint c_default {
     delay inside {[0:5]};
     soft we == 1'b1;
     soft addr == '0;
-    {% if p == "uart" %}
-    addr inside {[0:{{ num_regs-1 }}]};
+    {% if regs %}
+    soft addr inside { {% for r in regs %}{{ addr_bits }}'h{{ r.address[2:] }}{% if not loop.last %}, {% endif %}{% endfor %} };
     {% endif %}
   }
 
+  constraint c_no_corruption {
+    soft corrupt_parity   == 1'b0;
+    soft corrupt_stop_bit == 1'b0;
+    soft force_break      == 1'b0;
+  }
+
   `uvm_object_utils_begin({{ spec.design_name }}_seq_item)
-    `uvm_field_int(we,         UVM_ALL_ON)
-    `uvm_field_int(addr,       UVM_ALL_ON)
-    `uvm_field_int(data,       UVM_ALL_ON)
-    `uvm_field_int(delay,      UVM_ALL_ON)
-    `uvm_field_int(inj_tag,    UVM_ALL_ON)
-    `uvm_field_enum(error_type_e, error_type, UVM_ALL_ON)
-    {% if p == "spi" %}
-    `uvm_field_int(spi_mosi_data, UVM_ALL_ON)
-    `uvm_field_int(spi_speed_hz,  UVM_ALL_ON)
-    {% elif p == "i2c" %}
-    `uvm_field_int(i2c_slave_addr, UVM_ALL_ON)
-    `uvm_field_int(i2c_10bit,     UVM_ALL_ON)
-    {% elif p == "axi4lite" %}
-    `uvm_field_int(awburst,       UVM_ALL_ON)
-    `uvm_field_int(awsize,        UVM_ALL_ON)
-    {% endif %}
+    `uvm_field_int(we,              UVM_ALL_ON)
+    `uvm_field_int(addr,            UVM_ALL_ON)
+    `uvm_field_int(data,            UVM_ALL_ON)
+    `uvm_field_int(delay,           UVM_ALL_ON)
+    `uvm_field_int(corrupt_parity,   UVM_ALL_ON)
+    `uvm_field_int(corrupt_stop_bit, UVM_ALL_ON)
+    `uvm_field_int(force_break,      UVM_ALL_ON)
   `uvm_object_utils_end
 
   function new(string name = "{{ spec.design_name }}_seq_item");
@@ -69,38 +50,33 @@ class {{ spec.design_name }}_seq_item extends uvm_sequence_item;
   endfunction
 
   function string convert2string();
-    return $sformatf("we=%0d addr=0x%0h data=0x%0h delay=%0d inj_tag=%0d error_type=%s",
-      we, addr, data, delay, inj_tag, error_type.name());
+    return $sformatf("we=%0d addr=0x%0h data=0x%0h delay=%0d corrupt(p=%0d s=%0d b=%0d)",
+      we, addr, data, delay, corrupt_parity, corrupt_stop_bit, force_break);
   endfunction
 
   function void do_print(uvm_printer printer);
     super.do_print(printer);
-    printer.print_field("we",         we,         1);
-    printer.print_field("addr",       addr,       {{ addr_bits }});
-    printer.print_field("data",       data,       {{ data_width }});
-    printer.print_int("delay",       delay);
-    printer.print_int("inj_tag",     inj_tag);
-    printer.print_string("error_type", error_type.name());
-    {% if p == "spi" %}
-    printer.print_field("spi_mosi_data", spi_mosi_data, 8);
-    printer.print_int("spi_speed_hz",    spi_speed_hz);
-    {% elif p == "i2c" %}
-    printer.print_field("i2c_slave_addr", i2c_slave_addr, 7);
-    printer.print_field("i2c_10bit",      i2c_10bit,      1);
-    {% elif p == "axi4lite" %}
-    printer.print_field("awburst", awburst, 2);
-    printer.print_field("awsize",  awsize,  3);
-    {% endif %}
+    printer.print_field("we",              we,              1);
+    printer.print_field("addr",            addr,            {{ addr_bits }});
+    printer.print_field("data",            data,            {{ data_width }});
+    printer.print_int("delay",            delay);
+    printer.print_int("corrupt_parity",    corrupt_parity);
+    printer.print_int("corrupt_stop_bit",  corrupt_stop_bit);
+    printer.print_int("force_break",       force_break);
   endfunction
 
-  // Error injection — call from sequence to force a specific error type
-  function void inject_error(error_type_e err);
-    error_type = err;
-    case (err)
-      PARITY_ERROR:  we = $urandom;
-      FRAMING_ERROR: delay = $urandom_range(10, 20);
-      BREAK_ERROR:   data = '0;
-      default: ; // NO_ERROR
-    endcase
+  // Called by a sequence to request the driver corrupt the serial transmission.
+  // The driver checks these flags during serialisation and toggles the
+  // appropriate bit (parity, stop, or TX line held low for break).
+  function void set_parity_error();
+    corrupt_parity = 1'b1;
+  endfunction
+
+  function void set_framing_error();
+    corrupt_stop_bit = 1'b1;
+  endfunction
+
+  function void set_break_condition();
+    force_break = 1'b1;
   endfunction
 endclass

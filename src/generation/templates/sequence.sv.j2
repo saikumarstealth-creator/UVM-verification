@@ -79,6 +79,7 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
       start_item(req_h);
       if (!req_h.randomize() with { we == 0; addr == local::addr; delay == 0; })
+        `uvm_fatal("RAND", "uart_read_reg req_h randomization failed")
       finish_item(req_h);
       get_response(rsp);
       data = rsp.data;
@@ -236,7 +237,7 @@ class uart_config_seq extends {{ spec.design_name }}_base_seq;
   rand bit ascii_mode;
 
   constraint c_valid {
-    baud_rate inside {9600, 19200, 38400, 57600, 115200};
+    baud_rate inside {9600, 19200, 38400, 57600, 115200, 1000000};
     data_bits inside {5, 6, 7, 8};
     stop_bits inside {1, 2};
   }
@@ -425,13 +426,12 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
           num_passes++;
           `uvm_info("UART_LB", $sformatf("Loopback MATCH[%0d]: TX=0x%02h RX=0x%02h",
                     i, test_data[i], rx_byte), UVM_MEDIUM)
-          if (sb_handle != null) sb_handle.loopback_matches++;
+          if (sb_handle != null) sb_handle.record_tx(3'h0, test_data[i]);
         end else begin
           errors++;
           `uvm_error("UART_LB", $sformatf("Loopback MISMATCH[%0d]: TX=0x%02h RX=0x%02h",
                      i, test_data[i], rx_byte))
           if (sb_handle != null) begin
-            sb_handle.loopback_mismatches++;
             record_error("LOOPBACK", $sformatf("Mismatch[%0d]: TX=0x%02h RX=0x%02h", i, test_data[i], rx_byte));
           end
         end
@@ -471,7 +471,7 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
       end
     end
     if (!received) begin
-      data = 8'hXX;
+      data = 'x;
     end
   endtask
 endclass
@@ -514,6 +514,10 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
     fork
       wait_for_intr_signal();
       trigger_intr();
+      begin
+        #10ms;
+        `uvm_warning("UART_INT", "Interrupt test timed out after 10 ms")
+      end
     join_any
     disable fork;
 
@@ -627,6 +631,10 @@ endclass
 
 // -------------------------------------------------------------------------
 // UART Error Injection Sequence — injects parity, framing, break errors
+// Uses driver-level corruption via seq_item corruption flags (not register
+// manipulation).  The driver reads corrupt_parity / corrupt_stop_bit /
+// force_break during serialisation and corrupts the TX bitstream at the
+// pin level.  This is the IEEE 1800.2-correct method.
 // -------------------------------------------------------------------------
 class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_error_injection_seq)
@@ -650,7 +658,6 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    logic [7:0] lcr_val;
     logic [7:0] lsr_val;
 
     `uvm_info("UART_INJ", $sformatf("Starting error injection: %s, count=%0d",
@@ -658,80 +665,100 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
 
     if (sb_handle != null) begin
       sb_handle.configure_injection(inj_type.name(), num_injections);
-      `uvm_info("UART_INJ", $sformatf("Scoreboard configured: %s x%0d",
-                inj_type.name(), num_injections), UVM_MEDIUM)
     end
 
-    uart_read_reg(3'h3, lcr_val);
-
     for (int i = 0; i < num_injections; i++) begin
+      {{ spec.design_name }}_seq_item inj_req;
+      inj_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("inj_req_%0d", i));
+      start_item(inj_req);
+
       case (inj_type)
         INJ_PARITY: begin
-          lcr_val[3] = 1'b1;
-          lcr_val[4] = 1'b0;
-          uart_write_reg(3'h3, lcr_val);
-          injected_count++;
-          `uvm_info("UART_INJ", $sformatf("Injected parity error #%0d", injected_count), UVM_MEDIUM)
-          uart_write_reg(3'h0, 8'hA5);
-          #20us;
-          uart_read_reg(3'h5, lsr_val);
-          if (lsr_val[2]) begin
-            observed_errors++;
-            `uvm_info("UART_INJ", $sformatf("Parity error observed in LSR: 0x%02h", lsr_val), UVM_MEDIUM)
-          end else begin
-            `uvm_warning("UART_INJ", "Expected parity error not set in LSR")
-          end
-          lcr_val[3] = 1'b0;
-          uart_write_reg(3'h3, lcr_val);
+          if (!inj_req.randomize() with {
+            we == 1;
+            addr == 3'h0;
+            data == 8'hA5;
+            delay == 0;
+            corrupt_parity == 1;
+            corrupt_stop_bit == 0;
+            force_break == 0;
+          }) `uvm_fatal("RAND", "Parity injection req randomization failed")
         end
         INJ_FRAMING: begin
-          logic [7:0] lcr_stop;
-          lcr_stop = lcr_val;
-          lcr_stop[2] = 1'b0;
-          uart_write_reg(3'h3, lcr_stop);
-          injected_count++;
-          `uvm_info("UART_INJ", $sformatf("Injected framing error #%0d", injected_count), UVM_MEDIUM)
-          uart_write_reg(3'h0, 8'h5A);
-          #20us;
-          uart_read_reg(3'h5, lsr_val);
-          if (lsr_val[3]) begin
-            observed_errors++;
-            `uvm_info("UART_INJ", $sformatf("Framing error observed in LSR: 0x%02h", lsr_val), UVM_MEDIUM)
-          end else begin
-            `uvm_warning("UART_INJ", "Expected framing error not set in LSR")
-          end
-          lcr_val[2] = 1'b1;
-          uart_write_reg(3'h3, lcr_val);
+          if (!inj_req.randomize() with {
+            we == 1;
+            addr == 3'h0;
+            data == 8'h5A;
+            delay == 0;
+            corrupt_parity == 0;
+            corrupt_stop_bit == 1;
+            force_break == 0;
+          }) `uvm_fatal("RAND", "Framing injection req randomization failed")
         end
         INJ_BREAK: begin
-          logic [7:0] lcr_break;
-          lcr_break = lcr_val;
-          lcr_break[6] = 1'b1;
-          uart_write_reg(3'h3, lcr_break);
-          injected_count++;
-          `uvm_info("UART_INJ", $sformatf("Injected break condition #%0d", injected_count), UVM_MEDIUM)
-          #200us;
-          uart_read_reg(3'h5, lsr_val);
-          if (lsr_val[4]) begin
-            observed_errors++;
-            `uvm_info("UART_INJ", $sformatf("Break condition observed in LSR: 0x%02h", lsr_val), UVM_MEDIUM)
-          end else begin
-            `uvm_warning("UART_INJ", "Expected break condition not set in LSR")
-          end
-          lcr_break[6] = 1'b0;
-          uart_write_reg(3'h3, lcr_break);
+          if (!inj_req.randomize() with {
+            we == 1;
+            addr == 3'h0;
+            data == 8'h00;
+            delay == 0;
+            corrupt_parity == 0;
+            corrupt_stop_bit == 0;
+            force_break == 1;
+          }) `uvm_fatal("RAND", "Break injection req randomization failed")
         end
         INJ_ALL: begin
-          uart_error_injection_seq sub_seq;
-          sub_seq = uart_error_injection_seq::type_id::create("sub_seq");
-          if (sub_seq.randomize() with {
-            inj_type inside {INJ_PARITY, INJ_FRAMING, INJ_BREAK};
-            num_injections == 1;
-          }) begin
-            sub_seq.start(m_sequencer);
-            injected_count += sub_seq.injected_count;
-            observed_errors += sub_seq.observed_errors;
+          if (i % 3 == 0)
+            if (!inj_req.randomize() with {
+              we == 1; addr == 3'h0; data == 8'hA5; delay == 0;
+              corrupt_parity == 1; corrupt_stop_bit == 0; force_break == 0;
+            }) `uvm_fatal("RAND", "All-injection parity req failed")
+          if (i % 3 == 1)
+            if (!inj_req.randomize() with {
+              we == 1; addr == 3'h0; data == 8'h5A; delay == 0;
+              corrupt_parity == 0; corrupt_stop_bit == 1; force_break == 0;
+            }) `uvm_fatal("RAND", "All-injection framing req failed")
+          if (i % 3 == 2)
+            if (!inj_req.randomize() with {
+              we == 1; addr == 3'h0; data == 8'h00; delay == 0;
+              corrupt_parity == 0; corrupt_stop_bit == 0; force_break == 1;
+            }) `uvm_fatal("RAND", "All-injection break req failed")
+        end
+      endcase
+
+      finish_item(inj_req);
+      get_response(rsp);
+      injected_count++;
+
+      #5us;
+      uart_read_reg(3'h5, lsr_val);
+      case (inj_type)
+        INJ_PARITY: begin
+          if (lsr_val[2]) begin
+            observed_errors++;
+            `uvm_info("UART_INJ", $sformatf("Parity error observed LSR[2]: 0x%02h", lsr_val), UVM_MEDIUM)
+          end else begin
+            `uvm_warning("UART_INJ", "Parity error flag not set in LSR after driver corruption")
           end
+        end
+        INJ_FRAMING: begin
+          if (lsr_val[3]) begin
+            observed_errors++;
+            `uvm_info("UART_INJ", $sformatf("Framing error observed LSR[3]: 0x%02h", lsr_val), UVM_MEDIUM)
+          end else begin
+            `uvm_warning("UART_INJ", "Framing error flag not set in LSR after driver corruption")
+          end
+        end
+        INJ_BREAK: begin
+          if (lsr_val[4]) begin
+            observed_errors++;
+            `uvm_info("UART_INJ", $sformatf("Break observed LSR[4]: 0x%02h", lsr_val), UVM_MEDIUM)
+          end else begin
+            `uvm_warning("UART_INJ", "Break flag not set in LSR after driver corruption")
+          end
+        end
+        INJ_ALL: begin
+          if (lsr_val[2] || lsr_val[3] || lsr_val[4])
+            observed_errors++;
         end
       endcase
     end
@@ -793,7 +820,6 @@ class uart_random_seq extends {{ spec.design_name }}_base_seq;
     cfg_seq.parity_en = rand_parity_en;
     cfg_seq.even_parity = rand_even_parity;
     cfg_seq.start(m_sequencer);
-    tx_count++;
 
     for (int i = 0; i < num_transactions; i++) begin
       tx_seq = uart_tx_seq::type_id::create($sformatf("tx_seq_%0d", i));
@@ -803,13 +829,12 @@ class uart_random_seq extends {{ spec.design_name }}_base_seq;
       end else begin
         tx_seq.start(m_sequencer);
         tx_count++;
-        rx_count++;
       end
     end
 
     `uvm_info("UART_RAND", $sformatf(
-      "Random traffic complete: %0d TX, %0d RX",
-      tx_count, rx_count
+      "Random traffic complete: %0d TX transactions",
+      tx_count
     ), UVM_LOW)
   endtask
 endclass
@@ -868,6 +893,13 @@ class uart_reset_test_seq extends {{ spec.design_name }}_base_seq;
     string regs_to_check[$];
 
     `uvm_info("UART_RST", "Starting register reset value verification", UVM_LOW)
+
+    // 1. Apply hardware reset stimulus
+    `uvm_info("UART_RST", "Applying hardware reset", UVM_MEDIUM)
+    m_sequencer.vif.rst_n <= 1'b0;
+    repeat (10) @(posedge m_sequencer.vif.clk);
+    m_sequencer.vif.rst_n <= 1'b1;
+    repeat (5) @(posedge m_sequencer.vif.clk);
 
     regs_to_check = {
       {% for r in sorted_regs %}"{{ r.name|lower }}"{% if not loop.last %}, {% endif %}{% endfor %}

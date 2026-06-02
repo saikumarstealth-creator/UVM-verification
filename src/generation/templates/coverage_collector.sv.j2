@@ -37,11 +37,18 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
 {% if p == "uart" %}
   // UART-specific coverage: baud rate, frame format, parity mode
   int baud_rates_covered[$];
-  covergroup uart_config_cg with function sample(int baud_rate, int data_bits, int stop_bits, string parity);
+  // Parity-encoding constants (must match get_parity_mode in scoreboard)
+  localparam PARITY_NONE  = 0;
+  localparam PARITY_ODD   = 1;
+  localparam PARITY_EVEN  = 2;
+  localparam PARITY_MARK  = 3;
+  localparam PARITY_SPACE = 4;
+
+  covergroup uart_config_cg with function sample(int baud_rate, int data_bits, int stop_bits, int parity_mode);
     option.per_instance = 1;
     option.cross_auto_bin_max = 256;
     cp_baud: coverpoint baud_rate {
-      bins standard[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800};
+      bins standard[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000};
     }
     cp_frame: coverpoint {data_bits, stop_bits} {
       bins combos[] = { {5,1}, {5,2}, {6,1}, {6,2}, {7,1}, {7,2}, {8,1}, {8,2} };
@@ -56,22 +63,21 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
       bins s1 = {1};
       bins s2 = {2};
     }
-    cp_parity: coverpoint parity {
-      bins none  = {"none"};
-      bins odd   = {"odd"};
-      bins even  = {"even"};
-      bins mark  = {"mark"};
-      bins space = {"space"};
+    cp_parity: coverpoint parity_mode {
+      bins none  = {PARITY_NONE};
+      bins odd   = {PARITY_ODD};
+      bins even  = {PARITY_EVEN};
+      bins mark  = {PARITY_MARK};
+      bins space = {PARITY_SPACE};
     }
-    // Coverage crosses for higher-quality metrics
     cross_baud_parity:      cross cp_baud, cp_parity;
     cross_baud_data_bits:   cross cp_baud, cp_data_bits;
     cross_parity_stop_bits: cross cp_parity, cp_stop_bits;
     cross_baud_frame:       cross cp_baud, cp_frame;
   endgroup
 
-  function void sample_uart_config(int baud, int dbits, int sbits, string parity);
-    uart_config_cg.sample(baud, dbits, sbits, parity);
+  function void sample_uart_config(int baud, int dbits, int sbits, int parity_mode);
+    uart_config_cg.sample(baud, dbits, sbits, parity_mode);
     if (!(baud inside {baud_rates_covered}))
       baud_rates_covered.push_back(baud);
   endfunction
@@ -138,7 +144,7 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
 {% if regs %}
     // Sample per-register covergroups based on address
 {% for r in regs %}
-    if (item.addr == {{ r.size|default(data_width) }}'h{{ r.address.replace('0x', '').replace('h', '') }}) begin
+    if (item.addr == {{ addr_width }}'h{{ r.address.replace('0x', '').replace('h', '') }}) begin
       reg_{{ r.name|lower }}_cg.sample(item.we, item.data);
     end
 {% endfor %}

@@ -2,6 +2,8 @@
 // Generated from YAML register specification
 // --- DO NOT EDIT: auto-generated from spec registers ---
 {% set regs = spec.registers if spec.registers else [] %}
+{% set sizes = regs|map(attribute='size')|select('number')|list %}
+{% set data_width = sizes|max if sizes else 8 %}
 {% set addr_bits = (regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|max + 1).bit_length() if regs else 8 %}
 
 // ============================================================================
@@ -113,7 +115,7 @@ class {{ spec.design_name }}_reg_adapter extends uvm_reg_adapter;
     item = {{ spec.design_name }}_seq_item::type_id::create("item");
     item.we   = (rw.kind == UVM_WRITE) ? 1'b1 : 1'b0;
     item.addr = rw.addr[{{ (addr_bits-1) if addr_bits > 0 else 0 }}:0];
-    item.data = rw.data[7:0];
+    item.data = rw.data[{{ data_width-1 }}:0];
     return item;
   endfunction
 
