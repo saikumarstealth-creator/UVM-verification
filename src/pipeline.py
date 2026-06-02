@@ -243,6 +243,7 @@ class TBPipeline:
         quality_score = None
         cross_result = None
         hallucination_count = 0
+        sim_result = None
         auto_train = self.cfg.auto_train
 
         for iteration in range(1, auto_train.max_iterations + 1):
@@ -340,7 +341,6 @@ class TBPipeline:
                              quality_score.details.get("ral_readiness", "?"))
 
             # 6c. Simulate (multi-seed regression)
-            sim_result = None
             coverage_db = None
             if auto_train.enabled:
                 self.logger.info("Running simulation (simulator=%s, seeds=%d)...",
