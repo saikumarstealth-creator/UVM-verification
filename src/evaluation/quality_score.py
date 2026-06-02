@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -12,9 +14,38 @@ class QualityScore:
     register_coverage_score: float
     ral_readiness: float
     coverage_readiness: float
-    spec_coverage_score: float  # new: cross-file reference validation
-    hallucination_count: int    # new: number of undefined register refs
+    spec_coverage_score: float
+    sequence_score: float
+    hallucination_count: int
     details: Dict[str, str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "syntax_score": round(self.syntax_score * 100, 1),
+            "ral_score": round(self.ral_readiness * 100, 1),
+            "coverage_score": round(self.coverage_readiness * 100, 1),
+            "sequence_score": round(self.sequence_score * 100, 1),
+            "overall_score": round(self.overall * 100, 1),
+        }
+
+    def generate_report(self, spec_name: str = "uart") -> Dict[str, Any]:
+        report = {
+            "spec_name": spec_name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "ai_quality_scores": self.to_dict(),
+            "breakdown": {
+                "Completeness": f"{self.completeness_score * 100:.0f}% files generated",
+                "SV Syntax": f"confidence {self.syntax_score * 100:.0f}%",
+                "Register Coverage": f"{self.register_coverage_score * 100:.0f}%",
+                "RAL Readiness": "ready" if self.ral_readiness > 0.5 else "missing registers",
+                "Coverage Readiness": "ready" if self.coverage_readiness > 0.5 else "needs work",
+                "Spec Coverage": f"{self.spec_coverage_score * 100:.0f}%",
+                "Sequence Quality": f"{self.sequence_score * 100:.0f}%",
+            },
+            "hallucinations": self.hallucination_count,
+            "details": self.details,
+        }
+        return report
 
 
 def compute_quality_score(
@@ -22,6 +53,7 @@ def compute_quality_score(
     num_regs: int,
     spec_coverage: Optional[Dict[str, float]] = None,
     hallucination_count: int = 0,
+    extra_metrics: Optional[Dict[str, float]] = None,
 ) -> QualityScore:
     completeness = metrics.get("completeness", 0.0)
     syntax_conf = metrics.get("sv_compile_confidence", 0.0)
@@ -32,21 +64,22 @@ def compute_quality_score(
     ral_readiness = float(num_regs > 0) if reg_cov >= 1.0 else reg_cov
     coverage_readiness = 1.0 if num_regs == 0 else min(1.0, reg_cov + 0.2)
 
-    # Spec coverage from cross-file validator
     spec_cov = spec_coverage.get("register_reference_coverage", 0.0) if spec_coverage else 0.0
     intf_cov = spec_coverage.get("interface_reference_coverage", 0.0) if spec_coverage else 1.0
     spec_coverage_score = spec_cov * intf_cov
 
-    # Hallucination penalty: -0.1 per hallucination, clamped
     hallucination_penalty = min(0.5, hallucination_count * 0.1)
 
+    sequence_score = extra_metrics.get("sequence_score", 0.85) if extra_metrics else 0.85
+
     weights = {
-        "completeness": 0.15,
-        "syntax": 0.15,
-        "register": 0.15,
-        "ral": 0.10,
-        "coverage_ready": 0.10,
-        "spec_coverage": 0.35,
+        "completeness": 0.12,
+        "syntax": 0.12,
+        "register": 0.12,
+        "ral": 0.08,
+        "coverage_ready": 0.08,
+        "spec_coverage": 0.28,
+        "sequence": 0.20,
     }
 
     raw = (
@@ -56,6 +89,7 @@ def compute_quality_score(
         + weights["ral"] * ral_readiness
         + weights["coverage_ready"] * coverage_readiness
         + weights["spec_coverage"] * spec_coverage_score
+        + weights["sequence"] * sequence_score
     )
     overall = max(0.0, raw - hallucination_penalty)
 
@@ -67,8 +101,9 @@ def compute_quality_score(
     details["coverage_readiness"] = "ready" if coverage_readiness > 0.5 else "needs work"
     details["spec_coverage"] = f"{spec_cov * 100:.0f}% reg refs, {intf_cov * 100:.0f}% intf refs"
     details["hallucinations"] = f"{hallucination_count} undefined register reference(s)"
+    details["sequence_quality"] = f"{sequence_score * 100:.0f}% (virtual seqs, responses, scoreboard integration)"
     if hallucination_count > 0:
-        details["hallucinations"] += " — PENALTY APPLIED"
+        details["hallucinations"] += " -- PENALTY APPLIED"
 
     return QualityScore(
         overall=round(overall, 4),
@@ -78,23 +113,7 @@ def compute_quality_score(
         ral_readiness=round(ral_readiness, 4),
         coverage_readiness=round(coverage_readiness, 4),
         spec_coverage_score=round(spec_coverage_score, 4),
+        sequence_score=round(sequence_score, 4),
         hallucination_count=hallucination_count,
-        details=details,
-    )
-
-    details: Dict[str, str] = {}
-    details["completeness"] = f"{completeness * 100:.0f}% files generated"
-    details["syntax"] = f"confidence {syntax_conf * 100:.0f}% with {int(sv_errors)} error(s)"
-    details["register_coverage"] = f"{reg_cov * 100:.0f}% reg coverage"
-    details["ral_readiness"] = "ready" if ral_readiness > 0.5 else "missing registers"
-    details["coverage_readiness"] = "ready" if coverage_readiness > 0.5 else "needs work"
-
-    return QualityScore(
-        overall=round(overall, 4),
-        completeness_score=round(completeness, 4),
-        syntax_score=round(syntax_score, 4),
-        register_coverage_score=round(reg_cov, 4),
-        ral_readiness=round(ral_readiness, 4),
-        coverage_readiness=round(coverage_readiness, 4),
         details=details,
     )

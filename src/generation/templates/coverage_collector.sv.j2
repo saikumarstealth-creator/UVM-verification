@@ -39,11 +39,22 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   int baud_rates_covered[$];
   covergroup uart_config_cg with function sample(int baud_rate, int data_bits, int stop_bits, string parity);
     option.per_instance = 1;
+    option.cross_auto_bin_max = 256;
     cp_baud: coverpoint baud_rate {
       bins standard[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800};
     }
     cp_frame: coverpoint {data_bits, stop_bits} {
       bins combos[] = { {5,1}, {5,2}, {6,1}, {6,2}, {7,1}, {7,2}, {8,1}, {8,2} };
+    }
+    cp_data_bits: coverpoint data_bits {
+      bins d5 = {5};
+      bins d6 = {6};
+      bins d7 = {7};
+      bins d8 = {8};
+    }
+    cp_stop_bits: coverpoint stop_bits {
+      bins s1 = {1};
+      bins s2 = {2};
     }
     cp_parity: coverpoint parity {
       bins none  = {"none"};
@@ -52,6 +63,11 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
       bins mark  = {"mark"};
       bins space = {"space"};
     }
+    // Coverage crosses for higher-quality metrics
+    cross_baud_parity:      cross cp_baud, cp_parity;
+    cross_baud_data_bits:   cross cp_baud, cp_data_bits;
+    cross_parity_stop_bits: cross cp_parity, cp_stop_bits;
+    cross_baud_frame:       cross cp_baud, cp_frame;
   endgroup
 
   function void sample_uart_config(int baud, int dbits, int sbits, string parity);

@@ -325,6 +325,41 @@ class uart_interrupt_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
+class uart_reset_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils(uart_reset_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    uart_reset_test_seq rst_seq;
+    `uvm_info("TEST_RST", "Starting register reset verification", UVM_LOW)
+    rst_seq = uart_reset_test_seq::type_id::create("rst_seq");
+    rst_seq.reg_model = reg_model;
+    rst_seq.start(env.agent.sequencer);
+    `uvm_info("TEST_RST", "Reset verification completed", UVM_LOW)
+  endtask
+endclass
+
+class uart_virtual_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils(uart_virtual_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    uart_virtual_seq vseq;
+    `uvm_info("TEST_VSEQ", "Starting virtual sequence test", UVM_LOW)
+    vseq = uart_virtual_seq::type_id::create("vseq");
+    vseq.reg_model = reg_model;
+    if (env.sb != null) vseq.sb_handle = env.sb;
+    vseq.start(env.agent.sequencer);
+    `uvm_info("TEST_VSEQ", "Virtual sequence test completed", UVM_LOW)
+  endtask
+endclass
+
 class uart_regression_test extends {{ spec.design_name }}_base_test;
   `uvm_component_utils(uart_regression_test)
 

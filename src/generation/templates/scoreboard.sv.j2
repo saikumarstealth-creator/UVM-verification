@@ -513,6 +513,49 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     `uvm_info("SB_INJ", $sformatf("Error injection configured: %s=%0d", name, count), UVM_LOW)
   endfunction
 
+  // ---------------------------------------------------------------
+  // Record methods — called from sequences for scoreboard integration
+  // ---------------------------------------------------------------
+  function void record_tx(logic [2:0] addr, logic [7:0] data);
+    transaction_t tr;
+    tr.data = data;
+    tr.addr = addr;
+    tr.we = 1;
+    tr.timestamp = $time;
+    tr.seq_num = transaction_count++;
+    tx_fifo.push_back(data);
+    expected_rx_fifo.push_back(data);
+    `uvm_info("SB_REC_TX", $sformatf("record_tx: addr=0x%0h data=0x%02h", addr, data), UVM_HIGH)
+  endfunction
+
+  function void record_rx(logic [2:0] addr, logic [7:0] data);
+    transaction_t tr;
+    tr.data = data;
+    tr.addr = addr;
+    tr.we = 0;
+    tr.seq_num = transaction_count++;
+    rx_fifo.push_back(data);
+    `uvm_info("SB_REC_RX", $sformatf("record_rx: addr=0x%0h data=0x%02h", addr, data), UVM_HIGH)
+  endfunction
+
+  function void record_error(string err_type, string msg);
+    log_error($sformatf("[%s] %s", err_type, msg));
+    `uvm_info("SB_REC_ERR", $sformatf("record_error: %s — %s", err_type, msg), UVM_MEDIUM)
+  endfunction
+
+  function void record_config(int baud, int dbits, int sbits, bit pen, bit eps);
+    current_baud_rate = baud;
+    current_data_bits = dbits;
+    current_stop_bits = sbits;
+    if (baud inside {9600, 19200, 38400, 57600, 115200, 230400, 460800}) begin
+      cov_baud_seen[baud / 9600 - 1] = 1;
+    end
+    cov_wordlen_seen[dbits - 5] = 1;
+    cov_parity_seen[pen + eps*2] = 1;
+    `uvm_info("SB_REC_CFG", $sformatf("record_config: baud=%0d dbits=%0d sbits=%0d pen=%0d eps=%0d",
+              baud, dbits, sbits, pen, eps), UVM_MEDIUM)
+  endfunction
+
   function void tag_injection(int seq_num, int inj_type);
     int q[$];
     q = {seq_num, inj_type};
