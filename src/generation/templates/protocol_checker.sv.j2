@@ -61,27 +61,44 @@ interface {{ spec.design_name }}_protocol_checker (input logic clk, input logic 
   // ==========================================================
 
 {% if p == "uart" %}
-  // UART: TX must be stable during STOP bit
-  property tx_stop_bit;
+  // UART: TX start bit within 10000 clk after THR write (addr 0, write)
+  property tx_start_after_thr_write;
     @(posedge clk) disable iff (!rst_n)
-    $fell(wb_stb) |-> ##[1:16] wb_ack;
+    (wb_cyc && wb_stb && wb_ack && wb_we && wb_addr == 0) |->
+      ##[1:10000] $fell(uart_tx);
   endproperty
-  a_tx_stop: assert property(tx_stop_bit);
+  a_tx_start: assert property(tx_start_after_thr_write)
+    else $error("TX_START: Start bit not driven after THR write");
 
-  // UART: baud tick must toggle
-  property baud_tick_period;
+  // UART: TX stop bit within 20000 clk after start bit
+  property tx_stop_after_start;
     @(posedge clk) disable iff (!rst_n)
-    $rose(uart_tx) |-> ##[1:100] $rose(uart_tx);
+    $fell(uart_tx) |-> ##[1:20000] $rose(uart_tx);
   endproperty
-  cover property(baud_tick_period);
+  a_tx_stop: assert property(tx_stop_after_start)
+    else $error("TX_STOP: Stop bit not detected after start bit");
 
-  // UART: No data loss — TX completes before next write
-  property tx_no_overrun;
+  // UART: IRQ deasserts within 5 clk after IIR read (addr 2, read)
+  property irq_clear_on_iir_read;
     @(posedge clk) disable iff (!rst_n)
-    (wb_cyc && wb_stb && wb_we && wb_addr == 0) |=>
-    !(wb_cyc && wb_stb && wb_we && wb_addr == 0)[*1:3];
+    (wb_cyc && wb_stb && !wb_we && wb_ack && wb_addr == 2) |=> ##[1:5] !irq;
   endproperty
-  a_tx_no_overrun: assert property(tx_no_overrun);
+  a_irq_clear: assert property(irq_clear_on_iir_read)
+    else $error("IRQ_CLEAR: IRQ not deasserted after IIR read");
+
+  // UART: Consecutive THR writes separated by minimum spacing to prevent TX overrun
+  property thr_write_spacing;
+    @(posedge clk) disable iff (!rst_n)
+    (wb_cyc && wb_stb && wb_ack && wb_we && wb_addr == 0) |=>
+      !(wb_cyc && wb_stb && wb_we && wb_addr == 0)[*1:2];
+  endproperty
+  a_thr_spacing: assert property(thr_write_spacing)
+    else $error("THR_SPACING: Consecutive THR writes too close");
+
+  // Cover: TX frame (start → data → stop)
+  cover property (@(posedge clk) disable iff (!rst_n)
+    $fell(uart_tx) ##[1:20000] $rose(uart_tx)
+  );
 
 {% elif p == "spi" %}
   // SPI: SS_n must be deasserted between transfers

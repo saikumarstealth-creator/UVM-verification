@@ -81,6 +81,64 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     if (!(baud inside {baud_rates_covered}))
       baud_rates_covered.push_back(baud);
   endfunction
+
+  // UART interrupt type coverage (IIR[3:1] encoding)
+  covergroup uart_interrupt_cg with function sample(int int_type, bit irq_asserted);
+    option.per_instance = 1;
+    cp_int_type: coverpoint int_type {
+      bins rx_data      = {0};
+      bins tx_empty     = {1};
+      bins line_status  = {2};
+      bins modem_status = {3};
+    }
+    cp_irq: coverpoint irq_asserted;
+    cross_int_irq: cross cp_int_type, cp_irq;
+  endgroup
+
+  function void sample_interrupt(int int_type, bit irq_asserted);
+    uart_interrupt_cg.sample(int_type, irq_asserted);
+  endfunction
+
+  // Error injection type coverage
+  covergroup uart_error_cg with function sample(int err_type, bit hw_detected);
+    option.per_instance = 1;
+    cp_err_type: coverpoint err_type {
+      bins parity  = {0};
+      bins framing = {1};
+      bins brk     = {2};
+      bins overrun = {3};
+    }
+    cp_hw_detected: coverpoint hw_detected;
+    cross_err: cross cp_err_type, cp_hw_detected;
+  endgroup
+
+  function void sample_error(int err_type, bit hw_detected);
+    uart_error_cg.sample(err_type, hw_detected);
+  endfunction
+
+  // Loopback pass/fail coverage
+  covergroup uart_loopback_cg with function sample(int matches, int mismatches);
+    option.per_instance = 1;
+    cp_result: coverpoint (mismatches == 0) {
+      bins pass = {1};
+      bins fail = {0};
+    }
+    cp_matches: coverpoint matches {
+      bins zero    = {0};
+      bins one     = {1};
+      bins several = {[2:10]};
+      bins many    = {[11:32]};
+    }
+    cp_mismatches: coverpoint mismatches {
+      bins zero = {0};
+      bins some = {[1:$]};
+    }
+    cross_res_mm: cross cp_result, cp_mismatches;
+  endgroup
+
+  function void sample_loopback(int matches, int mismatches);
+    uart_loopback_cg.sample(matches, mismatches);
+  endfunction
 {% endif %}
 
 {% if regs %}
@@ -130,6 +188,9 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     data_pattern_cg = new();
 {% if p == "uart" %}
     uart_config_cg = new();
+    uart_interrupt_cg = new();
+    uart_error_cg = new();
+    uart_loopback_cg = new();
 {% endif %}
 {% if regs %}
 {% for r in regs %}

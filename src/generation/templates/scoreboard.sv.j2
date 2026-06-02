@@ -100,6 +100,8 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   int errors[$];
   string error_msgs[$];
 
+  {{ spec.design_name }}_coverage_collector cov_handle;
+
   bit enable_loopback_check = 1;
   bit enable_interrupt_check = 1;
   int  current_baud_rate;
@@ -155,6 +157,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     burst_len = 1;
     max_history_size = 10000;
     current_baud_rate = 115200;
+    void'(uvm_config_db #({{ spec.design_name }}_coverage_collector)::get(this, "", "cov_handle", cov_handle));
     current_data_bits = 8;
     current_stop_bits = 1;
     current_parity_mode = 0;
@@ -420,14 +423,17 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     if (item.parity_error) begin
       observed_parity_errors++;
       log_error($sformatf("RX parity error: data=0x%02h", item.data));
+      if (cov_handle != null) cov_handle.sample_error(0, 1);
     end
     if (item.framing_error) begin
       observed_framing_errors++;
       log_error($sformatf("RX framing error: data=0x%02h", item.data));
+      if (cov_handle != null) cov_handle.sample_error(1, 1);
     end
     if (item.break_condition) begin
       observed_break_errors++;
       `uvm_info("SB_BREAK", $sformatf("RX break condition detected"), UVM_MEDIUM)
+      if (cov_handle != null) cov_handle.sample_error(2, 1);
     end
 
     if (enable_loopback_check && expected_rx_fifo.size() > 0) begin
@@ -440,6 +446,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
         loopback_mismatches++;
         log_error($sformatf("Loopback MISMATCH: expected=0x%02h got=0x%02h", expected, item.data));
       end
+      if (cov_handle != null) cov_handle.sample_loopback(loopback_matches, loopback_mismatches);
     end
 
     if (rx_fifo.size() == 0 && expected_rx_fifo.size() == 0) begin
@@ -482,6 +489,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     end
 
     interrupt_received++;
+    if (cov_handle != null) cov_handle.sample_interrupt(cause, 1);
 
     case (cause)
       3'b001: begin

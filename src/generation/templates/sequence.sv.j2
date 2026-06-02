@@ -10,6 +10,8 @@
 {% set sizes = regs|map(attribute='size')|select('number')|list %}
 {% set data_width = sizes|max if sizes else 8 %}
 {% set ro_regs = regs|selectattr('access', 'equalto', 'ro')|map(attribute='name')|map('lower')|list %}
+{% set wo_regs = regs|selectattr('access', 'equalto', 'wo')|map(attribute='name')|map('lower')|list %}
+{% set reg_names = regs|map(attribute='name')|map('lower')|list %}
 {% set sorted_regs = regs|sort(attribute='address') %}
 {% set reg_addresses = addr_ints|sort %}
 
@@ -39,15 +41,37 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
 
   // ---------------------------------------------------------------
   // Helper: Write to a register by address
-  // Skips RAL write if register is read-only (access == "ro")
+  // IEEE 16550 DLAB handling:
+  //   LCR[7]=1 → addr 0x00→DLL, 0x01→DLH
+  //   LCR[7]=0 → addr 0x00→THR, 0x01→IER
   // ---------------------------------------------------------------
   protected task uart_write_reg(logic [2:0] addr, logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
+{% if p == "uart" %}
+      if (addr inside {3'h0, 3'h1}) begin
+        logic [7:0] lcr_val;
+        reg_model.lcr.read(st, lcr_val, .parent(this));
+        if (addr == 3'h0) begin
+          if (lcr_val[7]) {% if 'dll' in reg_names %}reg_model.dll.write(st, data, .parent(this));{% endif %}
+          else            {% if 'thr' in reg_names %}reg_model.thr.write(st, data, .parent(this));{% endif %}
+        end else begin
+          if (lcr_val[7]) {% if 'dlh' in reg_names %}reg_model.dlh.write(st, data, .parent(this));{% endif %}
+          else            {% if 'ier' in reg_names %}reg_model.ier.write(st, data, .parent(this));{% endif %}
+        end
+        if (sb_handle != null) sb_handle.record_tx(addr, data);
+        return;
+      end
+{% endif %}
       case (addr)
-        {% for reg in sorted_regs if reg.name|lower not in ro_regs %}
-        {{ addr_bits }}'h{{ reg.address[2:] }}: reg_model.{{ reg.name|lower }}.write(st, data, .parent(this));
-        {% endfor %}
+{% set seen = [] %}
+{% for reg in sorted_regs if reg.name|lower not in ro_regs %}
+  {% set a = reg.address.replace('0x', '').replace('h', '') %}
+  {% if a not in seen %}
+    {% set _ = seen.append(a) %}
+        {{ addr_bits }}'h{{ a }}: reg_model.{{ reg.name|lower }}.write(st, data, .parent(this));
+  {% endif %}
+{% endfor %}
         default: `uvm_error("REG", $sformatf("Write to invalid address 0x%0h", addr))
       endcase
     end else begin
@@ -64,14 +88,37 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
 
   // ---------------------------------------------------------------
   // Helper: Read from a register by address
+  // IEEE 16550 DLAB handling:
+  //   LCR[7]=1 → addr 0x00→DLL, 0x01→DLH
+  //   LCR[7]=0 → addr 0x00→RBR, 0x01→IER
   // ---------------------------------------------------------------
   protected task uart_read_reg(logic [2:0] addr, output logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
+{% if p == "uart" %}
+      if (addr inside {3'h0, 3'h1}) begin
+        logic [7:0] lcr_val;
+        reg_model.lcr.read(st, lcr_val, .parent(this));
+        if (addr == 3'h0) begin
+          if (lcr_val[7]) {% if 'dll' in reg_names %}reg_model.dll.read(st, data, .parent(this));{% endif %}
+          else            {% if 'rbr' in reg_names %}reg_model.rbr.read(st, data, .parent(this));{% endif %}
+        end else begin
+          if (lcr_val[7]) {% if 'dlh' in reg_names %}reg_model.dlh.read(st, data, .parent(this));{% endif %}
+          else            {% if 'ier' in reg_names %}reg_model.ier.read(st, data, .parent(this));{% endif %}
+        end
+        if (sb_handle != null) sb_handle.record_rx(addr, data);
+        return;
+      end
+{% endif %}
       case (addr)
-        {% for reg in sorted_regs %}
-        {{ addr_bits }}'h{{ reg.address[2:] }}: reg_model.{{ reg.name|lower }}.read(st, data, .parent(this));
-        {% endfor %}
+{% set seen = [] %}
+{% for reg in sorted_regs %}
+  {% set a = reg.address.replace('0x', '').replace('h', '') %}
+  {% if a not in seen %}
+    {% set _ = seen.append(a) %}
+        {{ addr_bits }}'h{{ a }}: reg_model.{{ reg.name|lower }}.read(st, data, .parent(this));
+  {% endif %}
+{% endfor %}
         default: `uvm_error("REG", $sformatf("Read from invalid address 0x%0h", addr))
       endcase
     end else begin
