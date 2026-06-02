@@ -9,6 +9,9 @@
 {% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
 {% set sizes = regs|map(attribute='size')|select('number')|list %}
 {% set data_width = sizes|max if sizes else 8 %}
+{% set ro_regs = regs|selectattr('access', 'equalto', 'ro')|map(attribute='name')|map('lower')|list %}
+{% set sorted_regs = regs|sort(attribute='address') %}
+{% set reg_addresses = addr_ints|sort %}
 
 // ---------------------------------------------------------------------------
 // Base Sequence — all sequences inherit from here
@@ -34,20 +37,16 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   endtask
 
   // ---------------------------------------------------------------
-  // Helper: Write to a UART register by address
+  // Helper: Write to a register by address
+  // Skips RAL write if register is read-only (access == "ro")
   // ---------------------------------------------------------------
   protected task uart_write_reg(logic [2:0] addr, logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
       case (addr)
-        {% if regs|length >= 1 %}3'h0: reg_model.{{ regs[0].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 2 %}3'h1: reg_model.{{ regs[1].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 3 %}3'h2: reg_model.{{ regs[2].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 4 %}3'h3: reg_model.{{ regs[3].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 5 %}3'h4: reg_model.{{ regs[4].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 6 %}3'h5: reg_model.{{ regs[5].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 7 %}3'h6: reg_model.{{ regs[6].name|lower }}.write(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 8 %}3'h7: reg_model.{{ regs[7].name|lower }}.write(st, data, .parent(this));{% endif %}
+        {% for reg in sorted_regs if reg.name|lower not in ro_regs %}
+        {{ addr_bits }}'h{{ reg.address[2:] }}: reg_model.{{ reg.name|lower }}.write(st, data, .parent(this));
+        {% endfor %}
         default: `uvm_error("REG", $sformatf("Write to invalid address 0x%0h", addr))
       endcase
     end else begin
@@ -62,20 +61,15 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   endtask
 
   // ---------------------------------------------------------------
-  // Helper: Read from a UART register by address
+  // Helper: Read from a register by address
   // ---------------------------------------------------------------
   protected task uart_read_reg(logic [2:0] addr, output logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
       case (addr)
-        {% if regs|length >= 1 %}3'h0: reg_model.{{ regs[0].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 2 %}3'h1: reg_model.{{ regs[1].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 3 %}3'h2: reg_model.{{ regs[2].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 4 %}3'h3: reg_model.{{ regs[3].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 5 %}3'h4: reg_model.{{ regs[4].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 6 %}3'h5: reg_model.{{ regs[5].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 7 %}3'h6: reg_model.{{ regs[6].name|lower }}.read(st, data, .parent(this));{% endif %}
-        {% if regs|length >= 8 %}3'h7: reg_model.{{ regs[7].name|lower }}.read(st, data, .parent(this));{% endif %}
+        {% for reg in sorted_regs %}
+        {{ addr_bits }}'h{{ reg.address[2:] }}: reg_model.{{ reg.name|lower }}.read(st, data, .parent(this));
+        {% endfor %}
         default: `uvm_error("REG", $sformatf("Read from invalid address 0x%0h", addr))
       endcase
     end else begin
@@ -108,7 +102,7 @@ class {{ spec.design_name }}_write_reg_seq extends {{ spec.design_name }}_base_s
   rand logic [{{ addr_bits-1 }}:0] reg_addr;
   rand logic [{{ data_width-1 }}:0] write_data;
 
-  constraint c_reg_addr { reg_addr inside {[0:{{ num_regs-1 }}]}; }
+  constraint c_reg_addr { reg_addr inside { {% for r in sorted_regs if r.name|lower not in ro_regs %}{{ addr_bits }}'h{{ r.address[2:] }}{% if not loop.last %}, {% endif %}{% endfor %} }; }
 
   function new(string n = "{{ spec.design_name }}_write_reg_seq");
     super.new(n);
@@ -129,7 +123,7 @@ class {{ spec.design_name }}_read_reg_seq extends {{ spec.design_name }}_base_se
   rand logic [{{ addr_bits-1 }}:0] reg_addr;
   logic [{{ data_width-1 }}:0] read_data;
 
-  constraint c_reg_addr { reg_addr inside {[0:{{ num_regs-1 }}]}; }
+  constraint c_reg_addr { reg_addr inside { {% for r in sorted_regs %}{{ addr_bits }}'h{{ r.address[2:] }}{% if not loop.last %}, {% endif %}{% endfor %} }; }
 
   function new(string n = "{{ spec.design_name }}_read_reg_seq");
     super.new(n);
@@ -152,15 +146,19 @@ class {{ spec.design_name }}_all_regs_seq extends {{ spec.design_name }}_base_se
   endfunction
 
   task body;
-    for (int i = 0; i < {{ num_regs }}; i++) begin
+    logic [{{ addr_bits-1 }}:0] addrs[$];
+    {% for r in sorted_regs %}
+    addrs.push_back({{ addr_bits }}'h{{ r.address[2:] }});
+    {% endfor %}
+    foreach (addrs[i]) begin
       {{ spec.design_name }}_write_reg_seq wseq;
       {{ spec.design_name }}_read_reg_seq  rseq;
       wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
       rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      assert(wseq.randomize() with { reg_addr == i; write_data == (i*16+5); });
+      assert(wseq.randomize() with { reg_addr == addrs[i]; write_data == (addrs[i]*16+5); });
       wseq.start(m_sequencer);
       rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      assert(rseq.randomize() with { reg_addr == i; });
+      assert(rseq.randomize() with { reg_addr == addrs[i]; });
       rseq.start(m_sequencer);
     end
   endtask
@@ -193,16 +191,20 @@ class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
-    for (int i = 0; i < {{ num_regs }}; i++) begin
+    logic [{{ addr_bits-1 }}:0] addrs[$];
+    {% for r in sorted_regs %}
+    addrs.push_back({{ addr_bits }}'h{{ r.address[2:] }});
+    {% endfor %}
+    foreach (addrs[i]) begin
       {{ spec.design_name }}_write_reg_seq wseq;
       {{ spec.design_name }}_read_reg_seq  rseq;
       wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
-      assert(wseq.randomize() with { reg_addr == i; write_data == local::write_data[i]; });
+      assert(wseq.randomize() with { reg_addr == addrs[i]; write_data == local::write_data[i]; });
       `uvm_info("SEQ_RAND", $sformatf("Randomized write[%0d]: addr=0x%0h data=0x%02h",
-                i, i, write_data[i]), UVM_HIGH)
+                i, addrs[i], write_data[i]), UVM_HIGH)
       wseq.start(m_sequencer);
       rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      assert(rseq.randomize() with { reg_addr == i; });
+      assert(rseq.randomize() with { reg_addr == addrs[i]; });
       rseq.start(m_sequencer);
     end
   endtask
@@ -746,6 +748,70 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
 endclass
 
 // -------------------------------------------------------------------------
+// UART Random Traffic Sequence — randomizes baud, parity, word length, data
+// -------------------------------------------------------------------------
+class uart_random_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_random_seq)
+
+  rand int rand_baud;
+  rand int rand_data_bits;
+  rand int rand_stop_bits;
+  rand bit rand_parity_en;
+  rand bit rand_even_parity;
+  rand int num_transactions;
+  int tx_count;
+  int rx_count;
+
+  constraint c_random_params {
+    rand_baud inside {9600, 19200, 38400, 57600, 115200, 1000000};
+    rand_data_bits inside {5, 6, 7, 8};
+    rand_stop_bits inside {1, 2};
+    num_transactions inside {[1:16]};
+  }
+
+  function new(string n = "uart_random_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    uart_config_seq cfg_seq;
+    uart_tx_seq     tx_seq;
+
+    `uvm_info("UART_RAND", $sformatf(
+      "Randomized config: baud=%0d, data=%0d, stop=%0d, parity(en=%0d,even=%0d), xactions=%0d",
+      rand_baud, rand_data_bits, rand_stop_bits, rand_parity_en, rand_even_parity, num_transactions
+    ), UVM_LOW)
+
+    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.baud_rate = rand_baud;
+    cfg_seq.data_bits = rand_data_bits;
+    cfg_seq.stop_bits = rand_stop_bits;
+    cfg_seq.parity_en = rand_parity_en;
+    cfg_seq.even_parity = rand_even_parity;
+    cfg_seq.start(m_sequencer);
+    tx_count++;
+
+    for (int i = 0; i < num_transactions; i++) begin
+      tx_seq = uart_tx_seq::type_id::create("tx_seq");
+      tx_seq.reg_model = reg_model;
+      if (!tx_seq.randomize() with { num_bytes == 1; }) begin
+        `uvm_error("UART_RAND", "TX seq randomization failed")
+      end else begin
+        tx_seq.start(m_sequencer);
+        tx_count++;
+        rx_count++;
+      end
+    end
+
+    `uvm_info("UART_RAND", $sformatf(
+      "Random traffic complete: %0d TX, %0d RX",
+      tx_count, rx_count
+    ), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
 // UART Register HW Reset Sequence — validates reset values via RAL
 // -------------------------------------------------------------------------
 class uart_reg_hw_reset_seq extends uvm_reg_hw_reset_seq;
@@ -794,13 +860,14 @@ class uart_reset_test_seq extends {{ spec.design_name }}_base_seq;
   endfunction
 
   task body;
+    uvm_status_e status;
     uvm_reg_data_t val;
     string regs_to_check[$];
 
     `uvm_info("UART_RST", "Starting register reset value verification", UVM_LOW)
 
     regs_to_check = {
-      "rbr_thr", "ier", "iir", "lcr", "mcr", "lsr", "msr", "scr"
+      {% for r in sorted_regs %}"{{ r.name|lower }}"{% if not loop.last %}, {% endif %}{% endfor %}
     };
 
     foreach (regs_to_check[i]) begin
@@ -833,7 +900,7 @@ endclass
 class uart_coverage_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_coverage_seq)
 
-  int baud_list[$] = {9600, 19200, 38400, 57600, 115200, 230400};
+  int baud_list[$] = {9600, 19200, 38400, 57600, 115200, 230400, 1000000};
   int data_bits_list[$] = {5, 6, 7, 8};
   int stop_bits_list[$] = {1, 2};
   int parity_modes[3][2] = '{'{0,0}, '{1,1}, '{1,0}};
@@ -975,6 +1042,7 @@ class uart_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_ite
     uart_seq_lib::add_sequence(uart_loopback_seq::get_type());
     uart_seq_lib::add_sequence(uart_interrupt_seq::get_type());
     uart_seq_lib::add_sequence(uart_error_injection_seq::get_type());
+    uart_seq_lib::add_sequence(uart_random_seq::get_type());
     uart_seq_lib::add_sequence(uart_baud_change_seq::get_type());
     uart_seq_lib::add_sequence(uart_coverage_seq::get_type());
     uart_seq_lib::add_sequence(uart_reg_hw_reset_seq::get_type());
