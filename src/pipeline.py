@@ -112,9 +112,9 @@ def generate_sequence_metadata(spec: Any, generated: Dict[str, str]) -> Dict[str
     seqs: List[Dict[str, Any]] = []
     if hasattr(spec, 'sequences') and spec.sequences:
         for seq in spec.sequences:
-            name = seq['name'] if isinstance(seq, dict) else seq
-            stype = seq.get('type', 'regression') if isinstance(seq, dict) else 'regression'
-            desc = seq.get('description', f'{name} test') if isinstance(seq, dict) else f'{name} test'
+            name = seq.name if hasattr(seq, 'name') else seq
+            stype = getattr(seq, 'type', 'regression') if hasattr(seq, 'type') else 'regression'
+            desc = getattr(seq, 'description', f'{name} test') if hasattr(seq, 'description') else f'{name} test'
             generated_flag = any(name in v for v in generated.values()) if generated else False
             seqs.append({
                 "name": name,
@@ -347,7 +347,7 @@ class TBPipeline:
             # Test mapping score: how many YAML sequences have matching test classes
             test_mapping_score = 0.85
             if hasattr(design_spec, 'sequences') and design_spec.sequences:
-                seq_names = {s['name'] if isinstance(s, dict) else s for s in design_spec.sequences}
+                seq_names = {s.name if hasattr(s, 'name') else s for s in design_spec.sequences}
                 seq_content = " ".join(all_generated.keys()).lower() if all_generated else ""
                 hits = sum(1 for sn in seq_names if sn in seq_content or sn.replace('uart_', '') in seq_content)
                 test_mapping_score = hits / max(1, len(seq_names))
