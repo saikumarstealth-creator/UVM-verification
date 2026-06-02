@@ -22,15 +22,11 @@ class {{ spec.design_name }}_base_test extends uvm_test;
 
     reg_model = {{ spec.design_name }}_reg_block::type_id::create("reg_model", this);
     reg_model.build();
+    reg_model.lock_model();
     uvm_config_db#({{ spec.design_name }}_reg_block)::set(this, "*", "reg_model", reg_model);
 
     uvm_config_db#(uvm_sequence_base)::set(this,
       "env.agent.sequencer.run_phase", "default_sequence", null);
-
-{% if p == "uart" %}
-    vif.uart_rx <= 1'b1;
-    vif.cts_n <= 1'b0;
-{% endif %}
   endfunction
 
   function void end_of_elaboration_phase(uvm_phase phase);
@@ -60,15 +56,44 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   task run_phase(uvm_phase phase);
     phase.raise_objection(this);
     `uvm_info("TEST", "Starting test...", UVM_LOW)
+    apply_reset();
     run_top_sequence();
     phase.drop_objection(this);
+  endtask
+
+  virtual task apply_reset();
+{% if p == "uart" %}
+    vif.rst_n <= 1'b0;
+    vif.uart_rx <= 1'b1;
+    vif.cts_n <= 1'b0;
+    repeat (10) @(posedge vif.clk);
+    vif.rst_n <= 1'b1;
+    repeat (5) @(posedge vif.clk);
+{% else %}
+    vif.rst_n <= 1'b0;
+    repeat (10) @(posedge vif.clk);
+    vif.rst_n <= 1'b1;
+    repeat (5) @(posedge vif.clk);
+{% endif %}
   endtask
 
   virtual task run_top_sequence();
     {{ spec.design_name }}_all_regs_seq seq;
     seq = {{ spec.design_name }}_all_regs_seq::type_id::create("seq");
+    if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
-    seq.start(env.agent.sequencer);
+    run_sequence_with_timeout(seq, 10ms);
+  endtask
+
+  protected task run_sequence_with_timeout(uvm_sequence_base seq, time timeout);
+    fork
+      seq.start(env.agent.sequencer);
+      begin
+        #(timeout);
+        `uvm_fatal("TIMEOUT", $sformatf("Sequence %s timed out after %0t", seq.get_type_name(), timeout))
+      end
+    join_any
+    disable fork;
   endtask
 
   function void report_phase(uvm_phase phase);
@@ -115,9 +140,18 @@ class {{ seq.name }}_test extends {{ spec.design_name }}_base_test;
     {%- set sv_class = seq_to_class.get(seq.name, "uart_config_seq") %}
     {{ sv_class }} seq;
     seq = {{ sv_class }}::type_id::create("seq");
+    if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
+{% if seq.name == "uart_loopback" %}
+    seq.test_data = '{8'h55, 8'hAA, 8'h33, 8'hCC};
+{% elif seq.name == "uart_error_injection" %}
+    seq.inj_type = uart_error_injection_seq::INJ_PARITY;
+    seq.num_injections = 5;
+{% elif seq.name == "uart_random" %}
+    if (!seq.randomize()) `uvm_fatal("RAND", "Randomization failed")
+{% endif %}
     `uvm_info("TEST_{{ seq.name|upper }}", $sformatf("Starting test: {{ seq.description }}"), UVM_LOW)
-    seq.start(env.agent.sequencer);
+    run_sequence_with_timeout(seq, 10ms);
     `uvm_info("TEST_{{ seq.name|upper }}", "Test completed", UVM_LOW)
   endtask
 endclass
@@ -140,19 +174,20 @@ class uart_tx_test extends {{ spec.design_name }}_base_test;
 
     `uvm_info("TEST_TX", "Configuring UART for TX test", UVM_LOW)
     cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
     cfg_seq.reg_model = reg_model;
     cfg_seq.baud_rate = 115200;
     cfg_seq.data_bits = 8;
     cfg_seq.stop_bits = 1;
-    cfg_seq.start(env.agent.sequencer);
+    run_sequence_with_timeout(cfg_seq, 10ms);
 
     `uvm_info("TEST_TX", "Starting TX sequence", UVM_LOW)
     tx_seq = uart_tx_seq::type_id::create("tx_seq");
+    if (tx_seq == null) `uvm_fatal("SEQ", "Failed to create tx_seq")
     tx_seq.tx_data = {8'h01, 8'h23, 8'h45, 8'h67, 8'h89, 8'hAB, 8'hCD, 8'hEF};
     tx_seq.num_bytes = 8;
-    tx_seq.start(env.agent.sequencer);
+    run_sequence_with_timeout(tx_seq, 10ms);
 
-    #100us;
     `uvm_info("TEST_TX", "TX test completed", UVM_LOW)
   endtask
 endclass
@@ -172,14 +207,13 @@ class uart_baud_rate_test extends {{ spec.design_name }}_base_test;
     foreach (test_bauds[i]) begin
       `uvm_info("TEST_BAUD", $sformatf("Testing baud rate: %0d", test_bauds[i]), UVM_LOW)
 
-      cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+      cfg_seq = uart_config_seq::type_id::create($sformatf("cfg_seq_%0d", i));
+      if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
       cfg_seq.reg_model = reg_model;
       cfg_seq.baud_rate = test_bauds[i];
       cfg_seq.data_bits = 8;
       cfg_seq.stop_bits = 1;
-      cfg_seq.start(env.agent.sequencer);
-
-      #50us;
+      run_sequence_with_timeout(cfg_seq, 10ms);
     end
 
     `uvm_info("TEST_BAUD", "Baud rate test completed", UVM_LOW)
@@ -205,16 +239,15 @@ class uart_format_test extends {{ spec.design_name }}_base_test;
           `uvm_info("TEST_FMT", $sformatf("Format: %0d bits, %0d stop(s), parity=%0d",
                     data_bits[db], stop_bits[sb], parity_en[pe]), UVM_LOW)
 
-          cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+          cfg_seq = uart_config_seq::type_id::create($sformatf("cfg_seq_%0d_%0d_%0d", db, sb, pe));
+          if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
           cfg_seq.reg_model = reg_model;
           cfg_seq.baud_rate = 115200;
           cfg_seq.data_bits = data_bits[db];
           cfg_seq.stop_bits = stop_bits[sb];
           cfg_seq.parity_en = parity_en[pe];
           cfg_seq.even_parity = 1;
-          cfg_seq.start(env.agent.sequencer);
-
-          #20us;
+          run_sequence_with_timeout(cfg_seq, 10ms);
         end
       end
     end
@@ -234,9 +267,10 @@ class uart_interrupt_test extends {{ spec.design_name }}_base_test;
     uart_interrupt_seq int_seq;
     `uvm_info("TEST_INT", "Starting interrupt test — THR empty", UVM_LOW)
     int_seq = uart_interrupt_seq::type_id::create("int_seq");
+    if (int_seq == null) `uvm_fatal("SEQ", "Failed to create int_seq")
     int_seq.reg_model = reg_model;
     int_seq.int_type = uart_interrupt_seq::INT_TX_EMPTY;
-    int_seq.start(env.agent.sequencer);
+    run_sequence_with_timeout(int_seq, 10ms);
     `uvm_info("TEST_INT", "Interrupt test completed", UVM_LOW)
   endtask
 endclass
@@ -249,11 +283,21 @@ class uart_reset_test extends {{ spec.design_name }}_base_test;
   endfunction
 
   task run_top_sequence();
-    uart_reset_test_seq rst_seq;
-    `uvm_info("TEST_RST", "Starting register reset verification", UVM_LOW)
-    rst_seq = uart_reset_test_seq::type_id::create("rst_seq");
-    rst_seq.reg_model = reg_model;
-    rst_seq.start(env.agent.sequencer);
+    uart_reg_hw_reset_seq hw_rst_seq;
+    uart_reset_test_seq    sw_rst_seq;
+
+    `uvm_info("TEST_RST", "Starting HW reset verification via RAL", UVM_LOW)
+    hw_rst_seq = uart_reg_hw_reset_seq::type_id::create("hw_rst_seq");
+    if (hw_rst_seq == null) `uvm_fatal("SEQ", "Failed to create hw_rst_seq")
+    hw_rst_seq.reg_model = reg_model;
+    run_sequence_with_timeout(hw_rst_seq, 10ms);
+
+    `uvm_info("TEST_RST", "Starting register reset value verification", UVM_LOW)
+    sw_rst_seq = uart_reset_test_seq::type_id::create("sw_rst_seq");
+    if (sw_rst_seq == null) `uvm_fatal("SEQ", "Failed to create sw_rst_seq")
+    sw_rst_seq.reg_model = reg_model;
+    run_sequence_with_timeout(sw_rst_seq, 10ms);
+
     `uvm_info("TEST_RST", "Reset verification completed", UVM_LOW)
   endtask
 endclass
@@ -269,9 +313,10 @@ class uart_virtual_test extends {{ spec.design_name }}_base_test;
     uart_virtual_seq vseq;
     `uvm_info("TEST_VSEQ", "Starting virtual sequence test", UVM_LOW)
     vseq = uart_virtual_seq::type_id::create("vseq");
+    if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;
-    vseq.start(env.agent.sequencer);
+    run_sequence_with_timeout(vseq, 10ms);
     `uvm_info("TEST_VSEQ", "Virtual sequence test completed", UVM_LOW)
   endtask
 endclass
@@ -284,48 +329,17 @@ class uart_regression_test extends {{ spec.design_name }}_base_test;
   endfunction
 
   task run_top_sequence();
-    `uvm_info("TEST_REGRESS", "Starting full regression", UVM_LOW)
+    uart_virtual_seq vseq;
 
-    begin
-      uart_smoke_subtest();
-      uart_register_subtest();
-      uart_tx_subtest();
-      uart_loopback_subtest();
-    end
+    `uvm_info("TEST_REGRESS", "Starting full regression via virtual sequence", UVM_LOW)
+
+    vseq = uart_virtual_seq::type_id::create("vseq");
+    if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
+    vseq.reg_model = reg_model;
+    if (env.sb != null) vseq.sb_handle = env.sb;
+    run_sequence_with_timeout(vseq, 100ms);
 
     `uvm_info("TEST_REGRESS", "Regression completed", UVM_LOW)
-  endtask
-
-  task uart_smoke_subtest();
-    uart_config_seq cfg_seq;
-    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
-    cfg_seq.reg_model = reg_model;
-    cfg_seq.baud_rate = 115200;
-    cfg_seq.start(env.agent.sequencer);
-  endtask
-
-  task uart_register_subtest();
-    {{ spec.design_name }}_all_regs_seq all_reg;
-    all_reg = {{ spec.design_name }}_all_regs_seq::type_id::create("all_reg");
-    all_reg.reg_model = reg_model;
-    all_reg.start(env.agent.sequencer);
-  endtask
-
-  task uart_tx_subtest();
-    uart_tx_seq tx_seq;
-    tx_seq = uart_tx_seq::type_id::create("tx_seq");
-    tx_seq.tx_data = {8'h55, 8'hAA};
-    tx_seq.num_bytes = 2;
-    tx_seq.start(env.agent.sequencer);
-  endtask
-
-  task uart_loopback_subtest();
-    uart_loopback_seq lb_seq;
-    lb_seq = uart_loopback_seq::type_id::create("lb_seq");
-    lb_seq.reg_model = reg_model;
-    lb_seq.sb_handle = env.sb;
-    lb_seq.test_data = {8'h55, 8'hAA};
-    lb_seq.start(env.agent.sequencer);
   endtask
 endclass
 
@@ -341,8 +355,9 @@ class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base
   task run_top_sequence();
     {{ spec.design_name }}_all_regs_seq seq;
     seq = {{ spec.design_name }}_all_regs_seq::type_id::create("seq");
+    if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
-    seq.start(env.agent.sequencer);
+    run_sequence_with_timeout(seq, 10ms);
   endtask
 endclass
 
