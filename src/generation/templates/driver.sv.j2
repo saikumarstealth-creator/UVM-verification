@@ -3,6 +3,7 @@
 class {{ spec.design_name }}_driver extends uvm_driver #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_driver)
   virtual {{ spec.design_name }}_intf vif;
+  int clk_freq = 100_000_000;
 
   function new(string n, uvm_component p); super.new(n, p); endfunction
 
@@ -78,8 +79,62 @@ class {{ spec.design_name }}_driver extends uvm_driver #({{ spec.design_name }}_
     @(vif.drv_cb); wait(vif.drv_cb.wb_ack); @(vif.drv_cb);
     if (!item.we) item.data = vif.drv_cb.wb_data_i;
     vif.drv_cb.wb_cyc <= 0; vif.drv_cb.wb_stb <= 0;
+    {% if p == "uart" %}
+    if (item.corrupt_parity || item.corrupt_stop_bit || item.force_break) begin
+      serial_inject(item);
+    end
+    {% endif %}
     {% endif %}
   endtask
+
+  {% if p == "uart" %}
+  // Injects a corrupted serial frame on uart_rx to force hardware error detection.
+  // Bit timing is computed from clk_freq and a default 115200 baud rate.
+  // In a real environment, read DLL/DLM registers for the actual baud divisor.
+  task serial_inject({{ spec.design_name }}_seq_item item);
+    int cycles_per_bit = clk_freq / 115200;
+
+    // Wait for the UART core to finish serialising the byte written to THR
+    // (approx 10-12 bit-times for 8N1)
+    repeat (12 * cycles_per_bit) @(vif.drv_cb);
+
+    if (item.force_break) begin
+      vif.drv_cb.uart_rx <= 1'b0;
+      repeat (20 * cycles_per_bit) @(vif.drv_cb);
+      vif.drv_cb.uart_rx <= 1'b1;
+      repeat (cycles_per_bit) @(vif.drv_cb);
+    end
+
+    if (item.corrupt_parity) begin
+      vif.drv_cb.uart_rx <= 1'b0;
+      repeat (cycles_per_bit) @(vif.drv_cb);
+      for (int i = 0; i < 8; i++) begin
+        vif.drv_cb.uart_rx <= item.data[i];
+        repeat (cycles_per_bit) @(vif.drv_cb);
+      end
+      vif.drv_cb.uart_rx <= ~(^item.data);
+      repeat (cycles_per_bit) @(vif.drv_cb);
+      vif.drv_cb.uart_rx <= 1'b1;
+      repeat (cycles_per_bit) @(vif.drv_cb);
+    end
+
+    if (item.corrupt_stop_bit) begin
+      vif.drv_cb.uart_rx <= 1'b0;
+      repeat (cycles_per_bit) @(vif.drv_cb);
+      for (int i = 0; i < 8; i++) begin
+        vif.drv_cb.uart_rx <= item.data[i];
+        repeat (cycles_per_bit) @(vif.drv_cb);
+      end
+      vif.drv_cb.uart_rx <= ^item.data;
+      repeat (cycles_per_bit) @(vif.drv_cb);
+      vif.drv_cb.uart_rx <= 1'b1;
+      repeat (cycles_per_bit / 2) @(vif.drv_cb);
+      vif.drv_cb.uart_rx <= 1'b0;
+      repeat (cycles_per_bit / 2) @(vif.drv_cb);
+      vif.drv_cb.uart_rx <= 1'b1;
+    end
+  endtask
+  {% endif %}
 
   task run_phase(uvm_phase phase);
     reset_signals();

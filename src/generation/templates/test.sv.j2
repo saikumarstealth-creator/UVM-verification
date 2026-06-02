@@ -86,14 +86,17 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   endtask
 
   protected task run_sequence_with_timeout(uvm_sequence_base seq, time timeout);
+    bit timeout_hit;
     fork
       seq.start(env.agent.sequencer);
       begin
         #(timeout);
-        `uvm_fatal("TIMEOUT", $sformatf("Sequence %s timed out after %0t", seq.get_type_name(), timeout))
+        timeout_hit = 1'b1;
       end
     join_any
     disable fork;
+    if (timeout_hit)
+      `uvm_fatal("TIMEOUT", $sformatf("Sequence %s timed out after %0t", seq.get_type_name(), timeout))
   endtask
 
   function void report_phase(uvm_phase phase);
@@ -290,7 +293,19 @@ class uart_reset_test extends {{ spec.design_name }}_base_test;
     hw_rst_seq = uart_reg_hw_reset_seq::type_id::create("hw_rst_seq");
     if (hw_rst_seq == null) `uvm_fatal("SEQ", "Failed to create hw_rst_seq")
     hw_rst_seq.reg_model = reg_model;
-    run_sequence_with_timeout(hw_rst_seq, 10ms);
+    begin
+      bit rst_timeout;
+      fork
+        hw_rst_seq.start(null);
+        begin
+          #(10ms);
+          rst_timeout = 1'b1;
+        end
+      join_any
+      disable fork;
+      if (rst_timeout)
+        `uvm_fatal("TIMEOUT", "HW reset sequence timed out")
+    end
 
     `uvm_info("TEST_RST", "Starting register reset value verification", UVM_LOW)
     sw_rst_seq = uart_reset_test_seq::type_id::create("sw_rst_seq");

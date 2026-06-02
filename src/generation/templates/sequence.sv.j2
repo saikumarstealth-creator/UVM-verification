@@ -489,6 +489,7 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
   rand int_type_t int_type;
   bit interrupt_detected;
   int irq_assertions;
+  bit timeout_hit;
 
   function new(string n = "uart_interrupt_seq");
     super.new(n);
@@ -516,10 +517,12 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
       trigger_intr();
       begin
         #10ms;
-        `uvm_warning("UART_INT", "Interrupt test timed out after 10 ms")
+        timeout_hit = 1'b1;
       end
     join_any
     disable fork;
+    if (timeout_hit)
+      `uvm_warning("UART_INT", "Interrupt test timed out after 10 ms")
 
     uart_read_reg(3'h2, iir_val);
 
@@ -726,7 +729,6 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
       endcase
 
       finish_item(inj_req);
-      get_response(rsp);
       injected_count++;
 
       #5us;
@@ -1082,8 +1084,9 @@ class uart_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_ite
     uart_seq_lib::add_sequence(uart_random_seq::get_type());
     uart_seq_lib::add_sequence(uart_baud_change_seq::get_type());
     uart_seq_lib::add_sequence(uart_coverage_seq::get_type());
-    uart_seq_lib::add_sequence(uart_reg_hw_reset_seq::get_type());
-    uart_seq_lib::add_sequence(uart_reg_bit_bash_seq::get_type());
+    // RAL sequences omitted — they extend uvm_reg_sequence #(uvm_reg_item),
+    // not uvm_sequence #(bus_seq_item), and cannot be started on the bus sequencer.
+    // Start them via seq.start(null) using the RAL model's default_map sequencer.
     uart_seq_lib::add_sequence(uart_virtual_seq::get_type());
     uart_seq_lib::add_sequence(uart_reset_test_seq::get_type());
   endfunction
