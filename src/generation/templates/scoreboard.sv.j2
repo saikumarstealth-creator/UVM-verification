@@ -64,6 +64,19 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   int injected_framing_errors;
   int injected_break_errors;
 
+  // Per-register access tracking
+  int reg_read_count[int];
+  int reg_write_count[int];
+  int reg_match_count[int];
+  int reg_mismatch_count[int];
+
+  int error_detection_rate;
+  int interrupt_latency_min;
+  int interrupt_latency_max;
+  int interrupt_latency_total;
+  int interrupt_latency_count;
+  time interrupt_assert_time;
+
   int interrupt_expected;
   int interrupt_received;
   int interrupt_mismatch;
@@ -82,6 +95,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   burst_summary_t burst_log[$];
 
   int max_history_size;
+  int reg_prune_limit[int];
   int inj_tag_queue[$][$];
 
 {% if p == "uart" %}
@@ -170,6 +184,16 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     rx_fifo.delete();
     expected_rx_fifo.delete();
 {% endif %}
+    reg_read_count.delete();
+    reg_write_count.delete();
+    reg_match_count.delete();
+    reg_mismatch_count.delete();
+    reg_prune_limit.delete();
+    error_detection_rate = 0;
+    interrupt_latency_min = 0;
+    interrupt_latency_max = 0;
+    interrupt_latency_total = 0;
+    interrupt_latency_count = 0;
     write_history.delete();
     read_history.delete();
     burst_log.delete();
@@ -202,8 +226,9 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     old_val = shadow_regs[tr.addr];
     shadow_regs[tr.addr] = tr.data;
     write_count++;
+    reg_write_count[tr.addr]++;
     write_history.push_back(tr);
-    prune_history();
+    prune_history(tr.addr);
 
     `uvm_info("SB", $sformatf("WRITE[%0d] addr=0x%0h data=0x%02h (old=0x%02h)",
               write_count, tr.addr, tr.data, old_val), UVM_HIGH)
@@ -232,8 +257,9 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     logic [7:0] expected;
 
     read_count++;
+    reg_read_count[tr.addr]++;
     read_history.push_back(tr);
-    prune_history();
+    prune_history(tr.addr);
 
     expected = shadow_regs[tr.addr];
 
@@ -274,13 +300,28 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
 {% endif %}
   endfunction
 
-  protected function void prune_history();
+  protected function void prune_history(int addr = -1);
     if (max_history_size > 0 && write_history.size() > max_history_size) begin
       void'(write_history.pop_front());
     end
     if (max_history_size > 0 && read_history.size() > max_history_size) begin
       void'(read_history.pop_front());
     end
+    if (addr >= 0 && reg_prune_limit.exists(addr)) begin
+      int limit = reg_prune_limit[addr];
+      while (reg_write_count[addr] > limit) begin
+        reg_write_count[addr]--;
+        if (write_history.size() > 0) void'(write_history.pop_front());
+      end
+      while (reg_read_count[addr] > limit) begin
+        reg_read_count[addr]--;
+        if (read_history.size() > 0) void'(read_history.pop_front());
+      end
+    end
+  endfunction
+
+  function void set_prune_limit(int addr, int limit);
+    reg_prune_limit[addr] = limit;
   endfunction
 
   protected function void track_uart_config(logic [7:0] lcr_val, logic [7:0] old_val);
@@ -423,17 +464,17 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     if (item.parity_error) begin
       observed_parity_errors++;
       log_error($sformatf("RX parity error: data=0x%02h", item.data));
-      if (cov_handle != null) cov_handle.sample_error(0, 1);
+      if (cov_handle != null) cov_handle.sample_error(0, 1, current_parity_mode != 0);
     end
     if (item.framing_error) begin
       observed_framing_errors++;
       log_error($sformatf("RX framing error: data=0x%02h", item.data));
-      if (cov_handle != null) cov_handle.sample_error(1, 1);
+      if (cov_handle != null) cov_handle.sample_error(1, 1, current_parity_mode != 0);
     end
     if (item.break_condition) begin
       observed_break_errors++;
       `uvm_info("SB_BREAK", $sformatf("RX break condition detected"), UVM_MEDIUM)
-      if (cov_handle != null) cov_handle.sample_error(2, 1);
+      if (cov_handle != null) cov_handle.sample_error(2, 1, current_parity_mode != 0);
     end
 
     if (enable_loopback_check && expected_rx_fifo.size() > 0) begin
@@ -475,17 +516,31 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   function void check_interrupt(logic [7:0] iir_val, logic int_signal);
     if (!enable_interrupt_check) return;
     interrupt_received++;
+    if (int_signal) interrupt_assert_time = $time;
     `uvm_info("SB_INT", $sformatf("Interrupt received, IIR=0x%02h, signal=%b", iir_val, int_signal), UVM_MEDIUM)
   endfunction
 
   function void check_interrupt_cause(logic [7:0] iir_val);
     logic [2:0] cause;
     cause = iir_val[3:1];
+    time irq_latency;
 
     if (!enable_interrupt_check) return;
     if (iir_val[0]) begin
       `uvm_info("SB_INT", $sformatf("IIR read: no interrupt pending (IIR=0x%02h)", iir_val), UVM_HIGH)
       return;
+    end
+
+    // Track interrupt latency (time from IRQ assert to IIR read)
+    if (interrupt_assert_time > 0) begin
+      irq_latency = $time - interrupt_assert_time;
+      if (interrupt_latency_count == 0 || irq_latency < interrupt_latency_min)
+        interrupt_latency_min = irq_latency;
+      if (irq_latency > interrupt_latency_max)
+        interrupt_latency_max = irq_latency;
+      interrupt_latency_total += irq_latency;
+      interrupt_latency_count++;
+      interrupt_assert_time = 0;
     end
 
     interrupt_received++;
@@ -677,6 +732,14 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       "    Cause: Line Status %0d\n"
       "    Cause: Modem Status%0d\n"
       "\n"
+      "  [ Latency Metrics ]\n"
+      "    IRQ Latency Min:    %0d\n"
+      "    IRQ Latency Max:    %0d\n"
+      "    IRQ Latency Avg:    %0d\n"
+      "\n"
+      "  [ Error Detection Rate ]\n"
+      "    Detection Rate:     %0d %%\n"
+      "\n"
       "  [ Coverage Summary ]\n"
       "    Baud Rates Seen:    %0d\n"
       "    Parity Modes Seen:  %0d\n"
@@ -685,6 +748,9 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       "  [ Loopback Test ]\n"
       "    Matches:           %0d\n"
       "    Mismatches:        %0d\n"
+      "\n"
+      "  [ Per-Register Access ]\n"
+      "%s"
       "\n"
       "  [ FIFO Status ]\n"
       "    TX FIFO remaining: %0d\n"
@@ -700,8 +766,13 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
       injected_break_errors, observed_break_errors, unaccounted_break,
       interrupt_expected, interrupt_received, interrupt_mismatch, irq_unexpected,
       irq_rx_data, irq_tx_empty, irq_line_status, irq_modem_status,
+      interrupt_latency_min,
+      interrupt_latency_max,
+      interrupt_latency_count > 0 ? interrupt_latency_total / interrupt_latency_count : 0,
+      error_detection_rate,
       cov_baud_seen.sum(), cov_parity_seen.sum(), cov_wordlen_seen.sum(),
       loopback_matches, loopback_mismatches,
+      reg_summary,
       tx_fifo.size(), rx_fifo.size(),
       write_history.size(), read_history.size()
     );

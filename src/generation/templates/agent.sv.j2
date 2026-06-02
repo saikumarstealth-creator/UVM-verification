@@ -6,15 +6,35 @@ class {{ spec.design_name }}_agent extends uvm_agent;
   {{ spec.design_name }}_monitor    monitor;
   uvm_sequencer #({{ spec.design_name }}_seq_item) sequencer;
 
+  uvm_analysis_port #({{ spec.design_name }}_seq_item) write_ap;
+  uvm_analysis_port #({{ spec.design_name }}_seq_item) read_ap;
+
   function new(string n, uvm_component p); super.new(n, p); endfunction
 
   function void build_phase(uvm_phase phase);
     sequencer = uvm_sequencer#({{ spec.design_name }}_seq_item)::type_id::create("sequencer", this);
     driver    = {{ spec.design_name }}_driver::type_id::create("driver", this);
     monitor   = {{ spec.design_name }}_monitor::type_id::create("monitor", this);
+    write_ap  = new("write_ap", this);
+    read_ap   = new("read_ap", this);
   endfunction
 
   function void connect_phase(uvm_phase phase);
     driver.seq_item_port.connect(sequencer.seq_item_export);
+    // Forward monitor transactions to agent-level analysis ports
+    // for external subscribers (write_ap / read_ap carry ALL items;
+    // subscribers check item.we to filter)
+    monitor.item_collected_port.connect(write_ap);
+    monitor.item_collected_port.connect(read_ap);
+  endfunction
+
+  // Allow external components to subscribe to agent-level analysis ports.
+  // Usage: agent.write_ap.connect(external_mon.analysis_export);
+  function uvm_analysis_port #({{ spec.design_name }}_seq_item) get_write_ap();
+    return write_ap;
+  endfunction
+
+  function uvm_analysis_port #({{ spec.design_name }}_seq_item) get_read_ap();
+    return read_ap;
   endfunction
 endclass

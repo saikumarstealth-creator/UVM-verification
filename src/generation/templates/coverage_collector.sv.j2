@@ -100,7 +100,7 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   endfunction
 
   // Error injection type coverage
-  covergroup uart_error_cg with function sample(int err_type, bit hw_detected);
+  covergroup uart_error_cg with function sample(int err_type, bit hw_detected, bit parity_enabled);
     option.per_instance = 1;
     cp_err_type: coverpoint err_type {
       bins parity  = {0};
@@ -109,11 +109,16 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
       bins overrun = {3};
     }
     cp_hw_detected: coverpoint hw_detected;
-    cross_err: cross cp_err_type, cp_hw_detected;
+    cp_parity_en: coverpoint parity_enabled {
+      bins disabled = {0};
+      bins enabled  = {1};
+    }
+    cross_err:       cross cp_err_type, cp_hw_detected;
+    cross_err_par:   cross cp_err_type, cp_parity_en;
   endgroup
 
-  function void sample_error(int err_type, bit hw_detected);
-    uart_error_cg.sample(err_type, hw_detected);
+  function void sample_error(int err_type, bit hw_detected, bit parity_enabled = 0);
+    uart_error_cg.sample(err_type, hw_detected, parity_enabled);
   endfunction
 
   // Loopback pass/fail coverage

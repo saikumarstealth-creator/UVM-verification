@@ -95,6 +95,31 @@ interface {{ spec.design_name }}_protocol_checker (input logic clk, input logic 
   a_thr_spacing: assert property(thr_write_spacing)
     else $error("THR_SPACING: Consecutive THR writes too close");
 
+  // UART: Baud rate timing — each bit cell should be ~8.68 us @ 115200
+  // Allow ±25% tolerance on bit cell width
+  localparam int BIT_PERIOD_115200 = 8680;  // ns
+  localparam int BIT_TOLERANCE_PCT = 25;
+  localparam int BIT_TOLERANCE_NS  = BIT_PERIOD_115200 * BIT_TOLERANCE_PCT / 100;
+
+  property baud_bit_timing;
+    time start_time;
+    @(posedge clk) disable iff (!rst_n)
+    ($fell(uart_tx), start_time = $time) |->
+      ##[1:20000] (($time - start_time) inside {
+        [BIT_PERIOD_115200 - BIT_TOLERANCE_NS : BIT_PERIOD_115200 + BIT_TOLERANCE_NS]
+      });
+  endproperty
+  a_baud_timing: assert property(baud_bit_timing)
+    else $warning("BAUD_TIMING: Bit cell width out of tolerance");
+
+  // UART: Inter-character delay — minimum 1 stop bit between consecutive frames
+  property inter_char_delay;
+    @(posedge clk) disable iff (!rst_n)
+    $rose(uart_tx) |-> ##[1:20000] $fell(uart_tx);
+  endproperty
+  a_inter_char_delay: assert property(inter_char_delay)
+    else $warning("INTER_CHAR: No minimum gap between consecutive characters");
+
   // Cover: TX frame (start → data → stop)
   cover property (@(posedge clk) disable iff (!rst_n)
     $fell(uart_tx) ##[1:20000] $rose(uart_tx)
