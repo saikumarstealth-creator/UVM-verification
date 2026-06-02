@@ -25,8 +25,8 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     reg_model.lock_model();
     uvm_config_db#({{ spec.design_name }}_reg_block)::set(this, "*", "reg_model", reg_model);
 
-    uvm_config_db#(uvm_sequence_base)::set(this,
-      "env.agent.sequencer.run_phase", "default_sequence", null);
+    reg_model.default_map.set_sequencer(env.agent.sequencer, env.reg_adapter);
+    reg_model.default_map.set_auto_predict(1);
   endfunction
 
   function void end_of_elaboration_phase(uvm_phase phase);
@@ -187,6 +187,7 @@ class uart_tx_test extends {{ spec.design_name }}_base_test;
     `uvm_info("TEST_TX", "Starting TX sequence", UVM_LOW)
     tx_seq = uart_tx_seq::type_id::create("tx_seq");
     if (tx_seq == null) `uvm_fatal("SEQ", "Failed to create tx_seq")
+    tx_seq.reg_model = reg_model;
     tx_seq.tx_data = {8'h01, 8'h23, 8'h45, 8'h67, 8'h89, 8'hAB, 8'hCD, 8'hEF};
     tx_seq.num_bytes = 8;
     run_sequence_with_timeout(tx_seq, 10ms);
@@ -259,6 +260,54 @@ class uart_format_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
+class uart_fifo_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils(uart_fifo_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    uart_config_seq cfg_seq;
+    uart_tx_seq tx_seq;
+    logic [7:0] rd_data;
+
+    `uvm_info("TEST_FIFO", "Configuring UART with FIFO enabled (FCR=0x07)", UVM_LOW)
+    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.baud_rate = 115200;
+    cfg_seq.data_bits = 8;
+    cfg_seq.stop_bits = 1;
+    run_sequence_with_timeout(cfg_seq, 10ms);
+
+    // Enable FIFO: RCVR FIFO reset + XMIT FIFO reset + enable
+    uart_write_reg(3'h02, 8'h07);
+    uart_read_reg (3'h02, rd_data);
+    `uvm_info("TEST_FIFO", $sformatf("FCR=0x%0h", rd_data), UVM_LOW)
+
+    // Fill FIFO (16 bytes for 16550)
+    `uvm_info("TEST_FIFO", "Filling TX FIFO with 16 bytes", UVM_LOW)
+    tx_seq = uart_tx_seq::type_id::create("tx_seq");
+    if (tx_seq == null) `uvm_fatal("SEQ", "Failed to create tx_seq")
+    tx_seq.reg_model = reg_model;
+    tx_seq.tx_data = '{16{8'hA5}};
+    tx_seq.num_bytes = 16;
+    run_sequence_with_timeout(tx_seq, 10ms);
+
+    // Read LSR to check FIFO status bits
+    uart_read_reg(3'h05, rd_data);
+    `uvm_info("TEST_FIFO", $sformatf("LSR after FIFO fill=0x%0h (bit5=THR empty, bit6=TX empty)", rd_data), UVM_LOW)
+
+    if (rd_data[5])
+      `uvm_info("TEST_FIFO", "THR empty (TX FIFO empty) — OK", UVM_LOW)
+    else
+      `uvm_warning("TEST_FIFO", "TX FIFO not empty — possible overflow")
+
+    `uvm_info("TEST_FIFO", "FIFO test completed", UVM_LOW)
+  endtask
+endclass
+
 class uart_interrupt_test extends {{ spec.design_name }}_base_test;
   `uvm_component_utils(uart_interrupt_test)
 
@@ -296,7 +345,7 @@ class uart_reset_test extends {{ spec.design_name }}_base_test;
     begin
       bit rst_timeout;
       fork
-        hw_rst_seq.start(null);
+        hw_rst_seq.start(env.agent.sequencer);
         begin
           #(10ms);
           rst_timeout = 1'b1;
