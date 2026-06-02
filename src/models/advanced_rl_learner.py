@@ -521,7 +521,7 @@ class AdvancedReinforcementLearner:
             best = max(actions.keys(), key=lambda a: self._q_values[state][a])
             self._best_actions[state] = best
             self._best_action_values[state] = actions[best]
-            if self._use_double_q:
+            if self._use_double_q and self._q_values_q2[state]:
                 q2_best = max(self._q_values_q2[state].keys(), key=lambda a: self._q_values_q2[state][a])
                 if q2_best != best:
                     pass  # Disagreement detected — exploration encouraged
