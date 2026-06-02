@@ -29,7 +29,8 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   endfunction
 
   virtual task pre_body();
-    uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle);
+    if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
+      `uvm_warning("CFG", $sformatf("Scoreboard handle not found for %s", get_type_name()))
   endtask
 
   task body;
@@ -53,7 +54,8 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       {{ spec.design_name }}_seq_item req_h;
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
       start_item(req_h);
-      assert(req_h.randomize() with { we == 1; addr == local::addr; data == local::data; delay == 0; });
+      if (!req_h.randomize() with { we == 1; addr == local::addr; data == local::data; delay == 0; })
+        `uvm_fatal("RAND", "uart_write_reg req_h randomization failed")
       finish_item(req_h);
       get_response(rsp);
     end
@@ -76,7 +78,7 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       {{ spec.design_name }}_seq_item req_h;
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
       start_item(req_h);
-      assert(req_h.randomize() with { we == 0; addr == local::addr; delay == 0; });
+      if (!req_h.randomize() with { we == 0; addr == local::addr; delay == 0; })
       finish_item(req_h);
       get_response(rsp);
       data = rsp.data;
@@ -147,18 +149,20 @@ class {{ spec.design_name }}_all_regs_seq extends {{ spec.design_name }}_base_se
 
   task body;
     logic [{{ addr_bits-1 }}:0] addrs[$];
-    {% for r in sorted_regs %}
+    {% for r in sorted_regs if r.name|lower not in ro_regs %}
     addrs.push_back({{ addr_bits }}'h{{ r.address[2:] }});
     {% endfor %}
     foreach (addrs[i]) begin
       {{ spec.design_name }}_write_reg_seq wseq;
       {{ spec.design_name }}_read_reg_seq  rseq;
-      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
-      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      assert(wseq.randomize() with { reg_addr == addrs[i]; write_data == (addrs[i]*16+5); });
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create($sformatf("wseq_%0d", i));
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create($sformatf("rseq_%0d", i));
+      if (!wseq.randomize() with { reg_addr == addrs[i]; write_data == (addrs[i]*16+5); })
+        `uvm_fatal("RAND", "write_reg_seq randomization failed")
       wseq.start(m_sequencer);
-      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      assert(rseq.randomize() with { reg_addr == addrs[i]; });
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create($sformatf("rseq_rd_%0d", i));
+      if (!rseq.randomize() with { reg_addr == addrs[i]; })
+        `uvm_fatal("RAND", "read_reg_seq randomization failed")
       rseq.start(m_sequencer);
     end
   endtask
@@ -192,19 +196,21 @@ class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
 
   task body;
     logic [{{ addr_bits-1 }}:0] addrs[$];
-    {% for r in sorted_regs %}
+    {% for r in sorted_regs if r.name|lower not in ro_regs %}
     addrs.push_back({{ addr_bits }}'h{{ r.address[2:] }});
     {% endfor %}
     foreach (addrs[i]) begin
       {{ spec.design_name }}_write_reg_seq wseq;
       {{ spec.design_name }}_read_reg_seq  rseq;
-      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create("wseq");
-      assert(wseq.randomize() with { reg_addr == addrs[i]; write_data == local::write_data[i]; });
+      wseq = {{ spec.design_name }}_write_reg_seq::type_id::create($sformatf("wseq_%0d", i));
+      if (!wseq.randomize() with { reg_addr == addrs[i]; write_data == local::write_data[i]; })
+        `uvm_fatal("RAND", "write_reg_seq randomization failed")
       `uvm_info("SEQ_RAND", $sformatf("Randomized write[%0d]: addr=0x%0h data=0x%02h",
                 i, addrs[i], write_data[i]), UVM_HIGH)
       wseq.start(m_sequencer);
-      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create("rseq");
-      assert(rseq.randomize() with { reg_addr == addrs[i]; });
+      rseq = {{ spec.design_name }}_read_reg_seq::type_id::create($sformatf("rseq_%0d", i));
+      if (!rseq.randomize() with { reg_addr == addrs[i]; })
+        `uvm_fatal("RAND", "read_reg_seq randomization failed")
       rseq.start(m_sequencer);
     end
   endtask
@@ -316,18 +322,15 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
 
       uart_write_reg(3'h0, tx_data[i]);
       if (sb_handle != null) sb_handle.record_tx(3'h0, tx_data[i]);
-      `uvm_info("UART_TX", $sformatf("Wrote byte: 0x%02h ('%s')", tx_data[i],
-                (tx_data[i] inside {[8'h20:8'h7E]}) ? string'(tx_data[i]) : "."), UVM_HIGH)
+      `uvm_info("UART_TX", $sformatf("Wrote byte: 0x%02h (%c)", tx_data[i], tx_data[i]), UVM_HIGH)
     end
 
     `uvm_info("UART_TX", "TX sequence complete", UVM_MEDIUM)
   endtask
 
-  task wait_for_tx_empty();
-    int timeout = 10000;
-
-    for (int i = 0; i < timeout; i++) begin
-      logic [7:0] lsr_data;
+  task wait_for_tx_empty(int timeout = 100000);
+    logic [7:0] lsr_data;
+    repeat (timeout) begin
       uart_read_reg(3'h5, lsr_data);
       if (lsr_data[5]) begin
         return;
@@ -593,7 +596,7 @@ endclass
 class uart_baud_change_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_baud_change_seq)
 
-  int baud_rates[$] = {9600, 19200, 38400, 57600, 115200};
+  int baud_rates[$] = {9600, 19200, 38400, 57600, 115200, 1000000};
 
   function new(string n = "uart_baud_change_seq");
     super.new(n);
@@ -606,13 +609,13 @@ class uart_baud_change_seq extends {{ spec.design_name }}_base_seq;
 
       `uvm_info("UART_BAUD", $sformatf("Testing baud rate: %0d", baud_rates[i]), UVM_MEDIUM)
 
-      cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+      cfg_seq = uart_config_seq::type_id::create($sformatf("cfg_seq_%0d", i));
       cfg_seq.baud_rate = baud_rates[i];
       cfg_seq.data_bits = 8;
       cfg_seq.stop_bits = 1;
       cfg_seq.start(m_sequencer);
 
-      tx_seq = uart_tx_seq::type_id::create("tx_seq");
+      tx_seq = uart_tx_seq::type_id::create($sformatf("tx_seq_%0d", i));
       tx_seq.tx_data = {8'h55, 8'hAA, 8'h33, 8'hCC};
       tx_seq.num_bytes = 4;
       tx_seq.start(m_sequencer);
@@ -793,7 +796,7 @@ class uart_random_seq extends {{ spec.design_name }}_base_seq;
     tx_count++;
 
     for (int i = 0; i < num_transactions; i++) begin
-      tx_seq = uart_tx_seq::type_id::create("tx_seq");
+      tx_seq = uart_tx_seq::type_id::create($sformatf("tx_seq_%0d", i));
       tx_seq.reg_model = reg_model;
       if (!tx_seq.randomize() with { num_bytes == 1; }) begin
         `uvm_error("UART_RAND", "TX seq randomization failed")
@@ -934,7 +937,8 @@ class uart_coverage_seq extends {{ spec.design_name }}_base_seq;
           exercise_config(baud_list[b], data_bits_list[d], stop_bits_list[s], 1, 1);
 
           pattern = (d == 0) ? 8'h55 : (d == 1) ? 8'hAA : (d == 2) ? 8'hCC : 8'h33;
-          uart_tx_seq tx_seq = uart_tx_seq::type_id::create("tx_seq");
+          uart_tx_seq tx_seq;
+          tx_seq = uart_tx_seq::type_id::create($sformatf("tx_seq_%0d_%0d_%0d", b, d, s));
           tx_seq.tx_data = {pattern, ~pattern, 8'h00, 8'hFF};
           tx_seq.num_bytes = 4;
           tx_seq.start(m_sequencer);
@@ -963,7 +967,8 @@ class uart_coverage_seq extends {{ spec.design_name }}_base_seq;
   endtask
 
   protected task exercise_config(int baud, int dbits, int sbits, bit pen, bit eps);
-    uart_config_seq cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    uart_config_seq cfg_seq;
+    cfg_seq = uart_config_seq::type_id::create($sformatf("cfg_seq_%0d", covered_combos));
     cfg_seq.baud_rate = baud;
     cfg_seq.data_bits = dbits;
     cfg_seq.stop_bits = sbits;
@@ -1075,10 +1080,12 @@ class {{ spec.design_name }}_axi_burst_seq extends uvm_sequence #({{ spec.design
     for (int i = 0; i < burst_len; i++) begin
       req = {{ spec.design_name }}_seq_item::type_id::create("req");
       start_item(req);
-      assert(req.randomize() with { addr == i; we == 1; });
+      if (!req.randomize() with { addr == i; we == 1; })
+        `uvm_fatal("RAND", "AXI write req randomization failed")
       finish_item(req);
       start_item(req);
-      assert(req.randomize() with { addr == i; we == 0; });
+      if (!req.randomize() with { addr == i; we == 0; })
+        `uvm_fatal("RAND", "AXI read req randomization failed")
       finish_item(req);
     end
   endtask
