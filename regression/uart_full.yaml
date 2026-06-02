@@ -1,0 +1,32 @@
+# Regression specification for UART 16550
+regression:
+  name: uart_full_regression
+  spec: configs/uart16550-1.5.core
+  simulator: questa
+
+  tests:
+    - uart_smoke_test
+    - uart_reg_access_test
+    - uart_loopback_test
+    - uart_interrupt_test
+    - uart_fifo_test
+    - uart_random_test
+    - uart_tx_test
+    - uart_baud_rate_test
+    - uart_format_test
+    - uart_reset_test
+    - uart_virtual_test
+    - uart_regression_test
+
+  seeds:
+    - 10
+    - 20
+    - 30
+    - 50
+    - 100
+    - 200
+    - 500
+    - 1000
+
+  coverage: true
+  output: regression_results/uart_full/
