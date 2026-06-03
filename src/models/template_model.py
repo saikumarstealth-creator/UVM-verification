@@ -40,6 +40,10 @@ class TemplateModel(GenerationModel):
         "protocol_checker_{name}.sv": "protocol_checker.sv.j2",
     }
 
+    ASSERTION_MAP = {
+        "assertions_{name}.sv": "assertions.sv.j2",
+    }
+
     COVERAGE_SEQ_MAP = {
         "regression_{name}.sv": "regression_seq.sv.j2",
     }
@@ -102,6 +106,17 @@ class TemplateModel(GenerationModel):
 
         # Protocol checker
         for out_pattern, template_file in self.PROTOCOL_CHECKER_MAP.items():
+            out_name = out_pattern.format(name=name)
+            tmpl = env.get_template(template_file)
+            content = tmpl.render(spec=spec)
+            out_path = output_dir / out_name
+            if out_path.exists() and not cfg.generation.overwrite:
+                continue
+            out_path.write_text(content, encoding="utf-8")
+            generated[out_name] = str(out_path)
+
+        # Assertions
+        for out_pattern, template_file in self.ASSERTION_MAP.items():
             out_name = out_pattern.format(name=name)
             tmpl = env.get_template(template_file)
             content = tmpl.render(spec=spec)

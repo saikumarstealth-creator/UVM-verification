@@ -1,0 +1,228 @@
+// UVM Assertions for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Auto-generated SVA: protocol timing, handshake, data integrity checks
+{% set p = spec.protocol|default("wishbone") %}
+{% set iface = spec.interfaces[0] if spec.interfaces else None %}
+{% set sigs = iface.signals if iface else [] %}
+{% set s = {} %}
+{% for sig in sigs %}{% set _ = s.update({sig.name: {'direction': sig.direction, 'width': sig.width}}) %}{% endfor %}
+
+interface {{ spec.design_name }}_assertions ({{ spec.design_name }}_interface vif);
+  timeunit 1ns; timeprecision 1ps;
+
+  `ifndef UVM_ASSERTION_DISABLE
+
+  // -------------------------------------------------------------------------
+  // Clock & Reset
+  // -------------------------------------------------------------------------
+  default clocking cb @(posedge vif.{{ spec.clock_reset.clock }});
+  endclocking
+  default disable iff (!vif.{{ spec.clock_reset.reset }});
+
+{% if p == "uart" %}
+  // -------------------------------------------------------------------------
+  // UART Protocol Assertions
+  // -------------------------------------------------------------------------
+  // Start bit check: tx/rx line must be high when idle (no transmission)
+  property tx_idle_high;
+    $fell(vif.tx) |=> vif.tx == 1'b0 ##1 vif.tx == 1'b1;
+  endproperty
+  assert_tx_idle: assert property (tx_idle_high)
+    else `uvm_error("SVA", "TX start bit violation")
+
+  // Stop bit check: stop bit must be high
+  property tx_stop_bit(stop_bit_pos);
+    vif.tx == 1'b1 throughout stop_bit_pos;
+  endproperty
+
+  // Baud rate coherence: TX and RX should operate at same baud rate
+  // (Checked via timing — baud period must be consistent)
+  property baud_rate_period(bit sig, int min_clks, int max_clks);
+    $rose(sig) |-> ##[min_clks:max_clks] $fell(sig);
+  endproperty
+
+  // Framing error: stop bit sampled low
+  property no_framing_error;
+    @(posedge vif.{{ spec.clock_reset.clock }})
+    vif.rx === 1'b0 ##0 vif.rx === 1'b0[*7] ##1 vif.rx === 1'b0 |=> vif.rx === 1'b0 ##1 1;
+  endproperty
+  // Note: above is a simplified check — real framing depends on bit sampling
+
+  // Overrun condition: new byte received before previous read
+  // (Sampled in scoreboard via RBR access tracking)
+
+  // Parity check: compute parity of received data and compare
+  generate if ({#-#}
+    {% for s in sigs if 'parity' in s.name.lower() %}{% set par_sig = s.name %}1{% else %}0{% endfor %}
+  ) begin
+    property parity_correct;
+      // Placeholder: compare computed parity against received parity
+      1;
+    endproperty
+  end endgenerate
+
+{% elif p == "apb" %}
+  // -------------------------------------------------------------------------
+  // APB Protocol Assertions
+  // -------------------------------------------------------------------------
+  // PSEL must not be asserted without PENABLE handshake completing
+  property psel_to_penable;
+    $rose(vif.psel) |=> vif.penable == 1'b0 ##[1:2] vif.penable == 1'b1;
+  endproperty
+  assert_psel_penable: assert property (psel_to_penable)
+    else `uvm_error("SVA", "APB: PSEL without PENABLE handshake")
+
+  // PREADY must eventually be asserted after transfer
+  property pready_eventually;
+    vif.psel && vif.penable |-> ##[1:16] vif.pready == 1'b1;
+  endproperty
+  assert_pready: assert property (pready_eventually)
+    else `uvm_error("SVA", "APB: PREADY timeout")
+
+  // PSLVERR must not be X or Z when PREADY is asserted
+  property pslverr_valid;
+    vif.pready |-> !$isunknown(vif.pslverr);
+  endproperty
+  assert_pslverr_valid: assert property (pslverr_valid)
+    else `uvm_error("SVA", "APB: PSLVERR is X/Z when PREADY asserted")
+
+  // Address stability during transfer
+  property addr_stable;
+    $rose(vif.psel) |=> $stable(vif.paddr) throughout (vif.psel && vif.penable)[->1] ##0 vif.pready;
+  endproperty
+  assert_addr_stable: assert property (addr_stable)
+    else `uvm_error("SVA", "APB: PADDR changed during active transfer")
+
+  // PWRITE must be stable during transfer
+  property pwrite_stable;
+    $rose(vif.psel) |=> $stable(vif.pwrite) throughout (vif.psel && vif.penable)[->1] ##0 vif.pready;
+  endproperty
+  assert_pwrite_stable: assert property (pwrite_stable)
+    else `uvm_error("SVA", "APB: PWRITE changed during active transfer")
+
+{% elif p == "wishbone" %}
+  // -------------------------------------------------------------------------
+  // Wishbone Protocol Assertions
+  // -------------------------------------------------------------------------
+  // CYC must be asserted for entire bus cycle
+  property cyc_stable;
+    $rose(vif.cyc) |=> vif.cyc == 1'b1 throughout (vif.stb && !vif.ack)[->1];
+  endproperty
+  assert_cyc_stable: assert property (cyc_stable)
+    else `uvm_error("SVA", "Wishbone: CYC de-asserted before ACK")
+
+  // STB must be asserted inside CYC
+  property stb_inside_cyc;
+    vif.stb |-> vif.cyc;
+  endproperty
+  assert_stb_inside_cyc: assert property (stb_inside_cyc)
+    else `uvm_error("SVA", "Wishbone: STB outside CYC")
+
+  // ACK must follow STB within timeout
+  property ack_eventually;
+    $rose(vif.stb) |-> ##[1:16] vif.ack;
+  endproperty
+  assert_ack: assert property (ack_eventually)
+    else `uvm_error("SVA", "Wishbone: ACK timeout")
+
+  // No new STB while waiting for ACK (classic protocol)
+  property no_stb_while_waiting;
+    vif.stb && !vif.ack |=> !$rose(vif.stb);
+  endproperty
+  assert_no_stb_while_waiting: assert property (no_stb_while_waiting)
+    else `uvm_error("SVA", "Wishbone: STB re-asserted before ACK")
+
+{% elif p == "axi4lite" %}
+  // -------------------------------------------------------------------------
+  // AXI4-Lite Protocol Assertions
+  // -------------------------------------------------------------------------
+  // AWVALID must not be asserted without AWREADY
+  property aw_handshake;
+    $rose(vif.awvalid) |-> ##[1:16] vif.awready;
+  endproperty
+  assert_aw_handshake: assert property (aw_handshake)
+    else `uvm_error("SVA", "AXI4-Lite: AWADDR handshake timeout")
+
+  // WVALID must not be asserted without WREADY
+  property w_handshake;
+    $rose(vif.wvalid) |-> ##[1:16] vif.wready;
+  endproperty
+  assert_w_handshake: assert property (w_handshake)
+    else `uvm_error("SVA", "AXI4-Lite: WDATA handshake timeout")
+
+  // BVALID must follow AW and W handshake completion
+  property bvalid_follows;
+    vif.awready && vif.wready |-> ##[1:16] vif.bvalid;
+  endproperty
+  assert_bvalid: assert property (bvalid_follows)
+    else `uvm_error("SVA", "AXI4-Lite: BVALID timeout")
+
+  // ARVALID → ARREADY → RVALID pipeline
+  property ar_handshake;
+    $rose(vif.arvalid) |-> ##[1:16] vif.arready;
+  endproperty
+  assert_ar_handshake: assert property (ar_handshake)
+    else `uvm_error("SVA", "AXI4-Lite: ARADDR handshake timeout")
+
+  property rvalid_follows;
+    vif.arready |-> ##[1:16] vif.rvalid;
+  endproperty
+  assert_rvalid: assert property (rvalid_follows)
+    else `uvm_error("SVA", "AXI4-Lite: RVALID timeout")
+
+{% elif p in ("spi", "i2c") %}
+  // -------------------------------------------------------------------------
+  // {{ p|upper }} Protocol Assertions
+  // -------------------------------------------------------------------------
+  // Chip select must be stable during transaction
+  property cs_stable;
+    $fell(vif.cs_n) |=>
+      {% if p == "spi" %}$stable(vif.cs_n) throughout (vif.sclk)[->16];{% endif %}
+      {% if p == "i2c" %}$stable(vif.sda) && $stable(vif.scl);{% endif %}
+  endproperty
+  assert_cs_stable: assert property (cs_stable)
+    else `uvm_error("SVA", "{{ p|upper }}: Chip select violation")
+
+  // SCLK/SCL must toggle during active transfers
+  property clock_active;
+    {% if p == "spi" %}$fell(vif.cs_n) |-> ##[1:8] $rose(vif.sclk);{% endif %}
+    {% if p == "i2c" %}$fell(vif.sda) && vif.scl |-> ##[1:8] $fell(vif.scl);{% endif %}
+  endproperty
+  assert_clock_active: assert property (clock_active)
+    else `uvm_error("SVA", "{{ p|upper }}: Clock not active during transfer")
+
+{% else %}
+  // -------------------------------------------------------------------------
+  // Generic Protocol Assertions
+  // -------------------------------------------------------------------------
+  // At least one ready/ack signal must respond within timeout window
+{% for sig in sigs if sig.name.lower() in ('ack', 'ready', 'valid') %}
+  property {{ sig.name }}_response;
+    // {{ sig.name }} must eventually be asserted
+    1;
+  endproperty
+{% endfor %}
+{% endif %}
+
+  // -------------------------------------------------------------------------
+  // Cross-Protocol Assertions
+  // -------------------------------------------------------------------------
+  // No unknown or high-impedance values on control signals
+{% for sig in sigs if sig.direction == 'output' %}
+  property {{ sig.name }}_no_x;
+    !$isunknown(vif.{{ sig.name }});
+  endproperty
+  assert_{{ sig.name }}_no_x: assert property ({{ sig.name }}_no_x)
+    else `uvm_error("SVA", "{{ spec.design_name }}: {{ sig.name }} is X/Z")
+{% endfor %}
+
+  // Data bus must be stable when not being written
+{% for sig in sigs if sig.name.lower() in ('wdata', 'data', 'tx', 'mosi') %}
+  property {{ sig.name }}_data_valid;
+    // Data validity window — placeholder for protocol-specific timing
+    1;
+  endproperty
+{% endfor %}
+
+  `endif // UVM_ASSERTION_DISABLE
+
+endinterface

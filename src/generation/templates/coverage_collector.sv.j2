@@ -72,6 +72,7 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     }
     cross_baud_parity:      cross cp_baud, cp_parity;
     cross_baud_data_bits:   cross cp_baud, cp_data_bits;
+    cross_baud_stop_bits:   cross cp_baud, cp_stop_bits;
     cross_parity_stop_bits: cross cp_parity, cp_stop_bits;
     cross_baud_frame:       cross cp_baud, cp_frame;
   endgroup

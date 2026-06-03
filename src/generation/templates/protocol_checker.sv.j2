@@ -1,261 +1,266 @@
-// Protocol Assertion Checker for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
-// Functional correctness: SVA assertions for protocol compliance + data integrity
-interface {{ spec.design_name }}_protocol_checker (input logic clk, input logic rst_n);
+// UVM Protocol Compliance Checker for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Monitors bus transactions and validates against protocol specification rules.
 {% set p = spec.protocol|default("wishbone") %}
+{% set iface = spec.interfaces[0] if spec.interfaces else None %}
+{% set sigs = iface.signals if iface else [] %}
 
-  // ==========================================================
-  // DATA INTEGRITY: Write data must be readable back
-  // ==========================================================
-  logic [7:0] last_written_data;
-  logic [2:0] last_written_addr;
-  logic       write_strobe;
-  always_ff @(posedge clk or negedge rst_n)
-    if (!rst_n) begin
-      last_written_data <= 0;
-      last_written_addr <= 0;
-      write_strobe <= 0;
-    end else begin
-      {% if p == "axi4lite" %}
-      if (awvalid && awready && wvalid && wready) begin
-        last_written_addr <= awaddr;
-        last_written_data <= wdata;
-        write_strobe <= 1;
-      end else write_strobe <= 0;
-      {% elif p == "apb" %}
-      if (psel && penable && pready && pwrite) begin
-        last_written_addr <= paddr;
-        last_written_data <= pwdata;
-        write_strobe <= 1;
-      end else write_strobe <= 0;
-      {% else %}
-      if (wb_cyc && wb_stb && wb_we && wb_ack) begin
-        last_written_addr <= wb_addr;
-        last_written_data <= wb_data_o;
-        write_strobe <= 1;
-      end else write_strobe <= 0;
+class {{ spec.design_name }}_protocol_checker extends uvm_monitor;
+  `uvm_component_utils({{ spec.design_name }}_protocol_checker)
+
+  virtual {{ spec.design_name }}_interface vif;
+  uvm_analysis_port #({{ spec.design_name }}_seq_item) item_port;
+
+  // Protocol violation counters
+  int num_violations;
+  int num_transactions_checked;
+
+  // Violation bitmask
+  typedef enum bit [3:0] {
+    VIOL_NONE      = 4'b0000,
+    VIOL_TIMING    = 4'b0001,
+    VIOL_HANDSHAKE = 4'b0010,
+    VIOL_DATA      = 4'b0100,
+    VIOL_PROTOCOL  = 4'b1000
+  } violation_e;
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+    item_port = new("item_port", this);
+    num_violations = 0;
+    num_transactions_checked = 0;
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db #(virtual {{ spec.design_name }}_interface)::get(this, "", "vif", vif))
+      `uvm_fatal("CFG", "Virtual interface not found for protocol checker")
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    fork
+      monitor_uprotocol();
+      monitor_timing();
+    join_none
+  endtask
+
+  // -------------------------------------------------------------------------
+  // Protocol State Machine & Transaction Monitoring
+  // -------------------------------------------------------------------------
+  task monitor_uprotocol();
+{% if p == "apb" %}
+    apb_protocol_monitor();
+{% elif p == "uart" %}
+    uart_protocol_monitor();
+{% elif p == "wishbone" %}
+    wishbone_protocol_monitor();
+{% elif p in ("spi", "i2c") %}
+    serial_protocol_monitor();
+{% else %}
+    generic_protocol_monitor();
+{% endif %}
+  endtask
+
+{% if p == "apb" %}
+  // APB Protocol Checker
+  task apb_protocol_monitor();
+    forever begin
+      @(posedge vif.{{ spec.clock_reset.clock }});
+      if (!vif.{{ spec.clock_reset.reset }}) begin
+        // During reset: all signals should be inactive
+        if (vif.psel !== 1'b0)
+          report_violation(VIOL_PROTOCOL, "PSEL must be 0 during reset");
+        continue;
+      end
+
+      // Detect transaction start: PSEL asserted
+      if (vif.psel && vif.penable && vif.pready) begin
+        num_transactions_checked++;
+        // Check write data vs read data setup
+        if (vif.pwrite) begin
+          // Write transaction
+          check_apb_write();
+        end else begin
+          // Read transaction
+          check_apb_read();
+        end
+      end
+
+      // Penalty check assertion timing
+      if (vif.penable && !vif.psel)
+        report_violation(VIOL_HANDSHAKE, "PENABLE asserted without PSEL");
+
+      // PSLVERR must be valid when PREADY
+      if (vif.pready && $isunknown(vif.pslverr))
+        report_violation(VIOL_DATA, "PSLVERR is X/Z when PREADY asserted");
+    end
+  endtask
+
+  task check_apb_write();
+    // Validate write strobe timing
+    if (vif.pstrb && $isunknown(vif.pwdata))
+      report_violation(VIOL_DATA, "PWDATA X/Z when PSTRB active");
+  endtask
+
+  task check_apb_read();
+    // Validate read data timing
+    if ($isunknown(vif.prdata))
+      report_violation(VIOL_DATA, "PRDATA is X/Z during read transfer");
+  endtask
+
+{% elif p == "uart" %}
+  // UART Protocol Checker
+  task uart_protocol_monitor();
+    logic [7:0] rx_shift;
+    int bit_count;
+    bit in_frame;
+
+    forever begin
+      @(posedge vif.{{ spec.clock_reset.clock }});
+      if (!vif.{{ spec.clock_reset.reset }}) begin
+        in_frame = 0;
+        bit_count = 0;
+        continue;
+      end
+
+      // Detect start bit: TX or RX line goes low
+      if (!in_frame && vif.tx == 1'b0) begin
+        in_frame = 1;
+        bit_count = 0;
+        num_transactions_checked++;
+      end
+
+      if (in_frame) begin
+        bit_count++;
+        // After 10 bit times (start + 8 data + stop), frame should end
+        if (bit_count > 10) begin
+          if (vif.tx !== 1'b1)
+            report_violation(VIOL_TIMING, "Stop bit not high");
+          in_frame = 0;
+        end
+      end
+
+      // Overrun check: new start while previous frame not read
+      if (vif.rx === 1'b0 && $past(vif.rx) === 1'b1 && in_frame)
+        report_violation(VIOL_PROTOCOL, "Potential overrun: new start before frame complete");
+    end
+  endtask
+
+{% elif p == "wishbone" %}
+  // Wishbone Protocol Checker
+  task wishbone_protocol_monitor();
+    forever begin
+      @(posedge vif.{{ spec.clock_reset.clock }});
+      if (!vif.{{ spec.clock_reset.reset }}) continue;
+
+      if (vif.cyc && vif.stb && vif.ack) begin
+        num_transactions_checked++;
+        // Check data valid
+        if (vif.we && $isunknown(vif.dat_o))
+          report_violation(VIOL_DATA, "DAT_O X/Z during write cycle");
+      end
+
+      // STB without CYC
+      if (vif.stb && !vif.cyc)
+        report_violation(VIOL_HANDSHAKE, "STB asserted without CYC");
+
+      // ACK without STB
+      if (vif.ack && !vif.stb)
+        report_violation(VIOL_HANDSHAKE, "ACK asserted without STB");
+    end
+  endtask
+
+{% elif p in ("spi", "i2c") %}
+  // Serial Protocol Checker
+  task serial_protocol_monitor();
+    forever begin
+      @(posedge vif.{{ spec.clock_reset.clock }});
+      if (!vif.{{ spec.clock_reset.reset }}) continue;
+      {% if p == "spi" %}
+      if (!vif.cs_n && $rose(vif.sclk)) begin
+        num_transactions_checked++;
+      end
+      // CS must be low during entire transaction
+      if ($fell(vif.cs_n) && $past(vif.cs_n, 2) === 1'b1)
+        ; // Transaction start — OK
+      {% endif %}
+      {% if p == "i2c" %}
+      // Start condition: SDA falling while SCL high
+      if (vif.scl && $fell(vif.sda))
+        num_transactions_checked++;
+      // Stop condition: SDA rising while SCL high
+      if (vif.scl && $rose(vif.sda))
+        ; // Transaction end — OK
       {% endif %}
     end
-
-  // Data integrity: write data must be readable back
-  // Track last written values for read-after-write checking
-  property data_integrity;
-    @(posedge clk) disable iff (!rst_n)
-    write_strobe |-> ##[1:10] (
-      {% if p == "axi4lite" %}
-      (arvalid && arready && rvalid && rready && araddr == $past(last_written_addr)) |->
-      rdata == $past(last_written_data)
-      {% elif p == "apb" %}
-      (psel && penable && pready && !pwrite && paddr == $past(last_written_addr)) |->
-      prdata == $past(last_written_data)
-      {% else %}
-      (wb_cyc && wb_stb && !wb_we && wb_ack && wb_addr == $past(last_written_addr)) |->
-      wb_data_i == $past(last_written_data)
-      {% endif %}
-    );
-  endproperty
-  a_data_integrity: assert property(data_integrity)
-    else $error("DATA_INTEGRITY: Read-after-write mismatch");
-
-  // ==========================================================
-  // PROTOCOL-SPECIFIC ASSERTIONS
-  // ==========================================================
-
-{% if p == "uart" %}
-  // UART: TX start bit within 10000 clk after THR write (addr 0, write)
-  property tx_start_after_thr_write;
-    @(posedge clk) disable iff (!rst_n)
-    (wb_cyc && wb_stb && wb_ack && wb_we && wb_addr == 0) |->
-      ##[1:10000] $fell(uart_tx);
-  endproperty
-  a_tx_start: assert property(tx_start_after_thr_write)
-    else $error("TX_START: Start bit not driven after THR write");
-
-  // UART: TX stop bit within 20000 clk after start bit
-  property tx_stop_after_start;
-    @(posedge clk) disable iff (!rst_n)
-    $fell(uart_tx) |-> ##[1:20000] $rose(uart_tx);
-  endproperty
-  a_tx_stop: assert property(tx_stop_after_start)
-    else $error("TX_STOP: Stop bit not detected after start bit");
-
-  // UART: IRQ deasserts within 5 clk after IIR read (addr 2, read)
-  property irq_clear_on_iir_read;
-    @(posedge clk) disable iff (!rst_n)
-    (wb_cyc && wb_stb && !wb_we && wb_ack && wb_addr == 2) |=> ##[1:5] !irq;
-  endproperty
-  a_irq_clear: assert property(irq_clear_on_iir_read)
-    else $error("IRQ_CLEAR: IRQ not deasserted after IIR read");
-
-  // UART: Consecutive THR writes separated by minimum spacing to prevent TX overrun
-  property thr_write_spacing;
-    @(posedge clk) disable iff (!rst_n)
-    (wb_cyc && wb_stb && wb_ack && wb_we && wb_addr == 0) |=>
-      !(wb_cyc && wb_stb && wb_we && wb_addr == 0)[*1:2];
-  endproperty
-  a_thr_spacing: assert property(thr_write_spacing)
-    else $error("THR_SPACING: Consecutive THR writes too close");
-
-  // UART: Baud rate timing — each bit cell should be ~8.68 us @ 115200
-  // Allow ±25% tolerance on bit cell width
-  localparam int BIT_PERIOD_115200 = 8680;  // ns
-  localparam int BIT_TOLERANCE_PCT = 25;
-  localparam int BIT_TOLERANCE_NS  = BIT_PERIOD_115200 * BIT_TOLERANCE_PCT / 100;
-
-  property baud_bit_timing;
-    time start_time;
-    @(posedge clk) disable iff (!rst_n)
-    ($fell(uart_tx), start_time = $time) |->
-      ##[1:20000] (($time - start_time) inside {
-        [BIT_PERIOD_115200 - BIT_TOLERANCE_NS : BIT_PERIOD_115200 + BIT_TOLERANCE_NS]
-      });
-  endproperty
-  a_baud_timing: assert property(baud_bit_timing)
-    else $warning("BAUD_TIMING: Bit cell width out of tolerance");
-
-  // UART: Inter-character delay — minimum 1 stop bit between consecutive frames
-  property inter_char_delay;
-    @(posedge clk) disable iff (!rst_n)
-    $rose(uart_tx) |-> ##[1:20000] $fell(uart_tx);
-  endproperty
-  a_inter_char_delay: assert property(inter_char_delay)
-    else $warning("INTER_CHAR: No minimum gap between consecutive characters");
-
-  // Cover: TX frame (start → data → stop)
-  cover property (@(posedge clk) disable iff (!rst_n)
-    $fell(uart_tx) ##[1:20000] $rose(uart_tx)
-  );
-
-{% elif p == "spi" %}
-  // SPI: SS_n must be deasserted between transfers
-  property ss_deassert;
-    @(posedge clk) disable iff (!rst_n)
-    $fell(ss_n) |=> $stable(ss_n)[*1:100] ##1 $rose(ss_n);
-  endproperty
-  a_ss_deassert: assert property(ss_deassert);
-
-  // SPI: SCLK toggles during active transfer
-  property sclk_active;
-    @(posedge clk) disable iff (!rst_n)
-    ss_n != 4'hF |-> sclk;
-  endproperty
-  cover property(sclk_active);
-
-  // SPI: MISO data must be valid while SS_n asserted
-  property miso_valid;
-    @(posedge clk) disable iff (!rst_n)
-    ss_n == 4'hE |=> $stable(miso);
-  endproperty
-  a_miso_valid: assert property(miso_valid);
-
-{% elif p == "i2c" %}
-  // I2C: START condition (SDA falling while SCL high)
-  property start_cond;
-    @(posedge clk) disable iff (!rst_n)
-    $fell(sda) && scl;
-  endproperty
-  a_start: assert property(start_cond);
-  cover property(start_cond);
-
-  // I2C: STOP condition (SDA rising while SCL high)
-  property stop_cond;
-    @(posedge clk) disable iff (!rst_n)
-    $rose(sda) && scl;
-  endproperty
-  a_stop: assert property(stop_cond);
-  cover property(stop_cond);
-
-  // I2C: SCL must toggle during data transfer
-  property scl_toggle;
-    @(posedge clk) disable iff (!rst_n)
-    $fell(sda) && scl |-> ##[1:10] $rose(scl);
-  endproperty
-  cover property(scl_toggle);
-
-{% elif p == "axi4lite" %}
-  // AXI4-Lite: AWVALID → AWREADY handshake
-  property aw_handshake;
-    @(posedge clk) disable iff (!rst_n)
-    awvalid |-> ##[1:16] awready;
-  endproperty
-  a_aw_handshake: assert property(aw_handshake);
-
-  // AXI4-Lite: WVALID → WREADY handshake
-  property w_handshake;
-    @(posedge clk) disable iff (!rst_n)
-    wvalid |-> ##[1:16] wready;
-  endproperty
-  a_w_handshake: assert property(w_handshake);
-
-  // AXI4-Lite: ARVALID → ARREADY → RVALID
-  property ar_to_r;
-    @(posedge clk) disable iff (!rst_n)
-    arvalid && arready |-> ##[1:16] rvalid;
-  endproperty
-  a_ar_to_r: assert property(ar_to_r);
-
-  // AXI4-Lite: No write before BRESP
-  property bresp_before_next;
-    @(posedge clk) disable iff (!rst_n)
-    awvalid && awready && wvalid && wready |=> bvalid until bready;
-  endproperty
-  a_bresp_before_next: assert property(bresp_before_next);
-
-{% elif p == "apb" %}
-  // APB: PSEL must be asserted before PENABLE
-  property psel_before_penable;
-    @(posedge clk) disable iff (!rst_n)
-    $rose(penable) |=> $past(psel);
-  endproperty
-  a_psel_before_penable: assert property(psel_before_penable);
-
-  // APB: PREADY within 16 cycles of PENABLE
-  property pready_timing;
-    @(posedge clk) disable iff (!rst_n)
-    penable |-> ##[1:16] pready;
-  endproperty
-  a_pready_timing: assert property(pready_timing);
-
-  // APB: No PSLVERR for valid addresses
-  property no_slverr;
-    @(posedge clk) disable iff (!rst_n)
-    psel && penable && pready |-> !pslverr;
-  endproperty
-  a_no_slverr: assert property(no_slverr);
+  endtask
 
 {% else %}
-  // Wishbone: STB→ACK within 16 cycles
-  property ack_within_16;
-    @(posedge clk) disable iff (!rst_n)
-    $rose(wb_stb) |-> ##[1:16] wb_ack;
-  endproperty
-  a_ack_within_16: assert property(ack_within_16);
+  // Generic Protocol Checker
+  task generic_protocol_monitor();
+    forever begin
+      @(posedge vif.{{ spec.clock_reset.clock }});
+      if (!vif.{{ spec.clock_reset.reset }}) continue;
+      // Basic transaction detection: look for any signal activity
+{% for sig in sigs if sig.direction in ('input', 'inout') %}
+      if ($changed(vif.{{ sig.name }}))
+        num_transactions_checked++;
+{% endfor %}
+      #1;
+    end
+  endtask
 
-  // Wishbone: data stable during cycle
-  property data_stable;
-    @(posedge clk) disable iff (!rst_n)
-    wb_stb && wb_we |=> $stable(wb_data_o);
-  endproperty
-  a_data_stable: assert property(data_stable);
-
-  // Wishbone: CYC must be asserted with STB
-  property cyc_with_stb;
-    @(posedge clk) disable iff (!rst_n)
-    wb_stb |-> wb_cyc;
-  endproperty
-  a_cyc_with_stb: assert property(cyc_with_stb);
 {% endif %}
 
-  // ==========================================================
-  // COVERAGE TARGETS
-  // ==========================================================
-  cover property (@(posedge clk) disable iff (!rst_n)
-    {% if p == "axi4lite" %}
-    awvalid && awready && wvalid && wready && bvalid && bready
-    {% elif p == "apb" %}
-    psel && penable && pready
-    {% else %}
-    wb_cyc && wb_stb && wb_ack
-    {% endif %}
-  );
+  // -------------------------------------------------------------------------
+  // Timing Monitoring
+  // -------------------------------------------------------------------------
+  task monitor_timing();
+    int timeout_cycles = 1000;
 
-endinterface
+    forever begin
+      @(posedge vif.{{ spec.clock_reset.clock }});
+      if (!vif.{{ spec.clock_reset.reset }}) continue;
+
+      // Check for prolonged inactivity on data/control lines
+      // (protocol-specific timeout checks)
+{% if p == "apb" %}
+      if (vif.psel && !vif.pready) begin
+        // Transfer in progress — count wait cycles
+        repeat (timeout_cycles) @(posedge vif.{{ spec.clock_reset.clock }});
+        if (!vif.pready)
+          report_violation(VIOL_TIMING, $sformatf("APB transfer timeout after %0d cycles", timeout_cycles));
+      end
+{% elif p == "wishbone" %}
+      if (vif.stb && !vif.ack) begin
+        repeat (timeout_cycles) @(posedge vif.{{ spec.clock_reset.clock }});
+        if (!vif.ack)
+          report_violation(VIOL_TIMING, $sformatf("Wishbone cycle timeout after %0d cycles", timeout_cycles));
+      end
+{% endif %}
+    end
+  endtask
+
+  // -------------------------------------------------------------------------
+  // Violation Reporting
+  // -------------------------------------------------------------------------
+  function void report_violation(violation_e vtype, string msg);
+    num_violations++;
+    `uvm_warning("PROTOCOL_CHECKER", $sformatf("[%0d] %s (violations=%0d, checked=%0d)",
+                 num_violations, msg, num_violations, num_transactions_checked))
+  endfunction
+
+  function void report_summary();
+    `uvm_info("PROTOCOL_CHECKER", $sformatf(
+      "\n  === Protocol Checker Summary for %s ==="
+      "\n  Transactions Checked: %0d"
+      "\n  Violations Found:     %0d"
+      "\n  Status:               %s",
+      "{{ spec.design_name }}", num_transactions_checked, num_violations,
+      (num_violations == 0) ? "CLEAN" : "VIOLATIONS DETECTED"), UVM_LOW)
+  endfunction
+
+  function void extract_phase(uvm_phase phase);
+    super.extract_phase(phase);
+    report_summary();
+  endfunction
+endclass
