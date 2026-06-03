@@ -87,6 +87,10 @@ class DesignSpec(BaseModel):
     protocol: str = Field(default="", pattern=r"^(uart|spi|i2c|axi4lite|apb|wishbone|)$")
     sequences: List[SequenceDef] = []
 
+# Pydantic v2 needs explicit rebuild when using `from __future__ import annotations`
+DesignSpec.model_rebuild()
+RegisterDef.model_rebuild()
+
 
 # ── Pipeline / Engine Config ─────────────────────────────────────────────────
 
