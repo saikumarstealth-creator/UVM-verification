@@ -242,38 +242,57 @@ const FileViewer: React.FC = () => {
         )
       }
 
-      const lines = fileContent.split('\n')
+      const rawLines = fileContent.split('\n')
+      const FILE_WARN_LINES = 3000
+      const FILE_MAX_LINES = 10000
+      const isLargeFile = rawLines.length > FILE_WARN_LINES
+      const lines = rawLines.slice(0, FILE_MAX_LINES)
+      const truncated = rawLines.length > FILE_MAX_LINES
 
     return (
-      <pre className="flex-1 overflow-auto text-[11px] font-mono leading-relaxed" style={{ scrollbarWidth: 'thin' }}>
-        <div className="flex">
-          <div className="select-none text-eda-text-tertiary/50 bg-eda-bg/50 pr-2 pl-3 py-3 text-right border-r border-eda-border/20 min-w-[40px] text-[10px]">
-            {lines.map((_, i) => {
-              const lineNum = i + 1
-              const isSearchMatch = searchResults.includes(lineNum)
-              const isCurrentMatch = searchResults.length > 0 && searchResults[currentSearchIdx] === lineNum
-              return (
-                <div key={i} className="leading-[1.6]"
-                  style={{ backgroundColor: isCurrentMatch ? '#58a6ff33' : isSearchMatch ? '#58a6ff15' : 'transparent' }}>{lineNum}</div>
-              )
-            })}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {truncated && (
+          <div className="px-3 py-1.5 text-[10px] bg-amber-900/20 text-amber-400 border-b border-amber-800/30">
+            File truncated — showing first {FILE_MAX_LINES} of {rawLines.length} lines
           </div>
-          <div className="flex-1 py-3 px-3 overflow-x-auto">
-            {lines.map((line, i) => {
-              const lineNum = i + 1
-              const isSearchMatch = searchResults.includes(lineNum)
-              const isCurrentMatch = searchResults.length > 0 && searchResults[currentSearchIdx] === lineNum
-              const tokens = tokenizeLine(line)
-              return (
-                <div key={i} className="leading-[1.6] whitespace-pre"
-                  style={{ backgroundColor: isCurrentMatch ? '#58a6ff33' : isSearchMatch ? '#58a6ff15' : 'transparent' }}>
-                  {tokens.map((t, j) => <span key={j} className={t.className}>{t.text}</span>)}
-                </div>
-              )
-            })}
+        )}
+        {isLargeFile && !truncated && (
+          <div className="px-3 py-1 text-[9px] bg-eda-bg-tertiary/40 text-eda-text-tertiary border-b border-eda-border/20">
+            Large file ({rawLines.length} lines) — syntax highlighting disabled to save memory
           </div>
-        </div>
-      </pre>
+        )}
+        <pre className="flex-1 overflow-auto text-[11px] font-mono leading-relaxed" style={{ scrollbarWidth: 'thin' }}>
+          <div className="flex">
+            <div className="select-none text-eda-text-tertiary/50 bg-eda-bg/50 pr-2 pl-3 py-3 text-right border-r border-eda-border/20 min-w-[40px] text-[10px]">
+              {lines.map((_, i) => {
+                const lineNum = i + 1
+                const isSearchMatch = searchResults.includes(lineNum)
+                const isCurrentMatch = searchResults.length > 0 && searchResults[currentSearchIdx] === lineNum
+                return (
+                  <div key={i} className="leading-[1.6]"
+                    style={{ backgroundColor: isCurrentMatch ? '#58a6ff33' : isSearchMatch ? '#58a6ff15' : 'transparent' }}>{lineNum}</div>
+                )
+              })}
+            </div>
+            <div className="flex-1 py-3 px-3 overflow-x-auto">
+              {lines.map((line, i) => {
+                const lineNum = i + 1
+                const isSearchMatch = searchResults.includes(lineNum)
+                const isCurrentMatch = searchResults.length > 0 && searchResults[currentSearchIdx] === lineNum
+                const tokens = isLargeFile
+                  ? [{ text: line, className: 'text-eda-text' }]
+                  : tokenizeLine(line)
+                return (
+                  <div key={i} className="leading-[1.6] whitespace-pre"
+                    style={{ backgroundColor: isCurrentMatch ? '#58a6ff33' : isSearchMatch ? '#58a6ff15' : 'transparent' }}>
+                    {tokens.map((t, j) => <span key={j} className={t.className}>{t.text}</span>)}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </pre>
+      </div>
     )
     } catch {
       return (
@@ -287,7 +306,8 @@ const FileViewer: React.FC = () => {
 
   const hasFiles = generatedFiles.length > 0
   const isComplete = (status === 'completed' || status === 'failed') && generatedFiles.length > 0
-  const totalLines = fileContent ? fileContent.split('\n').length : 0
+  const rawLineCount = fileContent ? fileContent.split('\n').length : 0
+  const displayLineCount = Math.min(rawLineCount, 10000)
 
   return (
     <div className="bg-eda-bg-secondary border border-eda-border rounded-lg overflow-hidden flex flex-col" style={{ height: '100%' }}>
@@ -303,7 +323,7 @@ const FileViewer: React.FC = () => {
           {selectedFile && fileContent && (
             <div className="flex items-center gap-1.5 text-[9px] text-eda-text-tertiary/60 mr-1">
               <Info className="w-2.5 h-2.5" />
-              <span>{totalLines} lines</span>
+              <span>{displayLineCount}{rawLineCount > 10000 ? '+' : ''} lines</span>
               <span className="opacity-50">|</span>
               <span>{fileContent.length} bytes</span>
             </div>
