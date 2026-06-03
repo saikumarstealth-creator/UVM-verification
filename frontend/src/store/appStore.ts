@@ -181,6 +181,8 @@ sequences:
   - { name: uart_error_injection, type: error, description: "Error injection test" }`
 }
 
+export const DEFAULT_SPEC_YAML = defaultConfig.spec_yaml
+
 const useAppStore = create<AppState>()(
   persist(
     (set) => ({

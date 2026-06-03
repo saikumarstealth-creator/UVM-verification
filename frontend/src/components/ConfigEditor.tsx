@@ -3,7 +3,7 @@ import {
   Settings2, FileText, Brain, Zap, Play, RotateCcw,
   AlertCircle, CheckCircle, Cpu, Layout, Layers, Hash, List
 } from 'lucide-react'
-import useAppStore, { SpecStats } from '../store/appStore'
+import useAppStore, { SpecStats, DEFAULT_SPEC_YAML } from '../store/appStore'
 
 interface ValidationError {
   type: 'error' | 'warning'
@@ -149,6 +149,10 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
     updateConfig({ spec_yaml: e.target.value })
   }
 
+  const loadSampleSpec = () => {
+    updateConfig({ spec_yaml: DEFAULT_SPEC_YAML, design_name: 'uart', protocol: 'uart' })
+  }
+
   const updateDesignNameFromPreset = (value: string) => {
     const newSpec = config.spec_yaml.replace(/design_name: .+/, `design_name: ${value}`)
     updateConfig({ design_name: value, protocol: PRESETS[value]?.protocol || value, spec_yaml: newSpec })
@@ -215,6 +219,10 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-[10px] font-medium text-eda-text-secondary">YAML Specification</label>
                 <div className="flex items-center gap-2">
+                  <button onClick={loadSampleSpec} disabled={isGenerating}
+                    className="text-[9px] text-eda-text-tertiary hover:text-eda-accent underline underline-offset-2 decoration-dotted transition-colors">
+                    Load Sample
+                  </button>
                   {isSpecValid ? (
                     <span className="flex items-center gap-0.5 text-[9px] text-eda-success">
                       <CheckCircle className="w-2.5 h-2.5" /> Valid
