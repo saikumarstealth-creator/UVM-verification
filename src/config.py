@@ -25,6 +25,8 @@ class FieldDef(BaseModel):
     name: str
     bits: str
     description: Optional[str] = None
+    access: Optional[str] = None
+    reset: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -167,6 +169,9 @@ class ConfigLoader:
         ext = Path(path).suffix.lower()
         if ext == ".core":
             raw = CoreParser().parse(Path(path).read_text(encoding="utf-8"))
+        elif ext == ".v":
+            from src.data.rtl_parser import RTLParser
+            raw = RTLParser().parse(Path(path).read_text(encoding="utf-8"))
         else:
             raw = self._read_yaml(path)
             raw = SpecPreprocessor().preprocess(raw)

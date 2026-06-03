@@ -1,0 +1,304 @@
+# UVM Generator GitLab CI/CD Pipeline
+# Triggered on pushes to main and merge requests
+
+stages:
+  - lint
+  - test
+  - generate
+  - regression
+  - schema
+  - pages
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  UVMGEN_LOG_LEVEL: "INFO"
+  PYTHONUTF8: "1"
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .pip-cache/
+    - .pytest_cache/
+
+# ==============================================================================
+# Lint Stage
+# ==============================================================================
+
+lint:ruff:
+  stage: lint
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet ruff yamllint
+  script:
+    - ruff check src/ backend/ regression/ --ignore=E501
+    - yamllint protocols/*.yaml regression/*.yaml --no-warnings
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+lint:mypy:
+  stage: lint
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet mypy pydantic pyyaml jinja2
+    - pip install --quiet types-PyYAML types-setuptools
+  script:
+    - mypy src/ --ignore-missing-imports --no-strict-optional --follow-imports=skip
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ==============================================================================
+# Test Stage — multi-python-version
+# ==============================================================================
+
+test:3.10:
+  stage: test
+  image: python:3.10-slim
+  before_script:
+    - pip install --quiet pytest pytest-cov
+    - pip install --quiet -e .
+  script:
+    - pytest tests/ -v --cov=src --cov-report=term --cov-report=html:coverage_html --junitxml=report.xml
+  artifacts:
+    reports:
+      junit: report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage_html/
+    paths:
+      - coverage_html/
+    expire_in: 30 days
+
+test:3.11:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pytest pytest-cov
+    - pip install --quiet -e .
+  script:
+    - pytest tests/ -v --cov=src --cov-report=term --junitxml=report.xml
+  artifacts:
+    reports:
+      junit: report.xml
+    expire_in: 30 days
+
+test:3.12:
+  stage: test
+  image: python:3.12-slim
+  before_script:
+    - pip install --quiet pytest pytest-cov
+    - pip install --quiet -e .
+  script:
+    - pytest tests/ -v --cov=src --cov-report=term --junitxml=report.xml
+  artifacts:
+    reports:
+      junit: report.xml
+    expire_in: 30 days
+
+# ==============================================================================
+# Generate Stage — smoke tests
+# ==============================================================================
+
+generate:yaml:
+  stage: generate
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pyyaml jinja2
+  script:
+    - python -c "
+import yaml
+from pathlib import Path
+from src.config import DesignSpec
+
+errors = []
+for spec_file in sorted(Path('protocols').glob('*.yaml')):
+    try:
+        raw = yaml.safe_load(spec_file.read_text())
+        spec = DesignSpec(**raw)
+        print(f'  OK: {spec_file.name} -> {spec.design_name} ({spec.protocol})')
+    except Exception as e:
+        errors.append(f'{spec_file.name}: {e}')
+        print(f'  FAIL: {spec_file.name}: {e}')
+if errors:
+    exit(1)
+"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+generate:rtl:
+  stage: generate
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pyyaml jinja2
+  script:
+    - python -c "
+from src.data.rtl_parser import RTLParser
+from pathlib import Path
+rtl_dir = Path('rtl_examples')
+if not rtl_dir.exists():
+    print('  SKIP: No rtl_examples directory')
+    exit(0)
+errors = []
+for rtl_file in sorted(rtl_dir.glob('*.v')):
+    try:
+        spec = RTLParser().parse(rtl_file.read_text())
+        regs = spec.get('registers', [])
+        ifaces = spec.get('interfaces', [{}])[0].get('signals', [])
+        print(f'  OK: {rtl_file.name} -> {spec[\"design_name\"]} ({spec.get(\"protocol\",\"?\")})')
+        print(f'       regs={len(regs)}, ports={len(ifaces)}')
+    except Exception as e:
+        errors.append(f'{rtl_file.name}: {e}')
+        print(f'  FAIL: {rtl_file.name}: {e}')
+if errors:
+    exit(1)
+"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ==============================================================================
+# Regression Stage
+# ==============================================================================
+
+regression:smoke:
+  stage: regression
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pyyaml jinja2
+  script:
+    - python -c "
+from src.pipeline import TBPipeline
+from src.config import PipelineConfig
+import tempfile, yaml
+
+spec = {
+    'design_name': 'regression_test',
+    'protocol': 'apb',
+    'interfaces': [{'name': 'bus', 'signals': [
+        {'name': 'clk', 'direction': 'input'},
+        {'name': 'rst_n', 'direction': 'input'},
+        {'name': 'psel', 'direction': 'input'},
+        {'name': 'penable', 'direction': 'input'},
+        {'name': 'paddr', 'direction': 'input', 'width': 3},
+        {'name': 'pwrite', 'direction': 'input'},
+        {'name': 'pwdata', 'direction': 'input', 'width': 8},
+        {'name': 'prdata', 'direction': 'output', 'width': 8},
+    ]}],
+    'registers': [
+        {'name': 'Control', 'address': '0x00', 'size': 8, 'access': 'rw'},
+        {'name': 'Status', 'address': '0x04', 'size': 8, 'access': 'ro'},
+    ],
+}
+with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    yaml.dump(spec, f)
+    spec_path = f.name
+
+pipeline = TBPipeline()
+result = pipeline.run(spec_path)
+print(f'  Files: {len(result[\"generated_files\"])}')
+print(f'  Passed: {result[\"passed\"]}')
+print(f'  Quality: {result.get(\"quality_score\", 0):.2f}')
+"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ==============================================================================
+# Schema Validation
+# ==============================================================================
+
+schema:validate:
+  stage: schema
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pyyaml pydantic
+  script:
+    - python -c "
+from src.config import DesignSpec
+import yaml
+from pathlib import Path
+
+errors = []
+for spec_file in sorted(Path('protocols').glob('*.yaml')):
+    try:
+        raw = yaml.safe_load(spec_file.read_text())
+        DesignSpec(**raw)
+    except Exception as e:
+        errors.append(f'{spec_file.name}: {e}')
+        print(f'  FAIL: {spec_file.name}: {e}')
+if errors:
+    print(f'  {len(errors)} spec(s) failed validation')
+    exit(1)
+else:
+    print(f'  All specs valid ({len(list(Path(\"protocols\").glob(\"*.yaml\")))} checked)')
+"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ==============================================================================
+# Pages — publish coverage dashboard
+# ==============================================================================
+
+pages:
+  stage: pages
+  image: python:3.11-slim
+  before_script:
+    - pip install --quiet pyyaml jinja2
+  script:
+    - mkdir -p public/
+    - python -c "
+import yaml
+from pathlib import Path
+
+html = '''<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+<meta charset=\"UTF-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+<title>UVM Generator — CI Dashboard</title>
+<style>
+  body { font-family: 'Courier New', monospace; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+  h1 { color: #58a6ff; border-bottom: 2px solid #30363d; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin: 12px 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }
+  th { background: #21262d; color: #58a6ff; }
+  .ok { color: #00d4aa; } .warn { color: #ffd93d; } .fail { color: #ff6b6b; }
+  .footer { margin-top: 30px; color: #484f58; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<h1>UVM Generator — CI Coverage Dashboard</h1>
+<div class=\"card\">
+<h2>Protocol Specifications</h2>
+<table><thead><tr><th>File</th><th>Design</th><th>Protocol</th><th>Registers</th><th>Signals</th></tr></thead><tbody>
+'''
+
+for spec_file in sorted(Path('protocols').glob('*.yaml')):
+    raw = yaml.safe_load(spec_file.read_text())
+    dn = raw.get('design_name', '?')
+    pr = raw.get('protocol', '?')
+    regs = len(raw.get('registers', []))
+    sigs = len(raw.get('interfaces', [{}])[0].get('signals', [])) if raw.get('interfaces') else 0
+    html += f'<tr><td>{spec_file.name}</td><td>{dn}</td><td>{pr}</td><td>{regs}</td><td>{sigs}</td></tr>'
+
+html += '''</tbody></table>
+</div>
+<div class=\"card\">
+<h2>Pipeline Status</h2>
+<p>Commit: <code>$CI_COMMIT_SHORT_SHA</code></p>
+<p>Branch: <code>$CI_COMMIT_BRANCH</code></p>
+<p>Status: <span class=\"ok\">PASSED</span></p>
+<p>User: $GITLAB_USER_NAME</p>
+</div>
+<div class=\"footer\">
+<p>Generated by UVM Generator CI — GitLab Pages &middot; Powered by AI + Templates + RL</p>
+</div>
+</body></html>'''
+Path('public/index.html').write_text(html, encoding='utf-8')
+print('Dashboard generated: public/index.html')
+"
+  artifacts:
+    paths:
+      - public/
+  only:
+    - main

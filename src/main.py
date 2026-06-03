@@ -18,12 +18,14 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   python -m src.main --spec configs/uart16550-1.5.core
   python -m src.main --spec configs/uart_demo.yaml --auto-train --max-iterations 10
-  python -m src.main --spec configs/uart_demo.yaml --simulator icarus
+  python -m src.main --spec configs/apb_slave.v --auto-train
+  python -m src.main --rtl rtl/apb_slave.v --simulator icarus
   python -m src.main --spec configs/uart_demo.yaml --pipeline-config configs/base_config.yaml --output-dir my_tbs
   python -m src.main --spec configs/uart_demo.yaml --eval-only
         """,
     )
-    parser.add_argument("--spec", required=True, help="Design spec YAML/.core/JSON path")
+    parser.add_argument("--spec", help="Design spec YAML/.core/.v path")
+    parser.add_argument("--rtl", help="Verilog RTL file (alternative to --spec, e.g. rtl/apb_slave.v)")
     parser.add_argument("--pipeline-config", default=None, help="Pipeline config YAML path")
     parser.add_argument("--output-dir", default=None, help="Override output directory")
     parser.add_argument("--eval-only", action="store_true", help="Only evaluate (no generation)")
@@ -41,8 +43,12 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    if not Path(args.spec).exists():
-        print(f"ERROR: Spec file not found: {args.spec}", file=sys.stderr)
+    spec_path = args.rtl if args.rtl else args.spec
+    if not spec_path:
+        print("ERROR: Either --spec or --rtl is required", file=sys.stderr)
+        sys.exit(1)
+    if not Path(spec_path).exists():
+        print(f"ERROR: File not found: {spec_path}", file=sys.stderr)
         sys.exit(1)
 
     pipeline = TBPipeline()
@@ -66,7 +72,7 @@ def main() -> None:
         from src.features.extractors import SpecFeatureExtractor
 
         loader = ConfigLoader()
-        spec, _ = loader.load(args.spec)
+        spec, _ = loader.load(spec_path)
         validator = SpecValidator()
         vr = validator.validate(spec)
         if not vr:
@@ -81,7 +87,7 @@ def main() -> None:
         return
 
     try:
-        result = pipeline.run(args.spec, args.pipeline_config)
+        result = pipeline.run(spec_path, args.pipeline_config)
     except Exception as e:
         print(f"Pipeline failed: {e}", file=sys.stderr)
         sys.exit(1)

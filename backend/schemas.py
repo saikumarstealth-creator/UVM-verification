@@ -31,7 +31,8 @@ class GenerationConfig(BaseModel):
     enable_learning: bool = True
     strict_uvm: bool = True
     max_iterations: int = 1
-    spec_yaml: str
+    spec_yaml: str = ""
+    rtl_content: Optional[str] = None
 
 
 class GenerationResponse(BaseModel):

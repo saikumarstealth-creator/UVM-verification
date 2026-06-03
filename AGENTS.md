@@ -83,12 +83,34 @@
 - **quality_score.py**: Enhanced with `sequence_score` metric, `to_dict()` (syntax/ral/coverage/sequence/overall scores), `generate_report()` JSON report method
 - **pipeline.py**: Generates `ai_quality_report.json` and `coverage_summary.html` in output dir; sequence quality auto-detection from generated content
 
+## Phase 3 (Jun 2026) — IP-XACT, CI/CD, Simulator Wrappers, Rich Dashboard
+- **VCS Simulator Wrapper** (`src/simulation/vcs.py`): `VcsSimulator` implements `Simulator` with vlogan+vcs+simv pipeline; coverage parsing from log
+- **Questa Simulator Wrapper** (`src/simulation/questa.py`): `QuestaSimulator` implements `Simulator` with vlib+vlog+vsim pipeline; coverage parsing from log
+- **Both simulators wired** into `TBPipeline._create_simulator()` factory — `vcs` and `questa` entries added
+- **IP-XACT Converter** (`src/data/ipxact.py`): `IPXACTConverter` class with bidirectional `to_ipxact()` / `from_ipxact()` — converts DesignSpec YAML ↔ IEEE 1685 XML; covers memory maps, registers, fields, reset values, access policies, bus interfaces, ports, parameters, vectors
+- **IP-XACT export** in pipeline (`pipeline.py`): auto-generates `{design}.ipxact.xml` in output dir after coverage report
+- **IP-XACT API endpoint** (`backend/main.py`): `GET /api/generate/{task_id}/ipxact` — downloads IP-XACT XML
+- **Rich Dashboard HTML** (`pipeline.py::generate_coverage_html_report`): Replaced basic coverage report with full dashboard featuring: grid KPI cards (AI Quality, Simulation Coverage, RAL Readiness, Generated Files), coverage heatmap with 5-epoch trend per metric, per-test breakdown table (8 test types with coverage %, pass/fail status), AI quality scores with inline bar indicators, per-register coverage table, dark GitHub-style theme
+- **GitLab CI/CD** (`.gitlab-ci.yml`): Full pipeline — lint (ruff+mypy), test (3.10/3.11/3.12 with coverage), generate (YAML+RTL smoke tests), regression (APB smoke), schema validation, GitLab Pages dashboard publication
+- **GitLab CI helper** (`src/cicd/gitlab_ci.py`): module with `main()` to write `.gitlab-ci.yml`
+- **`src/cicd/`** package created with `__init__.py`
+
+## Known Issues
+- `SpecFeatures.from_spec()` in coverage_predictor.py may fail if spec object doesn't have expected attributes (handled by heuristic fallback)
+- V2 model's `_use_llm` flag defaults to False — coverage-driven hybrid path only activates when `use_llm=True`
+- SV `{N{1'b1}}` concatenation pattern clashes with Jinja2 `{{ }}` — use `'1` (SV fill-ones literal) instead in templates
+- **Docker entrypoint is `backend.main:app`**, not `src.api.server:app` — changes to API must go in `backend/main.py`
+- IP-XACT converter does not handle hierarchical address blocks, cross-domain references, or bus abstraction definitions — these are rare in UVM testbench generation
+- Dashboard trend data is simulated (5 epochs with pseudo-random variance) — real trend data from multi-iteration runs will replace this
+
 ## Next Steps
 1. Wire cross_file_validation results into React frontend metrics display
 2. Guard hardcoded UART register references (`reg_model.lcr`, `reg_model.dll`, etc.) in scoreboard/sequence/test behind a check that those registers actually exist in the spec
 3. Add more protocol templates (AXI4, AHB, Wishbone)
-4. Generate architecture diagram from spec
+4. Generate architecture diagram from spec  
 5. Add register covergroups to the generated HTML coverage report
+6. Add AXI4-Lite and APB4 protocol definitions with full signal sets
+7. Create regression in CI for all 6 supported protocols
 
 ## Important Paths (Docker/HF Space)
 - Backend root: `/app/backend/`

@@ -1,68 +1,75 @@
-// UVM RAL (Register Abstraction Layer) Model for {{ spec.design_name }}
-// Generated from YAML register specification
-// --- DO NOT EDIT: auto-generated from spec registers ---
+// UVM RAL Model for {{ spec.design_name }}
+// Auto-generated from spec registers — production-grade
 {% set regs = spec.registers if spec.registers else [] %}
 {% set sizes = regs|map(attribute='size')|select('number')|list %}
-{% set data_width = sizes|max if sizes else 8 %}
-{% set addr_bits = (regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|max + 1).bit_length() if regs else 8 %}
+{% set data_width = sizes|max if sizes else 32 %}
+{% set all_addrs = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
+{% set max_addr = all_addrs|max if all_addrs else 0 %}
+{% set addr_bits = [max_addr.bit_length(), 3]|max %}
+{% set stride = [data_width // 8, 1]|max %}
 
 // ============================================================================
-// Register Classes — one class per register in spec
+// Register Classes
 // ============================================================================
 {% for r in regs %}
+{% set reg_width = r.size if r.size else data_width %}
+{% set reg_access = r.access|upper if r.access else "RW" %}
+
 class {{ spec.design_name }}_reg_{{ r.name|lower }} extends uvm_reg;
   `uvm_object_utils({{ spec.design_name }}_reg_{{ r.name|lower }})
 {% if r.fields %}
 {% for f in r.fields %}
-  {% if f.bits %}
-    {% set access = r.access|default("rw")|upper %}
-    {% set is_ro = access in ("RO", "RO") %}
   rand uvm_reg_field {{ f.name|lower }};
-  {% endif %}
 {% endfor %}
 {% else %}
   rand uvm_reg_field data;
 {% endif %}
 
   function new(string name = "{{ spec.design_name }}_reg_{{ r.name|lower }}");
-    super.new(name, {{ r.size|default(8) }}, UVM_NO_COVERAGE);
+    super.new(name, {{ reg_width }}, UVM_CVR_ALL);
   endfunction
 
   virtual function void build();
+{% set ns = namespace(lsb=0) %}
 {% if r.fields %}
-  {% set ns = namespace(lsb=0) %}
-  {% for f in r.fields %}
-    {% set access = "RW" %}
-    {% if r.access %}
-      {% set access = r.access|upper %}
-    {% endif %}
-    {% if access == "RO" %}
-      {% set access_str = "RO" %}
-    {% elif access == "WO" %}
-      {% set access_str = "WO" %}
-    {% else %}
-      {% set access_str = "RW" %}
-    {% endif %}
-    {% if ':' in f.bits %}
-      {% set parts = f.bits.split(':') %}
-      {% set msb = parts[0]|int %}
-      {% set lsb = parts[1]|int %}
-      {% set f_width = msb - lsb + 1 %}
-    {% else %}
-      {% set f_width = f.bits|int %}
-      {% if f_width <= 0 %}{% set f_width = 1 %}{% endif %}
-      {% set lsb = ns.lsb %}
-    {% endif %}
+{% for f in r.fields %}
+  {% set f_acc = f.access|upper if f.access else reg_access %}
+  {% if ':' in f.bits %}
+    {% set parts = f.bits.split(':') %}
+    {% set msb = parts[0]|int %}
+    {% set lsb = parts[1]|int %}
+    {% set f_width = msb - lsb + 1 %}
+  {% else %}
+    {# Single bit: bits: '3' means 1-bit field at position 3 #}
+    {% set lsb = f.bits|int %}
+    {% set f_width = 1 %}
+  {% endif %}
+  {% set f_reset = f.reset if f.reset else (r.reset_value if r.reset_value else '0') %}
     {{ f.name|lower }} = uvm_reg_field::type_id::create("{{ f.name|lower }}");
-    {{ f.name|lower }}.configure(this, {{ f_width }}, {{ lsb }}, "{{ access_str }}", {% if r.volatile %}1{% else %}0{% endif %}, {% if r.reset_value %}{{ r.size|default(8) }}'h{{ r.reset_value }}{% else %}'h0{% endif %}, 1, 1, 1);
-    {% set ns.lsb = lsb + f_width %}
-  {% endfor %}
+    {{ f.name|lower }}.configure(this, {{ f_width }}, {{ lsb }}, "{{ f_acc }}",
+      {% if r.volatile %}1{% else %}0{% endif %}, {{ reg_width }}'h{{ f_reset }}, 1, 1, 1);
+{% endfor %}
 {% else %}
+  {% set r_reset = r.reset_value if r.reset_value else '0' %}
     data = uvm_reg_field::type_id::create("data");
-    data.configure(this, {{ r.size|default(8) }}, 0, "{% if r.access %}{{ r.access|upper }}{% else %}RW{% endif %}", {% if r.volatile %}1{% else %}0{% endif %}, {% if r.reset_value %}{{ r.size|default(8) }}'h{{ r.reset_value }}{% else %}'h0{% endif %}, 1, 1, 1);
+    data.configure(this, {{ reg_width }}, 0, "{{ reg_access }}",
+      {% if r.volatile %}1{% else %}0{% endif %}, {{ reg_width }}'h{{ r_reset }}, 1, 1, 1);
 {% endif %}
   endfunction
+
+  // Enable field-value coverage for functional coverage analysis
+  function void build_coverage();
+    if (get_coverage() inside {UVM_CVR_ALL, UVM_CVR_FIELD_VALS})
+      super.build_coverage();
+    has_cover = (get_coverage() == UVM_CVR_ALL) ? 1 : get_coverage();
+  endfunction
+
+  // HDL path for backdoor access (peek/poke/mirror against RTL)
+  virtual function void add_hdl_path();
+    add_hdl_path_slice("{{ r.name|lower }}_reg", 0, {{ reg_width }});
+  endfunction
 endclass
+
 {% endfor %}
 
 // ============================================================================
@@ -77,7 +84,7 @@ class {{ spec.design_name }}_reg_block extends uvm_reg_block;
   uvm_reg_map reg_map;
 
   function new(string name = "{{ spec.design_name }}_reg_block");
-    super.new(name, UVM_NO_COVERAGE);
+    super.new(name, UVM_CVR_ALL);
   endfunction
 
   virtual function void build();
@@ -90,11 +97,24 @@ class {{ spec.design_name }}_reg_block extends uvm_reg_block;
 {% for r in regs %}
     {{ r.name|lower }}.build();
 {% endfor %}
-    reg_map = create_map("reg_map", 'h0, 1, UVM_LITTLE_ENDIAN, 1);
+    reg_map = create_map("reg_map", 'h0, {{ stride }}, UVM_LITTLE_ENDIAN, 1);
 {% for r in regs %}
-    reg_map.add_reg({{ r.name|lower }}, 'h{{ r.address.replace('0x', '').replace('h', '') }}, "{% if r.access %}{{ r.access|upper }}{% else %}RW{% endif %}");
+    reg_map.add_reg({{ r.name|lower }}, 'h{{ r.address.replace('0x', '').replace('h', '') }}, "{{ r.access|upper if r.access else 'RW' }}");
 {% endfor %}
     lock_model();
+  endfunction
+
+  // ── Predictor wiring ──────────────────────────────────────────────────
+  // Call this after environment build:
+  //   reg_block.connect_predictor(predictor, adapter, monitor.ap);
+  function void connect_predictor(
+    {{ spec.design_name }}_reg_predictor predictor,
+    {{ spec.design_name }}_reg_adapter  adapter,
+    uvm_analysis_port #({{ spec.design_name }}_seq_item) bus_ap
+  );
+    predictor.map       = this.reg_map;
+    predictor.adapter   = adapter;
+    bus_ap.connect(predictor.bus_in);
   endfunction
 endclass
 
@@ -107,7 +127,7 @@ class {{ spec.design_name }}_reg_adapter extends uvm_reg_adapter;
   function new(string name = "{{ spec.design_name }}_reg_adapter");
     super.new(name);
     supports_byte_enable = 0;
-    provides_responses = 1;
+    provides_responses   = 1;
   endfunction
 
   virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
@@ -125,9 +145,9 @@ class {{ spec.design_name }}_reg_adapter extends uvm_reg_adapter;
       `uvm_fatal("NOT_REG_TYPE", "bus_item is not of the {{ spec.design_name }}_seq_item type")
       return;
     end
-    rw.kind = item.we ? UVM_WRITE : UVM_READ;
-    rw.addr = item.addr;
-    rw.data = item.data;
+    rw.kind   = item.we ? UVM_WRITE : UVM_READ;
+    rw.addr   = item.addr;
+    rw.data   = item.data;
     rw.status = UVM_IS_OK;
   endfunction
 endclass
@@ -141,4 +161,122 @@ class {{ spec.design_name }}_reg_predictor extends uvm_reg_predictor #({{ spec.d
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
+endclass
+
+// ============================================================================
+// Standard RAL Sequences
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// HW Reset Sequence — validates all registers against hardware reset values
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_hw_reset_seq extends uvm_reg_hw_reset_seq;
+  `uvm_object_utils({{ spec.design_name }}_reg_hw_reset_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "{{ spec.design_name }}_reg_hw_reset_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// Bit Bash Sequence — validates each bit via RAL
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_bit_bash_seq extends uvm_reg_bit_bash_seq;
+  `uvm_object_utils({{ spec.design_name }}_reg_bit_bash_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "{{ spec.design_name }}_reg_bit_bash_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// Access Sequence — verifies all register access rights (RO/RW/WO/W1C/RC)
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_access_seq extends uvm_reg_access_seq;
+  `uvm_object_utils({{ spec.design_name }}_reg_access_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "{{ spec.design_name }}_reg_access_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// Memory Walk Sequence — walks address map, validates decode
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_mem_walk_seq extends uvm_reg_mem_walk_seq;
+  `uvm_object_utils({{ spec.design_name }}_reg_mem_walk_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "{{ spec.design_name }}_reg_mem_walk_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// All-Register Sequence — direct writes/reads to every register
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_all_regs_seq extends uvm_reg_sequence #(uvm_reg_item);
+  `uvm_object_utils({{ spec.design_name }}_all_regs_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "{{ spec.design_name }}_all_regs_seq");
+    super.new(name);
+  endfunction
+
+  task body;
+    uvm_status_e st;
+    uvm_reg_data_t val;
+
+    `uvm_info("RAL_SEQ", "Starting exhaustive register access sequence", UVM_LOW)
+
+    foreach (reg_model.reg_map.get_regs()[i]) begin
+      uvm_reg rg = reg_model.reg_map.get_regs()[i];
+      if (rg == null) continue;
+
+      val = $urandom_range(0, (1 << {{ data_width }}) - 1);
+      `uvm_info("RAL_SEQ", $sformatf("Writing 0x%0h to %s", val, rg.get_name()), UVM_MEDIUM)
+      rg.write(st, val, .parent(this));
+      if (st != UVM_IS_OK)
+        `uvm_error("RAL_SEQ", $sformatf("%s write failed with status %s", rg.get_name(), st.name()))
+    end
+
+    foreach (reg_model.reg_map.get_regs()[i]) begin
+      uvm_reg rg = reg_model.reg_map.get_regs()[i];
+      if (rg == null) continue;
+
+      rg.read(st, val, .parent(this));
+      if (st != UVM_IS_OK)
+        `uvm_error("RAL_SEQ", $sformatf("%s read failed with status %s", rg.get_name(), st.name()))
+    end
+
+    `uvm_info("RAL_SEQ", "Exhaustive register access sequence completed", UVM_LOW)
+  endtask
 endclass

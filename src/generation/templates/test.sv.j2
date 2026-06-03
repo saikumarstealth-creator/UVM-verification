@@ -407,6 +407,146 @@ class uart_regression_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
+{% elif p == "apb" %}
+
+// =========================================================================
+//  APB Tests
+// =========================================================================
+
+class {{ spec.design_name }}_apb_config_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_apb_config_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_apb_config_seq cfg_seq;
+
+    `uvm_info("APB_CFG_TEST", "Configuring APB slave parameters", UVM_LOW)
+    cfg_seq = {{ spec.design_name }}_apb_config_seq::type_id::create("cfg_seq");
+    if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.wait_states = 2;
+    cfg_seq.inject_slave_err = 0;
+    run_sequence_with_timeout(cfg_seq, 10ms);
+
+    `uvm_info("APB_CFG_TEST", "Config test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_apb_write_read_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_apb_write_read_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_apb_write_read_seq wr_seq;
+
+    `uvm_info("APB_WR_TEST", "Starting write-read test", UVM_LOW)
+    wr_seq = {{ spec.design_name }}_apb_write_read_seq::type_id::create("wr_seq");
+    if (wr_seq == null) `uvm_fatal("SEQ", "Failed to create wr_seq")
+    wr_seq.reg_model = reg_model;
+    wr_seq.target_reg = 0;
+    wr_seq.write_data = 8'hA5;
+    run_sequence_with_timeout(wr_seq, 10ms);
+
+    wr_seq = {{ spec.design_name }}_apb_write_read_seq::type_id::create("wr_seq_2");
+    wr_seq.reg_model = reg_model;
+    wr_seq.target_reg = 1;
+    wr_seq.write_data = 8'h5A;
+    run_sequence_with_timeout(wr_seq, 10ms);
+
+    `uvm_info("APB_WR_TEST", "Write-read test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_apb_error_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_apb_error_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_apb_error_seq err_seq;
+
+    `uvm_info("APB_ERR_TEST", "Starting error injection test", UVM_LOW)
+    err_seq = {{ spec.design_name }}_apb_error_seq::type_id::create("err_seq");
+    if (err_seq == null) `uvm_fatal("SEQ", "Failed to create err_seq")
+    err_seq.reg_model = reg_model;
+    err_seq.num_errors = 5;
+    run_sequence_with_timeout(err_seq, 10ms);
+
+    `uvm_info("APB_ERR_TEST", "Error test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_apb_back2back_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_apb_back2back_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_apb_back2back_seq b2b_seq;
+
+    `uvm_info("APB_B2B_TEST", "Starting back-to-back stress test", UVM_LOW)
+    b2b_seq = {{ spec.design_name }}_apb_back2back_seq::type_id::create("b2b_seq");
+    if (b2b_seq == null) `uvm_fatal("SEQ", "Failed to create b2b_seq")
+    b2b_seq.reg_model = reg_model;
+    b2b_seq.burst_count = 32;
+    run_sequence_with_timeout(b2b_seq, 10ms);
+
+    `uvm_info("APB_B2B_TEST", "Back-to-back test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_apb_virtual_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_apb_virtual_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_apb_virtual_seq vseq;
+
+    `uvm_info("APB_VSEQ_TEST", "Starting APB virtual sequence test", UVM_LOW)
+    vseq = {{ spec.design_name }}_apb_virtual_seq::type_id::create("vseq");
+    if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
+    vseq.reg_model = reg_model;
+    if (env.sb != null) vseq.sb_handle = env.sb;
+    run_sequence_with_timeout(vseq, 10ms);
+
+    `uvm_info("APB_VSEQ_TEST", "APB virtual sequence test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_apb_regression_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_apb_regression_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_apb_virtual_seq vseq;
+
+    `uvm_info("APB_REGRESS", "Starting APB full regression via virtual sequence", UVM_LOW)
+    vseq = {{ spec.design_name }}_apb_virtual_seq::type_id::create("vseq");
+    if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
+    vseq.reg_model = reg_model;
+    if (env.sb != null) vseq.sb_handle = env.sb;
+    run_sequence_with_timeout(vseq, 100ms);
+
+    `uvm_info("APB_REGRESS", "APB regression completed", UVM_LOW)
+  endtask
+endclass
+
 {% else %}
 
 class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base_test;

@@ -101,21 +101,33 @@ class PipelineManager:
             pipeline.update_step(PipelineStep.SPEC_PARSE, 10, "Parsing specification...")
             await asyncio.sleep(0.1)
             
-            # Write spec to temp file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False, encoding='utf-8') as f:
-                f.write(cfg.spec_yaml)
+            # Determine input type: RTL or YAML spec
+            if cfg.rtl_content:
+                suffix = '.v'
+                content = cfg.rtl_content
+                input_type = "Verilog RTL"
+            else:
+                suffix = '.yaml'
+                content = cfg.spec_yaml
+                input_type = "YAML specification"
+            
+            with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False, encoding='utf-8') as f:
+                f.write(content)
                 spec_path = f.name
             
-            pipeline.update_step(PipelineStep.SPEC_PARSE, 20, "Specification parsed successfully")
+            pipeline.update_step(PipelineStep.SPEC_PARSE, 20, f"{input_type} parsed successfully")
             pipeline.complete_step(PipelineStep.SPEC_PARSE)
             await asyncio.sleep(0.1)
             
             # Step 2: Feature Extract
             pipeline.update_step(PipelineStep.FEATURE_EXTRACT, 25, "Extracting features...")
             
-            spec_dict = yaml.safe_load(cfg.spec_yaml)
-            num_interfaces = len(spec_dict.get('interfaces', []))
-            num_registers = len(spec_dict.get('registers', []))
+            num_interfaces = 0
+            num_registers = 0
+            if not cfg.rtl_content:
+                spec_dict = yaml.safe_load(cfg.spec_yaml)
+                num_interfaces = len(spec_dict.get('interfaces', []))
+                num_registers = len(spec_dict.get('registers', []))
             
             pipeline.update_step(PipelineStep.FEATURE_EXTRACT, 35, 
                 f"Found {num_interfaces} interfaces, {num_registers} registers")

@@ -266,6 +266,34 @@ async def download_all_files(task_id: str):
     )
 
 
+@app.get("/api/generate/{task_id}/ipxact")
+async def download_ipxact(task_id: str):
+    """Download IP-XACT XML for a completed pipeline."""
+    pipeline = pipeline_manager.get_pipeline(task_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail=f"Pipeline {task_id} not found")
+    try:
+        from src.data.ipxact import IPXACTConverter
+        import yaml
+        spec_dict = {
+            "design_name": pipeline.config.design_name,
+            "protocol": pipeline.config.protocol,
+            "interfaces": [s.model_dump() for s in (pipeline.config.interfaces or [])] if hasattr(pipeline.config, "interfaces") else [],
+            "registers": [r.model_dump() for r in (pipeline.config.registers or [])] if hasattr(pipeline.config, "registers") else [],
+            "parameters": {},
+        }
+        xml_out = IPXACTConverter.to_ipxact(spec_dict)
+        return Response(
+            content=xml_out,
+            media_type="application/xml",
+            headers={
+                "Content-Disposition": f"attachment; filename={pipeline.config.design_name}.ipxact.xml"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"IP-XACT export failed: {e}")
+
+
 @app.get("/api/pipelines")
 async def list_pipelines():
     """List all pipelines"""

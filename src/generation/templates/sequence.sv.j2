@@ -1141,6 +1141,263 @@ endclass
 
 {% endif %}
 
+{% if p == "apb" %}
+
+// =========================================================================
+//  APB Sequences
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// APB Config Sequence — configures slave wait states and error parameters
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_config_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_config_seq)
+
+  rand int wait_states;
+  rand bit  inject_slave_err;
+
+  constraint c_apb_cfg {
+    wait_states inside {[0:15]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_apb_config_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] cfg_val;
+    cfg_val = {4'b0, inject_slave_err, 3'b0, wait_states[2:0]};
+    `uvm_info("APB_CFG", $sformatf(
+      "Configuring slave: wait_states=%0d, slave_err=%0d, cfg_val=0x%02h",
+      wait_states, inject_slave_err, cfg_val), UVM_LOW)
+    write_reg(0, cfg_val);
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// APB Write-Read Sequence — writes data to register, reads back, compares
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_write_read_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_write_read_seq)
+
+  rand logic [2:0] target_reg;
+  rand logic [7:0] write_data;
+  int              match_count;
+  int              mismatch_count;
+
+  constraint c_apb_wr {
+    target_reg inside {[0:{{ max_addr_val }}]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_apb_write_read_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] readback;
+
+    `uvm_info("APB_WR", $sformatf("Writing 0x%02h to reg %0d", write_data, target_reg), UVM_LOW)
+    write_reg(target_reg, write_data);
+    #10;
+    read_reg(target_reg, readback);
+    `uvm_info("APB_WR", $sformatf("Readback: 0x%02h (expected 0x%02h)", readback, write_data), UVM_LOW)
+
+    if (readback == write_data) begin
+      match_count++;
+      `uvm_info("APB_WR", "MATCH", UVM_MEDIUM)
+    end else begin
+      mismatch_count++;
+      `uvm_error("APB_WR", $sformatf("MISMATCH: wrote 0x%02h, read 0x%02h", write_data, readback))
+    end
+
+    if (sb_handle != null) begin
+      sb_handle.record_tx(target_reg, write_data);
+    end
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// APB Error Sequence — tests PSLVERR response and protocol error recovery
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_error_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_error_seq)
+
+  rand int num_errors;
+  int    errors_detected;
+  int    errors_recovered;
+
+  constraint c_apb_err {
+    num_errors inside {[1:5]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_apb_error_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] val;
+
+    `uvm_info("APB_ERR", $sformatf("Starting error injection: %0d transactions", num_errors), UVM_LOW)
+
+    // 1. Configure slave to inject error responses
+    write_reg(0, 8'b0000_1000);
+
+    for (int i = 0; i < num_errors; i++) begin
+      {{ spec.design_name }}_seq_item err_req;
+      err_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("err_req_%0d", i));
+
+      start_item(err_req);
+      if (!err_req.randomize() with {
+        we == 1;
+        addr == {{ max_addr_val }};
+        data == 8'hA5;
+        delay inside {[0:3]};
+      }) `uvm_fatal("RAND", "APB error req randomization failed")
+      finish_item(err_req);
+
+      read_reg({{ max_addr_val }}, val);
+      if (val !== 8'hA5) begin
+        errors_detected++;
+        `uvm_info("APB_ERR", $sformatf("Error response on transaction %0d", i), UVM_MEDIUM)
+      end
+    end
+
+    // 3. Disable error injection and verify recovery
+    write_reg(0, 8'h00);
+    write_reg(0, 8'h55);
+    read_reg(0, val);
+    if (val == 8'h55) begin
+      errors_recovered = 1;
+      `uvm_info("APB_ERR", "Recovery verified: slave functional after error", UVM_LOW)
+    end else begin
+      `uvm_error("APB_ERR", "Recovery failed: slave not responding after errors")
+    end
+
+    `uvm_info("APB_ERR", $sformatf(
+      "\n  === APB Error Injection Report ==="
+      "\n  Transactions:  %0d"
+      "\n  Errors Seen:   %0d"
+      "\n  Recovered:     %0s",
+      num_errors, errors_detected, errors_recovered ? "YES" : "NO"
+    ), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// APB Back-to-Back Sequence — stress test with consecutive transactions
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_back2back_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_back2back_seq)
+
+  rand int burst_count;
+  int    completed;
+
+  constraint c_apb_b2b {
+    burst_count inside {[4:32]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_apb_back2back_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] patterns[];
+    logic [7:0] readback;
+
+    patterns = new[burst_count];
+    `uvm_info("APB_B2B", $sformatf("Starting back-to-back burst: %0d transactions", burst_count), UVM_LOW)
+
+    for (int i = 0; i < burst_count; i++) begin
+      patterns[i] = $urandom_range(0, 255);
+      write_reg(i % {{ max_addr_val + 1 }}, patterns[i]);
+      completed++;
+    end
+
+    for (int i = 0; i < burst_count; i++) begin
+      read_reg(i % {{ max_addr_val + 1 }}, readback);
+      if (readback !== patterns[i]) begin
+        `uvm_error("APB_B2B", $sformatf(
+          "Mismatch at index %0d: wrote 0x%02h, read 0x%02h", i, patterns[i], readback))
+      end
+    end
+
+    `uvm_info("APB_B2B", $sformatf(
+      "Burst complete: %0d write/read pairs, no further errors", completed), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// APB Virtual Sequence — orchestrates multiple APB sequences
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_virtual_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_virtual_seq)
+
+  function new(string n = "{{ spec.design_name }}_apb_virtual_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    {{ spec.design_name }}_apb_config_seq      cfg_seq;
+    {{ spec.design_name }}_apb_write_read_seq  wr_seq;
+    {{ spec.design_name }}_apb_error_seq       err_seq;
+    {{ spec.design_name }}_apb_back2back_seq   b2b_seq;
+
+    `uvm_info("APB_VSEQ", "Starting APB virtual sequence", UVM_LOW)
+
+    // 1. Configure slave
+    cfg_seq = {{ spec.design_name }}_apb_config_seq::type_id::create("cfg_seq");
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.wait_states = 2;
+    cfg_seq.inject_slave_err = 0;
+    cfg_seq.start(m_sequencer);
+
+    // 2. Write-read test
+    wr_seq = {{ spec.design_name }}_apb_write_read_seq::type_id::create("wr_seq");
+    wr_seq.reg_model = reg_model;
+    wr_seq.target_reg = 0;
+    wr_seq.write_data = 8'hA5;
+    wr_seq.start(m_sequencer);
+
+    // 3. Error injection test
+    err_seq = {{ spec.design_name }}_apb_error_seq::type_id::create("err_seq");
+    err_seq.reg_model = reg_model;
+    err_seq.num_errors = 3;
+    err_seq.start(m_sequencer);
+
+    // 4. Back-to-back stress test
+    b2b_seq = {{ spec.design_name }}_apb_back2back_seq::type_id::create("b2b_seq");
+    b2b_seq.reg_model = reg_model;
+    b2b_seq.burst_count = 16;
+    b2b_seq.start(m_sequencer);
+
+    `uvm_info("APB_VSEQ", "APB virtual sequence completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+//  APB Sequence Library — for regression automation
+// =========================================================================
+class {{ spec.design_name }}_apb_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_apb_seq_lib)
+  `uvm_sequence_library_utils({{ spec.design_name }}_apb_seq_lib)
+
+  static function void add_sequences();
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_config_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_write_read_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_error_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_back2back_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_virtual_seq::get_type());
+  endfunction
+
+  function new(string name = "{{ spec.design_name }}_apb_seq_lib");
+    super.new(name);
+    init_sequence_library();
+    add_sequences();
+  endfunction
+endclass
+
+{% endif %}
+
 {% if p == "axi4lite" %}
 class {{ spec.design_name }}_axi_burst_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_axi_burst_seq)
