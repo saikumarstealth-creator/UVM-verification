@@ -1,5 +1,5 @@
 // Enhanced UVM Scoreboard for {{ spec.design_name }}
-// Features: shadow register model, UART loopback checking, data integrity, coverage tracking
+// Features: shadow register model, loopback checking, data integrity, coverage tracking
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set num_regs = regs|length %}
@@ -324,6 +324,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     reg_prune_limit[addr] = limit;
   endfunction
 
+{% if p == "uart" %}
   protected function void track_uart_config(logic [7:0] lcr_val, logic [7:0] old_val);
     last_lcr_val = lcr_val;
 
@@ -375,6 +376,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     if (divisor == 0) return 115200;
     return 100_000_000 / (16 * divisor);
   endfunction
+{% endif %}
 
   protected function void detect_burst(transaction_t tr);
     int burst_start_addr;

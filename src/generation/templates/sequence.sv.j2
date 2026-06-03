@@ -1,5 +1,5 @@
 // Enhanced UVM Sequences for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
-// Includes: RAL-based sequences, UART TX/RX, baud config, interrupt tests
+// Includes: RAL-based sequences, register access, protocol-specific tests
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set num_regs = regs|length %}
@@ -41,11 +41,8 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
 
   // ---------------------------------------------------------------
   // Helper: Write to a register by address
-  // IEEE 16550 DLAB handling:
-  //   LCR[7]=1 → addr 0x00→DLL, 0x01→DLH
-  //   LCR[7]=0 → addr 0x00→THR, 0x01→IER
   // ---------------------------------------------------------------
-  protected task uart_write_reg(logic [2:0] addr, logic [7:0] data);
+  protected task write_reg(logic [2:0] addr, logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
 {% if p == "uart" %}
@@ -79,7 +76,7 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
       start_item(req_h);
       if (!req_h.randomize() with { we == 1; addr == local::addr; data == local::data; delay == 0; })
-        `uvm_fatal("RAND", "uart_write_reg req_h randomization failed")
+        `uvm_fatal("RAND", "write_reg req_h randomization failed")
       finish_item(req_h);
       get_response(rsp);
     end
@@ -88,11 +85,8 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
 
   // ---------------------------------------------------------------
   // Helper: Read from a register by address
-  // IEEE 16550 DLAB handling:
-  //   LCR[7]=1 → addr 0x00→DLL, 0x01→DLH
-  //   LCR[7]=0 → addr 0x00→RBR, 0x01→IER
   // ---------------------------------------------------------------
-  protected task uart_read_reg(logic [2:0] addr, output logic [7:0] data);
+  protected task read_reg(logic [2:0] addr, output logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
 {% if p == "uart" %}
@@ -126,7 +120,7 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
       start_item(req_h);
       if (!req_h.randomize() with { we == 0; addr == local::addr; delay == 0; })
-        `uvm_fatal("RAND", "uart_read_reg req_h randomization failed")
+        `uvm_fatal("RAND", "read_reg req_h randomization failed")
       finish_item(req_h);
       get_response(rsp);
       data = rsp.data;
@@ -159,7 +153,7 @@ class {{ spec.design_name }}_write_reg_seq extends {{ spec.design_name }}_base_s
   endfunction
 
   task body;
-    uart_write_reg(reg_addr, write_data);
+    write_reg(reg_addr, write_data);
     `uvm_info("SEQ", $sformatf("Write reg[0x%0h] = 0x%0h", reg_addr, write_data), UVM_MEDIUM)
   endtask
 endclass
@@ -180,7 +174,7 @@ class {{ spec.design_name }}_read_reg_seq extends {{ spec.design_name }}_base_se
   endfunction
 
   task body;
-    uart_read_reg(reg_addr, read_data);
+    read_reg(reg_addr, read_data);
     `uvm_info("SEQ", $sformatf("Read reg[0x%0h] => 0x%0h", reg_addr, read_data), UVM_MEDIUM)
   endtask
 endclass
@@ -219,8 +213,8 @@ endclass
 // ---------------------------------------------------------------------------
 // Random Registers Sequence
 // ---------------------------------------------------------------------------
-class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
-  `uvm_object_utils(uart_random_regs_seq)
+class {{ spec.design_name }}_random_regs_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_random_regs_seq)
 
   rand logic [{{ data_width-1 }}:0] write_data[{{ num_regs }}];
   rand bit         pattern_type;
@@ -237,7 +231,7 @@ class uart_random_regs_seq extends {{ spec.design_name }}_base_seq;
     }
   }
 
-  function new(string n = "uart_random_regs_seq");
+  function new(string n = "{{ spec.design_name }}_random_regs_seq");
     super.new(n);
     pattern_type = 1;
   endfunction
@@ -314,11 +308,11 @@ class uart_config_seq extends {{ spec.design_name }}_base_seq;
     `uvm_info("UART_CFG", $sformatf("Configuring: Baud=%0d, Data bits=%0d, Stop bits=%0d, Parity=%0d",
               baud_rate, data_bits, stop_bits, parity_en), UVM_MEDIUM)
 
-    uart_write_reg(3'h3, lcr_val);
-    uart_write_reg(3'h0, divisor[7:0]);
-    uart_write_reg(3'h1, divisor[15:8]);
+    write_reg(3'h3, lcr_val);
+    write_reg(3'h0, divisor[7:0]);
+    write_reg(3'h1, divisor[15:8]);
     lcr_val[7] = 1'b0;
-    uart_write_reg(3'h3, lcr_val);
+    write_reg(3'h3, lcr_val);
     if (sb_handle != null) sb_handle.record_config(baud_rate, data_bits, stop_bits, parity_en, even_parity);
   endtask
 
@@ -368,7 +362,7 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
     for (int i = 0; i < num_bytes; i++) begin
       wait_for_tx_empty();
 
-      uart_write_reg(3'h0, tx_data[i]);
+      write_reg(3'h0, tx_data[i]);
       if (sb_handle != null) sb_handle.record_tx(3'h0, tx_data[i]);
       `uvm_info("UART_TX", $sformatf("Wrote byte: 0x%02h (%c)", tx_data[i], tx_data[i]), UVM_HIGH)
     end
@@ -379,7 +373,7 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
   task wait_for_tx_empty(int timeout = 100000);
     logic [7:0] lsr_data;
     repeat (timeout) begin
-      uart_read_reg(3'h5, lsr_data);
+      read_reg(3'h5, lsr_data);
       if (lsr_data[5]) begin
         return;
       end
@@ -410,11 +404,11 @@ class uart_rx_seq extends {{ spec.design_name }}_base_seq;
     `uvm_info("UART_RX", $sformatf("Waiting for %0d RX bytes", expected_bytes), UVM_MEDIUM)
 
     while (rx_data.size() < expected_bytes && timeout_cnt < timeout_cycles) begin
-      uart_read_reg(3'h5, lsr_val);
+      read_reg(3'h5, lsr_val);
 
       if (lsr_val[0]) begin
         logic [7:0] data;
-        uart_read_reg(3'h0, data);
+        read_reg(3'h0, data);
         rx_data.push_back(data);
         if (sb_handle != null) sb_handle.record_rx(3'h0, data);
         `uvm_info("UART_RX", $sformatf("Received byte: 0x%02h", data), UVM_HIGH)
@@ -454,16 +448,16 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
 
     `uvm_info("UART_LB", "Starting loopback test", UVM_MEDIUM)
 
-    uart_read_reg(3'h4, mcr_val);
+    read_reg(3'h4, mcr_val);
     mcr_val[4] = 1'b1;
-    uart_write_reg(3'h4, mcr_val);
+    write_reg(3'h4, mcr_val);
     `uvm_info("UART_LB", "Loopback enabled (MCR[4]=1)", UVM_MEDIUM)
 
     foreach (test_data[i]) begin
       logic [7:0] rx_byte;
       bit received;
 
-      uart_write_reg(3'h0, test_data[i]);
+      write_reg(3'h0, test_data[i]);
       `uvm_info("UART_LB", $sformatf("TX[%0d] = 0x%02h", i, test_data[i]), UVM_MEDIUM)
 
       uart_wait_for_rx(rx_byte, received);
@@ -491,7 +485,7 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
     end
 
     mcr_val[4] = 1'b0;
-    uart_write_reg(3'h4, mcr_val);
+    write_reg(3'h4, mcr_val);
     `uvm_info("UART_LB", "Loopback disabled (MCR[4]=0)", UVM_MEDIUM)
 
     `uvm_info("UART_LB", $sformatf(
@@ -508,9 +502,9 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
     logic [7:0] lsr_val;
     received = 0;
     while (timeout > 0 && !received) begin
-      uart_read_reg(3'h5, lsr_val);
+      read_reg(3'h5, lsr_val);
       if (lsr_val[0]) begin
-        uart_read_reg(3'h0, data);
+        read_reg(3'h0, data);
         received = 1;
       end else begin
         timeout--;
@@ -557,7 +551,7 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
       INT_MODEM_STATUS: ier_val = 8'h08;
     endcase
 
-    uart_write_reg(3'h1, ier_val);
+    write_reg(3'h1, ier_val);
 
     fork
       wait_for_intr_signal();
@@ -571,7 +565,7 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
     if (timeout_hit)
       `uvm_warning("UART_INT", "Interrupt test timed out after 10 ms")
 
-    uart_read_reg(3'h2, iir_val);
+    read_reg(3'h2, iir_val);
 
     if (iir_val[0] == 1'b0) begin
       `uvm_info("UART_INT", $sformatf("Interrupt pending, IIR = 0x%02h", iir_val), UVM_MEDIUM)
@@ -603,40 +597,40 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
     case (int_type)
       INT_TX_EMPTY: begin
         #100ns;
-        uart_write_reg(3'h0, 8'hAA);
+        write_reg(3'h0, 8'hAA);
         `uvm_info("UART_INT", "Trigger: TX data written to THR", UVM_MEDIUM)
       end
       INT_RX_DATA: begin
         logic [7:0] mcr_val;
-        uart_read_reg(3'h4, mcr_val);
+        read_reg(3'h4, mcr_val);
         mcr_val[4] = 1'b1;
-        uart_write_reg(3'h4, mcr_val);
+        write_reg(3'h4, mcr_val);
         `uvm_info("UART_INT", "Trigger: Loopback enabled (MCR[4]=1)", UVM_MEDIUM)
         #100ns;
-        uart_write_reg(3'h0, 8'h55);
+        write_reg(3'h0, 8'h55);
         `uvm_info("UART_INT", "Trigger: TX byte 0x55 written, expected to echo to RBR", UVM_MEDIUM)
         #10us;
       end
       INT_LINE_STATUS: begin
         logic [7:0] lcr_val;
-        uart_read_reg(3'h3, lcr_val);
+        read_reg(3'h3, lcr_val);
         lcr_val[3] = 1'b1;
         lcr_val[4] = 1'b1;
         lcr_val[5] = 1'b0;
-        uart_write_reg(3'h3, lcr_val);
+        write_reg(3'h3, lcr_val);
         `uvm_info("UART_INT", "Trigger: Even parity enabled in LCR", UVM_MEDIUM)
         #100ns;
-        uart_write_reg(3'h0, 8'hA5);
+        write_reg(3'h0, 8'hA5);
         `uvm_info("UART_INT", "Trigger: TX byte 0xA5 (no parity bit in data)", UVM_MEDIUM)
         #20us;
         lcr_val[3] = 1'b0;
-        uart_write_reg(3'h3, lcr_val);
+        write_reg(3'h3, lcr_val);
       end
       INT_MODEM_STATUS: begin
         logic [7:0] mcr_val;
-        uart_read_reg(3'h4, mcr_val);
+        read_reg(3'h4, mcr_val);
         mcr_val[0] = ~mcr_val[0];
-        uart_write_reg(3'h4, mcr_val);
+        write_reg(3'h4, mcr_val);
         `uvm_info("UART_INT", "Trigger: Modem control toggled (MCR[0])", UVM_MEDIUM)
         #10us;
       end
@@ -779,7 +773,7 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
       injected_count++;
 
       #5us;
-      uart_read_reg(3'h5, lsr_val);
+      read_reg(3'h5, lsr_val);
       case (inj_type)
         INJ_PARITY: begin
           if (lsr_val[2]) begin

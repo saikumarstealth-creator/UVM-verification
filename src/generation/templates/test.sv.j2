@@ -1,5 +1,5 @@
 // Enhanced UVM Tests for {{ spec.design_name }}
-// Includes: Base test, Register tests, UART TX/RX, Loopback, Baud rate, Interrupt tests
+// Includes: Base test, Register tests, protocol-specific tests
 {% set p = spec.protocol|default("wishbone") %}
 
 class {{ spec.design_name }}_base_test extends uvm_test;
@@ -127,7 +127,7 @@ endclass
   "uart_smoke": "uart_config_seq",
   "uart_reg_access": spec.design_name + "_all_regs_seq",
   "uart_loopback": "uart_loopback_seq",
-  "uart_random": "uart_random_regs_seq",
+  "uart_random": spec.design_name + "_random_regs_seq",
   "uart_error_injection": "uart_error_injection_seq"
 } %}
 
@@ -282,8 +282,8 @@ class uart_fifo_test extends {{ spec.design_name }}_base_test;
     run_sequence_with_timeout(cfg_seq, 10ms);
 
     // Enable FIFO: RCVR FIFO reset + XMIT FIFO reset + enable
-    uart_write_reg(3'h02, 8'h07);
-    uart_read_reg (3'h02, rd_data);
+    write_reg(3'h02, 8'h07);
+    read_reg(3'h02, rd_data);
     `uvm_info("TEST_FIFO", $sformatf("FCR=0x%0h", rd_data), UVM_LOW)
 
     // Fill FIFO (16 bytes for 16550)
@@ -296,7 +296,7 @@ class uart_fifo_test extends {{ spec.design_name }}_base_test;
     run_sequence_with_timeout(tx_seq, 10ms);
 
     // Read LSR to check FIFO status bits
-    uart_read_reg(3'h05, rd_data);
+    read_reg(3'h05, rd_data);
     `uvm_info("TEST_FIFO", $sformatf("LSR after FIFO fill=0x%0h (bit5=THR empty, bit6=TX empty)", rd_data), UVM_LOW)
 
     if (rd_data[5])
