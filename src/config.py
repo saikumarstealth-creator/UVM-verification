@@ -14,16 +14,23 @@ import yaml
 
 class SignalDef(BaseModel):
     name: str
-    direction: str = Field(pattern=r"^(input|output|inout)$")
-    width: Optional[int] = 1
+    direction: str = Field(default="inout", pattern=r"^(input|output|inout)$")
+    width: int = Field(default=1, ge=1)
+    description: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_width(cls, data):
+        if isinstance(data, dict) and "width" in data and isinstance(data["width"], str):
+            try:
+                data["width"] = int(data["width"])
+            except ValueError:
+                pass
+        return data
 
 class InterfaceDef(BaseModel):
-    name: str
+    name: str = "bus"
     signals: List[SignalDef] = Field(min_length=1)
-
-class FieldDef(BaseModel):
-    name: str
-    bits: str
     description: Optional[str] = None
     access: Optional[str] = None
     reset: Optional[str] = None
@@ -35,6 +42,9 @@ class FieldDef(BaseModel):
             if "width" in data and "bits" not in data:
                 w = data.pop("width")
                 data["bits"] = str(w) if isinstance(w, int) else w
+            if "reset" in data and isinstance(data["reset"], (int, float)):
+                val = int(data["reset"])
+                data["reset"] = str(val) if val == 0 else f"'h{val:X}" if val > 9 else str(val)
         return data
 
 class RegisterDef(BaseModel):
@@ -46,6 +56,15 @@ class RegisterDef(BaseModel):
     size: Optional[int] = None
     reset_value: Optional[str] = None
     volatile: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_types(cls, data):
+        if isinstance(data, dict):
+            if "reset_value" in data and isinstance(data["reset_value"], (int, float)):
+                val = int(data["reset_value"])
+                data["reset_value"] = str(val) if val == 0 else f"'h{val:X}" if val > 9 else str(val)
+        return data
 
 class ClockResetDef(BaseModel):
     clock: str = "clk"
