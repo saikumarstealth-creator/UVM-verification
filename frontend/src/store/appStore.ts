@@ -142,23 +142,35 @@ interfaces:
       - { name: uart_intr, direction: output }
 
 registers:
-  - name: RBR_THR, address: '0x00', access: rw, description: "Receiver Buffer / Transmitter Holding"
+  - name: RBR_THR
+    address: '0x00'
+    access: rw
+    description: "Receiver Buffer / Transmitter Holding"
     fields:
       - { name: data, bits: '7:0', description: "Data bits" }
-  - name: IER, address: '0x01', access: rw, description: "Interrupt Enable"
+  - name: IER
+    address: '0x01'
+    access: rw
+    description: "Interrupt Enable"
     fields:
       - { name: erbfi, bits: '0', description: "Enable RX data interrupt" }
       - { name: etbei, bits: '1', description: "Enable TX empty interrupt" }
       - { name: elsi, bits: '2', description: "Enable RX line status" }
       - { name: edssi, bits: '3', description: "Enable modem status" }
-  - name: LCR, address: '0x03', access: rw, description: "Line Control"
+  - name: LCR
+    address: '0x03'
+    access: rw
+    description: "Line Control"
     fields:
       - { name: wls, bits: '1:0', description: "Word length select" }
       - { name: stb, bits: '2', description: "Stop bits" }
       - { name: pen, bits: '3', description: "Parity enable" }
       - { name: eps, bits: '4', description: "Even parity select" }
       - { name: dlab, bits: '7', description: "Divisor latch access bit" }
-  - name: LSR, address: '0x05', access: ro, description: "Line Status"
+  - name: LSR
+    address: '0x05'
+    access: ro
+    description: "Line Status"
     fields:
       - { name: dr, bits: '0', description: "Data Ready" }
       - { name: oe, bits: '1', description: "Overrun Error" }
