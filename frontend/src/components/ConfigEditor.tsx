@@ -1,9 +1,14 @@
 import React, { useMemo } from 'react'
 import {
   Settings2, FileText, Brain, Zap, Play, RotateCcw,
-  AlertCircle, Cpu, Layout, Layers, Hash, List
+  AlertCircle, CheckCircle, Cpu, Layout, Layers, Hash, List
 } from 'lucide-react'
 import useAppStore, { SpecStats } from '../store/appStore'
+
+interface ValidationError {
+  type: 'error' | 'warning'
+  message: string
+}
 
 const PRESETS: Record<string, { label: string; protocol: string; desc: string }> = {
   uart: { label: 'UART', protocol: 'uart', desc: 'Universal Asynchronous Receiver-Transmitter' },
@@ -73,6 +78,54 @@ const SpecStatBadge: React.FC<{ icon: React.ReactNode; label: string; value: num
     </div>
   )
 
+function validateSpec(yaml: string): ValidationError[] {
+  const errors: ValidationError[] = []
+  if (!yaml.trim()) {
+    errors.push({ type: 'error', message: 'YAML specification is empty' })
+    return errors
+  }
+
+  const lines = yaml.split('\n')
+  const hasDesignName = /^design_name:\s*\S+/m.test(yaml)
+  const hasProtocol = /^protocol:\s*\S+/m.test(yaml)
+  const hasInterfaces = /^interfaces:/m.test(yaml)
+  const hasRegisters = /^registers:/m.test(yaml)
+
+  if (!hasDesignName) errors.push({ type: 'error', message: 'Missing required field: design_name' })
+  if (!hasProtocol) errors.push({ type: 'error', message: 'Missing required field: protocol' })
+  if (!hasInterfaces) errors.push({ type: 'error', message: 'Missing required section: interfaces' })
+  if (!hasRegisters) errors.push({ type: 'error', message: 'Missing required section: registers' })
+
+  if (hasInterfaces) {
+    const beforeReg = yaml.split('registers:')[0]
+    const ifCount = (beforeReg.match(/^\s+- name:\s+\w+/gm) || []).length
+    if (ifCount === 0) errors.push({ type: 'error', message: 'interfaces section exists but has no entries (use "- name: ...")' })
+  }
+
+  if (hasRegisters) {
+    const regSection = yaml.split('registers:')[1]
+    if (regSection) {
+      const afterReg = regSection.split('coverage:')[0] || regSection
+      const regCount = (afterReg.match(/^\s+- name:\s+\w+/gm) || []).length
+      if (regCount === 0) errors.push({ type: 'error', message: 'registers section exists but has no entries (use "- name: ...")' })
+    }
+  }
+
+  let lineNum = 0
+  for (const line of lines) {
+    lineNum++
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('{') || trimmed.startsWith('[')) continue
+    if (/^\s*-\s/.test(line)) continue
+    if (trimmed.includes(': ')) continue
+    if (trimmed.endsWith(':')) continue
+    if (trimmed.startsWith('...') || trimmed.startsWith('---')) continue
+    errors.push({ type: 'warning', message: `Line ${lineNum}: suspicious syntax — "${trimmed.substring(0, 40)}"` })
+  }
+
+  return errors
+}
+
 const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
   const { config, updateConfig, status, resetPipeline } = useAppStore()
   const [activeTab, setActiveTab] = React.useState<'spec' | 'settings'>('spec')
@@ -82,19 +135,8 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
   const hasRun = status !== 'pending' && status !== 'running'
 
   const specStats = useMemo(() => parseSpecStats(config.spec_yaml), [config.spec_yaml])
-
-  const hasYamlError = useMemo(() => {
-    const lines = config.spec_yaml.split('\n')
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#') && !trimmed.startsWith('-') &&
-          !trimmed.includes(':') && !trimmed.startsWith('{') && !trimmed.startsWith('}') &&
-          !trimmed.match(/^\s*$/) && !trimmed.startsWith('[') && !trimmed.startsWith(']')) {
-        if (/^[a-zA-Z]/.test(trimmed) && !trimmed.includes(':')) return true
-      }
-    }
-    return false
-  }, [config.spec_yaml])
+  const validationErrors = useMemo(() => validateSpec(config.spec_yaml), [config.spec_yaml])
+  const isSpecValid = validationErrors.filter(e => e.type === 'error').length === 0
 
   React.useEffect(() => {
     if (textareaRef.current) {
@@ -173,20 +215,44 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-[10px] font-medium text-eda-text-secondary">YAML Specification</label>
                 <div className="flex items-center gap-2">
-                  {hasYamlError && (
+                  {isSpecValid ? (
+                    <span className="flex items-center gap-0.5 text-[9px] text-eda-success">
+                      <CheckCircle className="w-2.5 h-2.5" /> Valid
+                    </span>
+                  ) : (
                     <span className="flex items-center gap-0.5 text-[9px] text-eda-error">
-                      <AlertCircle className="w-2.5 h-2.5" /> Syntax issues
+                      <AlertCircle className="w-2.5 h-2.5" /> {validationErrors.filter(e => e.type === 'error').length} error(s)
                     </span>
                   )}
                   <span className="text-[9px] text-eda-text-tertiary font-mono">{config.spec_yaml.length} chars</span>
                 </div>
               </div>
-              <div className="relative">
+              <div className={`relative rounded-md border transition-colors ${
+                isSpecValid ? 'border-eda-border' :
+                validationErrors.filter(e => e.type === 'error').length > 2 ? 'border-eda-error/40' : 'border-eda-warning/40'
+              }`}>
                 <textarea ref={textareaRef} value={config.spec_yaml} onChange={handleSpecChange}
                   disabled={isGenerating} spellCheck={false}
-                  className="w-full min-h-[350px] bg-black/20 border border-eda-border rounded-md pl-3 pr-3 py-2 text-[10px] font-mono text-eda-text placeholder-eda-text-tertiary/50 focus:outline-none focus:border-eda-accent/50 focus:ring-1 focus:ring-eda-accent/20 resize-none transition-colors disabled:opacity-50"
+                  className="w-full min-h-[350px] bg-black/20 rounded-md pl-3 pr-3 py-2 text-[10px] font-mono text-eda-text placeholder-eda-text-tertiary/50 focus:outline-none resize-none transition-colors disabled:opacity-50"
                   style={{ lineHeight: '1.5' }} />
               </div>
+              {validationErrors.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {validationErrors.map((err, i) => (
+                    <div key={i} className={`flex items-start gap-1.5 px-2 py-1 rounded text-[9px] leading-relaxed ${
+                      err.type === 'error'
+                        ? 'bg-eda-error/8 text-eda-error'
+                        : 'bg-eda-warning/8 text-eda-warning'
+                    }`}>
+                      {err.type === 'error'
+                        ? <AlertCircle className="w-2.5 h-2.5 mt-0.5 shrink-0" />
+                        : <AlertCircle className="w-2.5 h-2.5 mt-0.5 shrink-0" />
+                      }
+                      <span>{err.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -277,7 +343,8 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
               <RotateCcw className="w-3 h-3" /> Reset
             </button>
           )}
-          <button onClick={onGenerate} disabled={isGenerating || !config.spec_yaml.trim()}
+          <button onClick={onGenerate} disabled={isGenerating || !isSpecValid}
+            title={!isSpecValid ? 'Fix YAML errors before generating' : ''}
             className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold bg-eda-accent text-white rounded-md hover:bg-eda-accent/90 active:bg-eda-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
             {isGenerating ? (
               <><div className="w-3 h-3 border-1.5 border-white/30 border-t-white rounded-full animate-spin" /> Generating...</>
