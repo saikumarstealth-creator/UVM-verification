@@ -26,7 +26,9 @@ class {{ spec.design_name }}_monitor extends uvm_monitor;
       // Sample write data
       if (vif.mon_cb.wvalid && vif.mon_cb.wready) begin
         item.data = vif.mon_cb.wdata;
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, pre_collect(this, item))
         item_collected_port.write(item);
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, post_collect(this, item))
       end
       // Sample read address
       if (vif.mon_cb.arvalid && vif.mon_cb.arready) begin
@@ -36,14 +38,18 @@ class {{ spec.design_name }}_monitor extends uvm_monitor;
       // Sample read data
       if (vif.mon_cb.rvalid && vif.mon_cb.rready) begin
         item.data = vif.mon_cb.rdata;
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, pre_collect(this, item))
         item_collected_port.write(item);
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, post_collect(this, item))
       end
       {% elif p == "apb" %}
       if (vif.mon_cb.psel && vif.mon_cb.penable && vif.mon_cb.pready) begin
         item.we   = vif.mon_cb.pwrite;
         item.addr = vif.mon_cb.paddr;
         item.data = vif.mon_cb.pwrite ? vif.mon_cb.pwdata : vif.mon_cb.prdata;
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, pre_collect(this, item))
         item_collected_port.write(item);
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, post_collect(this, item))
       end
       {% else %}
       // Wishbone / UART / SPI / I2C — single cycle protocol
@@ -51,7 +57,9 @@ class {{ spec.design_name }}_monitor extends uvm_monitor;
         item.we   = vif.mon_cb.wb_we;
         item.addr = vif.mon_cb.wb_addr;
         item.data = vif.mon_cb.wb_we ? vif.mon_cb.wb_data_o : vif.mon_cb.wb_data_i;
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, pre_collect(this, item))
         item_collected_port.write(item);
+        `uvm_do_callbacks({{ spec.design_name }}_monitor_cb, this, post_collect(this, item))
       end
       {% endif %}
     end

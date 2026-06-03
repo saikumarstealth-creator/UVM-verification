@@ -29,6 +29,21 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     reg_model.default_map.set_auto_predict(1);
   endfunction
 
+  // ── Factory override helper ─────────────────────────────────────────
+  // To use type/instance overrides, call this in a derived test's build_phase
+  // BEFORE super.build_phase():
+  //
+  //   function void build_phase(uvm_phase phase);
+  //     // Replace all standard drivers with custom_driver
+  //     set_type_override_by_type(
+  //       {{ spec.design_name }}_driver::get_type(),
+  //       {{ spec.design_name }}_custom_driver::get_type()
+  //     );
+  //     super.build_phase(phase);
+  //   endfunction
+  //
+  // See factory_overrides_{{ spec.design_name }}.sv for extended examples.
+
   function void end_of_elaboration_phase(uvm_phase phase);
     uvm_top.print_topology();
     print_test_config();

@@ -153,14 +153,141 @@ class {{ spec.design_name }}_reg_adapter extends uvm_reg_adapter;
 endclass
 
 // ============================================================================
-// Register Predictor
+// Memory Walk Sequence — walks address map (registers and memory regions),
+// validates decode and read/write integrity.
 // ============================================================================
-class {{ spec.design_name }}_reg_predictor extends uvm_reg_predictor #({{ spec.design_name }}_seq_item);
-  `uvm_component_utils({{ spec.design_name }}_reg_predictor)
+class {{ spec.design_name }}_reg_mem_walk_seq extends uvm_reg_mem_walk_seq;
+  `uvm_object_utils({{ spec.design_name }}_reg_mem_walk_seq)
 
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
+  {{ spec.design_name }}_reg_block reg_model;
+  int total_regions;
+  int completed_regions;
+  int errors;
+
+  function new(string name = "{{ spec.design_name }}_reg_mem_walk_seq");
+    super.new(name);
   endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// Enhanced All-Registers Sequence: writes unique patterns to every register
+// then reads them back. Supports burst mode and data integrity checks.
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_enhanced_regs_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_enhanced_regs_seq)
+
+  rand int burst_size;
+  int writes_issued;
+  int reads_issued;
+  int mismatches;
+
+  constraint c_burst { burst_size inside {[1:16]}; }
+
+  function new(string n = "{{ spec.design_name }}_enhanced_regs_seq");
+    super.new(n);
+    burst_size = 4;
+  endfunction
+
+  task body;
+    uvm_status_e st;
+    uvm_reg_data_t val;
+    uvm_reg rg;
+    uvm_reg rg_array[$];
+    logic [{{ data_width-1 }}:0] golden[$];
+    int burst_cnt;
+    string rg_name;
+
+    if (reg_model == null) begin
+      `uvm_fatal("SEQ", "reg_model not set in enhanced_regs_seq")
+    end
+
+    rg_array = reg_model.reg_map.get_regs();
+    `uvm_info("ENH_REG", $sformatf("Starting enhanced reg walk: %0d registers, burst=%0d",
+              rg_array.size(), burst_size), UVM_LOW)
+
+    // ── Write phase (burst mode) ──────────────────────────────────────
+    foreach (rg_array[i]) begin
+      rg = rg_array[i];
+      if (rg == null) continue;
+      rg_name = rg.get_name();
+
+      // Skip read-only registers
+      if (rg.get_access() inside {"RO", "RC"}) begin
+        `uvm_info("ENH_REG", $sformatf("Skipping RO/RC register: %s", rg_name), UVM_HIGH)
+        continue;
+      end
+
+      // Generate data: walking-1 pattern based on register index
+      val = ({{ data_width }}'(1) << (i % {{ data_width }})) |
+            {{ data_width }}'(i * 32 + 16);
+      golden.push_back(val);
+
+      `uvm_info("ENH_REG", $sformatf("Writing %s = 0x%0h (walking-bit pattern)",
+                rg_name, val), UVM_MEDIUM)
+      rg.write(st, val, .parent(this));
+      writes_issued++;
+
+      if (st != UVM_IS_OK) begin
+        `uvm_error("ENH_REG", $sformatf("%s write failed with status %s", rg_name, st.name()))
+      end
+
+      // Burst pacing: insert a few ns between burst groups
+      burst_cnt++;
+      if (burst_cnt >= burst_size) begin
+        burst_cnt = 0;
+        #100ns;
+      end
+    end
+
+    // Separator between write and read bursts
+    #200ns;
+
+    // ── Read phase ────────────────────────────────────────────────────
+    foreach (rg_array[j]) begin
+      rg = rg_array[j];
+      if (rg == null) continue;
+      rg_name = rg.get_name();
+
+      if (rg.get_access() inside {"RO", "RC"}) begin
+        // Read-only: just verify it reads without error
+        rg.read(st, val, .parent(this));
+        if (st != UVM_IS_OK)
+          `uvm_error("ENH_REG", $sformatf("RO %s read failed with status %s", rg_name, st.name()))
+        else
+          `uvm_info("ENH_REG", $sformatf("RO %s = 0x%0h (no golden check)", rg_name, val), UVM_HIGH)
+        continue;
+      end
+
+      rg.read(st, val, .parent(this));
+      reads_issued++;
+
+      if (st != UVM_IS_OK) begin
+        `uvm_error("ENH_REG", $sformatf("%s read failed with status %s", rg_name, st.name()))
+        mismatches++;
+      end else if (j < golden.size() && val !== golden[j]) begin
+        mismatches++;
+        `uvm_error("ENH_REG", $sformatf("%s mismatch: wrote 0x%0h, read 0x%0h",
+                  rg_name, golden[j], val))
+      end else begin
+        `uvm_info("ENH_REG", $sformatf("%s MATCH: 0x%0h", rg_name, val), UVM_HIGH)
+      end
+    end
+
+    `uvm_info("ENH_REG", $sformatf(
+      "\n  === Enhanced Register Walk Report ==="
+      "\n  Writes:     %0d"
+      "\n  Reads:      %0d"
+      "\n  Mismatches: %0d"
+      "\n  Status:     %s",
+      writes_issued, reads_issued, mismatches,
+      (mismatches == 0) ? "PASS" : "FAIL"
+    ), UVM_LOW)
+  endtask
 endclass
 
 // ============================================================================

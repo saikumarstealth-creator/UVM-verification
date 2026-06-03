@@ -1,0 +1,44 @@
+// Enterprise Virtual Sequencer for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+// Holds sub-sequencer handles for layered protocol environments.
+// Virtual sequences reference vsequencer.sub_seqr.* to arbitrate across
+// multiple protocol agents (e.g., AXI4-Lite + APB, or dual UART).
+{% set p = spec.protocol|default("wishbone") %}
+class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
+  `uvm_component_utils({{ spec.design_name }}_virtual_sequencer)
+
+  // ── Sub-sequencer handles ──────────────────────────────────────────
+  // These are populated externally (via config DB or manual connection)
+  // so that virtual sequences can start items on any sub-sequencer.
+  uvm_sequencer #({{ spec.design_name }}_seq_item) bus_seqr;
+
+{% if p == "uart" %}
+  // Additional UART sub-sequencers for multi-port / layered protocols
+  uvm_sequencer #({{ spec.design_name }}_seq_item) uart0_seqr;
+  uvm_sequencer #({{ spec.design_name }}_seq_item) uart1_seqr;
+{% elif p == "apb" %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) apb_seqr;
+{% elif p == "axi4lite" %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) axi_seqr;
+{% elif p == "spi" %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) spi_seqr;
+{% elif p == "i2c" %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) i2c_seqr;
+{% else %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) wb_seqr;
+{% endif %}
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+{% if p == "uart" %}
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "bus_seqr", bus_seqr));
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart0_seqr", uart0_seqr));
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart1_seqr", uart1_seqr));
+{% else %}
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "bus_seqr", bus_seqr));
+{% endif %}
+  endfunction
+endclass

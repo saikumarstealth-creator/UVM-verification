@@ -1093,13 +1093,25 @@ endclass
 
 // -------------------------------------------------------------------------
 // UART Virtual Sequence — orchestrates multiple sequences together
+// Uses virtual sequencer handles for enterprise layering.
+// Start on vsequencer.bus_seqr (or sub-sequencer) via:
+//   p_sequencer.bus_seqr
 // -------------------------------------------------------------------------
-class uart_virtual_seq extends {{ spec.design_name }}_base_seq;
+class uart_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils(uart_virtual_seq)
+  `uvm_declare_p_sequencer({{ spec.design_name }}_virtual_sequencer)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+  {{ spec.design_name }}_scoreboard sb_handle;
 
   function new(string n = "uart_virtual_seq");
     super.new(n);
   endfunction
+
+  virtual task pre_body();
+    if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
+      `uvm_warning("CFG", $sformatf("Scoreboard handle not found for %s", get_type_name()))
+  endtask
 
   task body;
     uart_config_seq         cfg_seq;
@@ -1109,27 +1121,27 @@ class uart_virtual_seq extends {{ spec.design_name }}_base_seq;
     uart_interrupt_seq      int_seq;
     uart_error_injection_seq inj_seq;
 
-    `uvm_info("UART_VSEQ", "Starting virtual sequence", UVM_LOW)
+    `uvm_info("UART_VSEQ", "Starting virtual sequence on virtual sequencer", UVM_LOW)
 
-    // 1. Configure UART
+    // 1. Configure UART (on bus sequencer)
     cfg_seq = uart_config_seq::type_id::create("cfg_seq");
     cfg_seq.reg_model = reg_model;
     cfg_seq.baud_rate = 115200;
     cfg_seq.data_bits = 8;
-    cfg_seq.start(m_sequencer);
+    cfg_seq.start(p_sequencer.bus_seqr);
 
     // 2. Run loopback test
     lb_seq = uart_loopback_seq::type_id::create("lb_seq");
     lb_seq.reg_model = reg_model;
     lb_seq.sb_handle = sb_handle;
     lb_seq.test_data = {8'h55, 8'hAA, 8'h33, 8'hCC, 8'h01, 8'h02, 8'h03, 8'h04};
-    lb_seq.start(m_sequencer);
+    lb_seq.start(p_sequencer.bus_seqr);
 
     // 3. Run interrupt test (TX empty)
     int_seq = uart_interrupt_seq::type_id::create("int_seq");
     int_seq.reg_model = reg_model;
     int_seq.int_type = uart_interrupt_seq::INT_TX_EMPTY;
-    int_seq.start(m_sequencer);
+    int_seq.start(p_sequencer.bus_seqr);
 
     // 4. Run error injection test
     inj_seq = uart_error_injection_seq::type_id::create("inj_seq");
@@ -1137,7 +1149,7 @@ class uart_virtual_seq extends {{ spec.design_name }}_base_seq;
     inj_seq.sb_handle = sb_handle;
     inj_seq.inj_type = uart_error_injection_seq::INJ_PARITY;
     inj_seq.num_injections = 2;
-    inj_seq.start(m_sequencer);
+    inj_seq.start(p_sequencer.bus_seqr);
 
     `uvm_info("UART_VSEQ", "Virtual sequence completed", UVM_LOW)
   endtask
@@ -1363,13 +1375,23 @@ endclass
 
 // -------------------------------------------------------------------------
 // APB Virtual Sequence — orchestrates multiple APB sequences
+// Uses virtual sequencer handles for enterprise layering.
 // -------------------------------------------------------------------------
-class {{ spec.design_name }}_apb_virtual_seq extends {{ spec.design_name }}_base_seq;
+class {{ spec.design_name }}_apb_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_apb_virtual_seq)
+  `uvm_declare_p_sequencer({{ spec.design_name }}_virtual_sequencer)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+  {{ spec.design_name }}_scoreboard sb_handle;
 
   function new(string n = "{{ spec.design_name }}_apb_virtual_seq");
     super.new(n);
   endfunction
+
+  virtual task pre_body();
+    if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
+      `uvm_warning("CFG", $sformatf("Scoreboard handle not found for %s", get_type_name()))
+  endtask
 
   task body;
     {{ spec.design_name }}_apb_config_seq      cfg_seq;
@@ -1377,33 +1399,33 @@ class {{ spec.design_name }}_apb_virtual_seq extends {{ spec.design_name }}_base
     {{ spec.design_name }}_apb_error_seq       err_seq;
     {{ spec.design_name }}_apb_back2back_seq   b2b_seq;
 
-    `uvm_info("APB_VSEQ", "Starting APB virtual sequence", UVM_LOW)
+    `uvm_info("APB_VSEQ", "Starting APB virtual sequence on virtual sequencer", UVM_LOW)
 
     // 1. Configure slave
     cfg_seq = {{ spec.design_name }}_apb_config_seq::type_id::create("cfg_seq");
     cfg_seq.reg_model = reg_model;
     cfg_seq.wait_states = 2;
     cfg_seq.inject_slave_err = 0;
-    cfg_seq.start(m_sequencer);
+    cfg_seq.start(p_sequencer.bus_seqr);
 
     // 2. Write-read test
     wr_seq = {{ spec.design_name }}_apb_write_read_seq::type_id::create("wr_seq");
     wr_seq.reg_model = reg_model;
     wr_seq.target_reg = 0;
     wr_seq.write_data = 8'hA5;
-    wr_seq.start(m_sequencer);
+    wr_seq.start(p_sequencer.bus_seqr);
 
     // 3. Error injection test
     err_seq = {{ spec.design_name }}_apb_error_seq::type_id::create("err_seq");
     err_seq.reg_model = reg_model;
     err_seq.num_errors = 3;
-    err_seq.start(m_sequencer);
+    err_seq.start(p_sequencer.bus_seqr);
 
     // 4. Back-to-back stress test
     b2b_seq = {{ spec.design_name }}_apb_back2back_seq::type_id::create("b2b_seq");
     b2b_seq.reg_model = reg_model;
     b2b_seq.burst_count = 16;
-    b2b_seq.start(m_sequencer);
+    b2b_seq.start(p_sequencer.bus_seqr);
 
     `uvm_info("APB_VSEQ", "APB virtual sequence completed", UVM_LOW)
   endtask

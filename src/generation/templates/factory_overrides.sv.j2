@@ -1,0 +1,76 @@
+// Factory Override Example Patterns for {{ spec.design_name }}
+// Include this file in your test to override UVM components at compile time.
+// The UVM factory enables type- and instance-based overrides, allowing
+// substitution of extended classes without modifying the original testbench.
+{% set p = spec.protocol|default("wishbone") %}
+// ============================================================================
+// Example 1: Custom Driver Extension — adds error injection or protocol
+// violation support on top of the standard driver.
+// ============================================================================
+class {{ spec.design_name }}_custom_driver extends {{ spec.design_name }}_driver;
+  `uvm_component_utils({{ spec.design_name }}_custom_driver)
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+
+  // Example override: inject a protocol violation before driving each item
+  virtual task drive_bus({{ spec.design_name }}_seq_item item);
+    // Custom logic here (e.g., corrupt address, delay beyond spec)
+    super.drive_bus(item);
+  endtask
+endclass
+
+// ============================================================================
+// Example 2: Custom Monitor Extension — adds sideband capture
+// ============================================================================
+class {{ spec.design_name }}_custom_monitor extends {{ spec.design_name }}_monitor;
+  `uvm_component_utils({{ spec.design_name }}_custom_monitor)
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    // Extended monitoring logic
+    super.run_phase(phase);
+  endtask
+endclass
+
+// ============================================================================
+// Example 3: Custom Scoreboard Extension — adds additional checks
+// ============================================================================
+class {{ spec.design_name }}_custom_scoreboard extends {{ spec.design_name }}_scoreboard;
+  `uvm_component_utils({{ spec.design_name }}_custom_scoreboard)
+
+  function new(string n, uvm_component p); super.new(n, p); endfunction
+
+  virtual function void check_write({{ spec.design_name }}_seq_item item);
+    super.check_write(item);
+    // Custom checking logic
+  endfunction
+endclass
+
+// ============================================================================
+// Usage in a test (example — uncomment and use in your test class):
+// ============================================================================
+// function void build_phase(uvm_phase phase);
+//   super.build_phase(phase);
+//
+//   // Type override: every uvm_driver becomes custom_driver
+//   set_type_override_by_type(
+//     {{ spec.design_name }}_driver::get_type(),
+//     {{ spec.design_name }}_custom_driver::get_type()
+//   );
+//
+//   // Instance override: only "env.agent.monitor" gets the custom monitor
+//   set_inst_override_by_type(
+//     "env.agent.monitor",
+//     {{ spec.design_name }}_monitor::get_type(),
+//     {{ spec.design_name }}_custom_monitor::get_type()
+//   );
+//
+//   // Conditional override based on configuration
+//   if (use_custom_sb) begin
+//     set_type_override_by_type(
+//       {{ spec.design_name }}_scoreboard::get_type(),
+//       {{ spec.design_name }}_custom_scoreboard::get_type()
+//     );
+//   end
+// endfunction

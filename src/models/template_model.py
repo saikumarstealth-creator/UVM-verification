@@ -16,6 +16,10 @@ class TemplateModel(GenerationModel):
         "{name}.core": "fusesoc.core.j2",
     }
 
+    MAKEFILE_MAP = {
+        "Makefile": "Makefile.j2",
+    }
+
     TEMPLATE_MAP = {
         "testbench.sv": "testbench.sv.j2",
         "interface_{name}.sv": "interface.sv.j2",
@@ -42,6 +46,18 @@ class TemplateModel(GenerationModel):
 
     ASSERTION_MAP = {
         "assertions_{name}.sv": "assertions.sv.j2",
+    }
+
+    CALLBACK_MAP = {
+        "callback_{name}.sv": "callback.sv.j2",
+    }
+
+    FACTORY_OVERRIDE_MAP = {
+        "factory_overrides_{name}.sv": "factory_overrides.sv.j2",
+    }
+
+    VIRTUAL_SEQR_MAP = {
+        "virtual_sequencer_{name}.sv": "virtual_sequencer.sv.j2",
     }
 
     COVERAGE_SEQ_MAP = {
@@ -104,8 +120,40 @@ class TemplateModel(GenerationModel):
             out_path.write_text(content, encoding="utf-8")
             generated[out_name] = str(out_path)
 
+        # Factory override examples
+        for out_pattern, template_file in self.FACTORY_OVERRIDE_MAP.items():
+            out_name = out_pattern.format(name=name)
+            tmpl = env.get_template(template_file)
+            content = tmpl.render(spec=spec)
+            out_path = output_dir / out_name
+            if out_path.exists() and not cfg.generation.overwrite:
+                continue
+            out_path.write_text(content, encoding="utf-8")
+            generated[out_name] = str(out_path)
+
+        # Callback classes
+        for out_pattern, template_file in self.CALLBACK_MAP.items():
+            out_name = out_pattern.format(name=name)
+            tmpl = env.get_template(template_file)
+            content = tmpl.render(spec=spec)
+            out_path = output_dir / out_name
+            if out_path.exists() and not cfg.generation.overwrite:
+                continue
+            out_path.write_text(content, encoding="utf-8")
+            generated[out_name] = str(out_path)
+
+        # Virtual sequencer
+        for out_pattern, template_file in self.VIRTUAL_SEQR_MAP.items():
+            out_name = out_pattern.format(name=name)
+            tmpl = env.get_template(template_file)
+            content = tmpl.render(spec=spec)
+            out_path = output_dir / out_name
+            if out_path.exists() and not cfg.generation.overwrite:
+                continue
+            out_path.write_text(content, encoding="utf-8")
+            generated[out_name] = str(out_path)
+
         # Protocol checker
-        for out_pattern, template_file in self.PROTOCOL_CHECKER_MAP.items():
             out_name = out_pattern.format(name=name)
             tmpl = env.get_template(template_file)
             content = tmpl.render(spec=spec)
@@ -183,6 +231,17 @@ class TemplateModel(GenerationModel):
                     if sv_name.endswith(".sv") and not sv_name.startswith("rtl/"):
                         f.write(f"{sv_name}\n")
         generated[str(self.COMPILE_F)] = str(compile_path)
+
+        # Makefile
+        for out_pattern, template_file in self.MAKEFILE_MAP.items():
+            out_name = out_pattern.format(name=name)
+            try:
+                tmpl = env.get_template(template_file)
+                make_path = output_dir / out_name
+                make_path.write_text(tmpl.render(spec=spec), encoding="utf-8")
+                generated[out_name] = str(make_path)
+            except Exception:
+                pass
 
         # FuseSoC .core file
         for out_pattern, template_file in self.FUSESOC_MAP.items():

@@ -2,6 +2,7 @@
 {% set p = spec.protocol|default("wishbone") %}
 class {{ spec.design_name }}_driver extends uvm_driver #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_driver)
+  // Callback registration: use uvm_register_cb({{ spec.design_name }}_driver_cb, {{ spec.design_name }}_driver)
   virtual {{ spec.design_name }}_intf vif;
   int clk_freq = 100_000_000;
 
@@ -137,10 +138,14 @@ class {{ spec.design_name }}_driver extends uvm_driver #({{ spec.design_name }}_
   {% endif %}
 
   task run_phase(uvm_phase phase);
+    `uvm_do_callbacks({{ spec.design_name }}_driver_cb, this, pre_reset(this))
     reset_signals();
+    `uvm_do_callbacks({{ spec.design_name }}_driver_cb, this, post_reset(this))
     forever begin
       seq_item_port.get_next_item(req);
+      `uvm_do_callbacks({{ spec.design_name }}_driver_cb, this, pre_drive(this, req))
       drive_bus(req);
+      `uvm_do_callbacks({{ spec.design_name }}_driver_cb, this, post_drive(this, req))
       seq_item_port.item_done();
     end
   endtask

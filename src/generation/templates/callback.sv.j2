@@ -1,0 +1,80 @@
+// Enterprise UVM Callback Classes for {{ spec.design_name }}
+// Provides pre/post hook pairs for driver, monitor, and scoreboard.
+// To extend: subclass and override the desired hooks, then register:
+//   {{ spec.design_name }}_driver_cb::add(cb_inst);
+//   {{ spec.design_name }}_monitor_cb::add(cb_inst);
+{% set p = spec.protocol|default("wishbone") %}
+
+// ============================================================================
+// Driver Callback — pre/post hooks around drive_bus() and reset_signals()
+// ============================================================================
+class {{ spec.design_name }}_driver_cb extends uvm_callback;
+  `uvm_object_utils({{ spec.design_name }}_driver_cb)
+
+  function new(string name = "{{ spec.design_name }}_driver_cb");
+    super.new(name);
+  endfunction
+
+  // Called before reset_signals() in driver's run_phase initialization
+  virtual task pre_reset({{ spec.design_name }}_driver driver);
+  endtask
+
+  // Called after reset_signals() completes
+  virtual task post_reset({{ spec.design_name }}_driver driver);
+  endtask
+
+  // Called before drive_bus() — can modify or delay the item
+  virtual task pre_drive({{ spec.design_name }}_driver driver, {{ spec.design_name }}_seq_item item);
+  endtask
+
+  // Called after drive_bus() completes — can observe the result
+  virtual task post_drive({{ spec.design_name }}_driver driver, {{ spec.design_name }}_seq_item item);
+  endtask
+endclass
+
+// ============================================================================
+// Monitor Callback — pre/post hooks around transaction collection
+// ============================================================================
+class {{ spec.design_name }}_monitor_cb extends uvm_callback;
+  `uvm_object_utils({{ spec.design_name }}_monitor_cb)
+
+  function new(string name = "{{ spec.design_name }}_monitor_cb");
+    super.new(name);
+  endfunction
+
+  // Called before a collected transaction is written to the analysis port
+  // Allows observers to filter, modify, or annotate the item
+  virtual task pre_collect({{ spec.design_name }}_monitor monitor, {{ spec.design_name }}_seq_item item);
+  endtask
+
+  // Called after item_collected_port.write(item) — the item has been sent
+  virtual task post_collect({{ spec.design_name }}_monitor monitor, {{ spec.design_name }}_seq_item item);
+  endtask
+endclass
+
+// ============================================================================
+// Scoreboard Callback — pre/post hooks for check/compare
+// ============================================================================
+class {{ spec.design_name }}_sb_cb extends uvm_callback;
+  `uvm_object_utils({{ spec.design_name }}_sb_cb)
+
+  function new(string name = "{{ spec.design_name }}_sb_cb");
+    super.new(name);
+  endfunction
+
+  // Called before a write transaction is checked against the scoreboard
+  virtual task pre_check_write({{ spec.design_name }}_scoreboard sb, {{ spec.design_name }}_seq_item item);
+  endtask
+
+  // Called after a write check completes
+  virtual task post_check_write({{ spec.design_name }}_scoreboard sb, {{ spec.design_name }}_seq_item item, bit matched);
+  endtask
+
+  // Called before a read transaction is checked
+  virtual task pre_check_read({{ spec.design_name }}_scoreboard sb, {{ spec.design_name }}_seq_item item);
+  endtask
+
+  // Called after a read check completes
+  virtual task post_check_read({{ spec.design_name }}_scoreboard sb, {{ spec.design_name }}_seq_item item, bit matched);
+  endtask
+endclass
