@@ -49,7 +49,7 @@ def generate_coverage_html_report(path: str, spec: DesignSpec, qs: QualityScore,
     if spec.registers:
         for i, reg in enumerate(spec.registers):
             rname = reg.name if hasattr(reg, "name") else getattr(reg, "name", f"reg_{i}")
-            raccess = reg.access if hasattr(reg, "access") else "rw"
+            raccess = (reg.access or "rw") if hasattr(reg, "access") else "rw"
             rcov = max(0.0, min(100.0, qs.register_coverage_score * 100 + (hash(rname) % 20 - 10)))
             rcolor = "#00d4aa" if rcov >= 90 else "#ffd93d" if rcov >= 70 else "#ff6b6b"
             if hasattr(reg, 'address') and reg.address:
