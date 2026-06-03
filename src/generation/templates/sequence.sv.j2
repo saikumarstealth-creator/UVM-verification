@@ -14,6 +14,29 @@
 {% set reg_names = regs|map(attribute='name')|map('lower')|list %}
 {% set sorted_regs = regs|sort(attribute='address') %}
 {% set reg_addresses = addr_ints|sort %}
+{% set reg_upper = regs|map(attribute='name')|map('upper')|list %}
+
+// Register address constants (generated from spec)
+{% set seen_addrs = [] %}
+{% for reg in sorted_regs %}
+{% set a = reg.address|replace('0x', '')|replace('h', '') %}
+{% if a not in seen_addrs %}
+{% set _ = seen_addrs.append(a) %}
+localparam logic [{{ addr_bits-1 }}:0] {{ spec.design_name|upper }}_{{ reg.name|upper }}_ADDR = {{ addr_bits }}'h{{ a }};
+{% endif %}
+{% endfor %}
+{% if p == "uart" %}
+// UART 16550 register address constants (always defined for UART protocol)
+localparam logic [2:0] UART_THR_ADDR = 3'h0;  // THR (write, DLAB=0)
+localparam logic [2:0] UART_RBR_ADDR = 3'h0;  // RBR (read, DLAB=0)
+localparam logic [2:0] UART_DLL_ADDR = 3'h0;  // DLL (DLAB=1)
+localparam logic [2:0] UART_IER_ADDR = 3'h1;  // IER (DLAB=0)
+localparam logic [2:0] UART_DLH_ADDR = 3'h1;  // DLH (DLAB=1)
+localparam logic [2:0] UART_IIR_ADDR = 3'h2;  // IIR (read) / FCR (write)
+localparam logic [2:0] UART_LCR_ADDR = 3'h3;  // LCR
+localparam logic [2:0] UART_MCR_ADDR = 3'h4;  // MCR
+localparam logic [2:0] UART_LSR_ADDR = 3'h5;  // LSR
+{% endif %}
 
 // ---------------------------------------------------------------------------
 // Base Sequence — all sequences inherit from here
@@ -46,15 +69,21 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
     if (reg_model) begin
       uvm_status_e st;
 {% if p == "uart" %}
-      if (addr inside {3'h0, 3'h1}) begin
+      if (addr inside {UART_DLL_ADDR, UART_DLH_ADDR}) begin
         logic [7:0] lcr_val;
         reg_model.lcr.read(st, lcr_val, .parent(this));
-        if (addr == 3'h0) begin
-          if (lcr_val[7]) {% if 'dll' in reg_names %}reg_model.dll.write(st, data, .parent(this));{% endif %}
-          else            {% if 'thr' in reg_names %}reg_model.thr.write(st, data, .parent(this));{% endif %}
+        if (addr == UART_DLL_ADDR) begin
+          if (lcr_val[7]) begin
+            {% if 'dll' in reg_names %}reg_model.dll.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLL register not defined"){% endif %}
+          end else begin
+            {% if 'thr' in reg_names %}reg_model.thr.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "THR register not defined"){% endif %}
+          end
         end else begin
-          if (lcr_val[7]) {% if 'dlh' in reg_names %}reg_model.dlh.write(st, data, .parent(this));{% endif %}
-          else            {% if 'ier' in reg_names %}reg_model.ier.write(st, data, .parent(this));{% endif %}
+          if (lcr_val[7]) begin
+            {% if 'dlh' in reg_names %}reg_model.dlh.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLH register not defined"){% endif %}
+          end else begin
+            {% if 'ier' in reg_names %}reg_model.ier.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "IER register not defined"){% endif %}
+          end
         end
         if (sb_handle != null) sb_handle.record_tx(addr, data);
         return;
@@ -90,15 +119,21 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
     if (reg_model) begin
       uvm_status_e st;
 {% if p == "uart" %}
-      if (addr inside {3'h0, 3'h1}) begin
+      if (addr inside {UART_DLL_ADDR, UART_DLH_ADDR}) begin
         logic [7:0] lcr_val;
         reg_model.lcr.read(st, lcr_val, .parent(this));
-        if (addr == 3'h0) begin
-          if (lcr_val[7]) {% if 'dll' in reg_names %}reg_model.dll.read(st, data, .parent(this));{% endif %}
-          else            {% if 'rbr' in reg_names %}reg_model.rbr.read(st, data, .parent(this));{% endif %}
+        if (addr == UART_DLL_ADDR) begin
+          if (lcr_val[7]) begin
+            {% if 'dll' in reg_names %}reg_model.dll.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLL register not defined"){% endif %}
+          end else begin
+            {% if 'rbr' in reg_names %}reg_model.rbr.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "RBR register not defined"){% endif %}
+          end
         end else begin
-          if (lcr_val[7]) {% if 'dlh' in reg_names %}reg_model.dlh.read(st, data, .parent(this));{% endif %}
-          else            {% if 'ier' in reg_names %}reg_model.ier.read(st, data, .parent(this));{% endif %}
+          if (lcr_val[7]) begin
+            {% if 'dlh' in reg_names %}reg_model.dlh.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLH register not defined"){% endif %}
+          end else begin
+            {% if 'ier' in reg_names %}reg_model.ier.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "IER register not defined"){% endif %}
+          end
         end
         if (sb_handle != null) sb_handle.record_rx(addr, data);
         return;
@@ -308,11 +343,11 @@ class uart_config_seq extends {{ spec.design_name }}_base_seq;
     `uvm_info("UART_CFG", $sformatf("Configuring: Baud=%0d, Data bits=%0d, Stop bits=%0d, Parity=%0d",
               baud_rate, data_bits, stop_bits, parity_en), UVM_MEDIUM)
 
-    write_reg(3'h3, lcr_val);
-    write_reg(3'h0, divisor[7:0]);
-    write_reg(3'h1, divisor[15:8]);
+    write_reg(UART_LCR_ADDR, lcr_val);
+    write_reg(UART_DLL_ADDR, divisor[7:0]);
+    write_reg(UART_DLH_ADDR, divisor[15:8]);
     lcr_val[7] = 1'b0;
-    write_reg(3'h3, lcr_val);
+    write_reg(UART_LCR_ADDR, lcr_val);
     if (sb_handle != null) sb_handle.record_config(baud_rate, data_bits, stop_bits, parity_en, even_parity);
   endtask
 
@@ -362,8 +397,8 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
     for (int i = 0; i < num_bytes; i++) begin
       wait_for_tx_empty();
 
-      write_reg(3'h0, tx_data[i]);
-      if (sb_handle != null) sb_handle.record_tx(3'h0, tx_data[i]);
+      write_reg(UART_THR_ADDR, tx_data[i]);
+      if (sb_handle != null) sb_handle.record_tx(UART_THR_ADDR, tx_data[i]);
       `uvm_info("UART_TX", $sformatf("Wrote byte: 0x%02h (%c)", tx_data[i], tx_data[i]), UVM_HIGH)
     end
 
@@ -373,7 +408,7 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
   task wait_for_tx_empty(int timeout = 100000);
     logic [7:0] lsr_data;
     repeat (timeout) begin
-      read_reg(3'h5, lsr_data);
+      read_reg(UART_LSR_ADDR, lsr_data);
       if (lsr_data[5]) begin
         return;
       end
@@ -404,13 +439,13 @@ class uart_rx_seq extends {{ spec.design_name }}_base_seq;
     `uvm_info("UART_RX", $sformatf("Waiting for %0d RX bytes", expected_bytes), UVM_MEDIUM)
 
     while (rx_data.size() < expected_bytes && timeout_cnt < timeout_cycles) begin
-      read_reg(3'h5, lsr_val);
+      read_reg(UART_LSR_ADDR, lsr_val);
 
       if (lsr_val[0]) begin
         logic [7:0] data;
-        read_reg(3'h0, data);
+        read_reg(UART_RBR_ADDR, data);
         rx_data.push_back(data);
-        if (sb_handle != null) sb_handle.record_rx(3'h0, data);
+        if (sb_handle != null) sb_handle.record_rx(UART_RBR_ADDR, data);
         `uvm_info("UART_RX", $sformatf("Received byte: 0x%02h", data), UVM_HIGH)
       end else begin
         timeout_cnt++;
@@ -448,16 +483,16 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
 
     `uvm_info("UART_LB", "Starting loopback test", UVM_MEDIUM)
 
-    read_reg(3'h4, mcr_val);
+    read_reg(UART_MCR_ADDR, mcr_val);
     mcr_val[4] = 1'b1;
-    write_reg(3'h4, mcr_val);
+    write_reg(UART_MCR_ADDR, mcr_val);
     `uvm_info("UART_LB", "Loopback enabled (MCR[4]=1)", UVM_MEDIUM)
 
     foreach (test_data[i]) begin
       logic [7:0] rx_byte;
       bit received;
 
-      write_reg(3'h0, test_data[i]);
+      write_reg(UART_THR_ADDR, test_data[i]);
       `uvm_info("UART_LB", $sformatf("TX[%0d] = 0x%02h", i, test_data[i]), UVM_MEDIUM)
 
       uart_wait_for_rx(rx_byte, received);
@@ -467,7 +502,7 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
           num_passes++;
           `uvm_info("UART_LB", $sformatf("Loopback MATCH[%0d]: TX=0x%02h RX=0x%02h",
                     i, test_data[i], rx_byte), UVM_MEDIUM)
-          if (sb_handle != null) sb_handle.record_tx(3'h0, test_data[i]);
+          if (sb_handle != null) sb_handle.record_tx(UART_THR_ADDR, test_data[i]);
         end else begin
           errors++;
           `uvm_error("UART_LB", $sformatf("Loopback MISMATCH[%0d]: TX=0x%02h RX=0x%02h",
@@ -485,7 +520,7 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
     end
 
     mcr_val[4] = 1'b0;
-    write_reg(3'h4, mcr_val);
+    write_reg(UART_MCR_ADDR, mcr_val);
     `uvm_info("UART_LB", "Loopback disabled (MCR[4]=0)", UVM_MEDIUM)
 
     `uvm_info("UART_LB", $sformatf(
@@ -502,9 +537,9 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
     logic [7:0] lsr_val;
     received = 0;
     while (timeout > 0 && !received) begin
-      read_reg(3'h5, lsr_val);
+      read_reg(UART_LSR_ADDR, lsr_val);
       if (lsr_val[0]) begin
-        read_reg(3'h0, data);
+        read_reg(UART_RBR_ADDR, data);
         received = 1;
       end else begin
         timeout--;
@@ -551,7 +586,7 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
       INT_MODEM_STATUS: ier_val = 8'h08;
     endcase
 
-    write_reg(3'h1, ier_val);
+    write_reg(UART_IER_ADDR, ier_val);
 
     fork
       wait_for_intr_signal();
@@ -565,7 +600,7 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
     if (timeout_hit)
       `uvm_warning("UART_INT", "Interrupt test timed out after 10 ms")
 
-    read_reg(3'h2, iir_val);
+    read_reg(UART_IIR_ADDR, iir_val);
 
     if (iir_val[0] == 1'b0) begin
       `uvm_info("UART_INT", $sformatf("Interrupt pending, IIR = 0x%02h", iir_val), UVM_MEDIUM)
@@ -597,40 +632,40 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
     case (int_type)
       INT_TX_EMPTY: begin
         #100ns;
-        write_reg(3'h0, 8'hAA);
+        write_reg(UART_THR_ADDR, 8'hAA);
         `uvm_info("UART_INT", "Trigger: TX data written to THR", UVM_MEDIUM)
       end
       INT_RX_DATA: begin
         logic [7:0] mcr_val;
-        read_reg(3'h4, mcr_val);
+        read_reg(UART_MCR_ADDR, mcr_val);
         mcr_val[4] = 1'b1;
-        write_reg(3'h4, mcr_val);
+        write_reg(UART_MCR_ADDR, mcr_val);
         `uvm_info("UART_INT", "Trigger: Loopback enabled (MCR[4]=1)", UVM_MEDIUM)
         #100ns;
-        write_reg(3'h0, 8'h55);
+        write_reg(UART_THR_ADDR, 8'h55);
         `uvm_info("UART_INT", "Trigger: TX byte 0x55 written, expected to echo to RBR", UVM_MEDIUM)
         #10us;
       end
       INT_LINE_STATUS: begin
         logic [7:0] lcr_val;
-        read_reg(3'h3, lcr_val);
+        read_reg(UART_LCR_ADDR, lcr_val);
         lcr_val[3] = 1'b1;
         lcr_val[4] = 1'b1;
         lcr_val[5] = 1'b0;
-        write_reg(3'h3, lcr_val);
+        write_reg(UART_LCR_ADDR, lcr_val);
         `uvm_info("UART_INT", "Trigger: Even parity enabled in LCR", UVM_MEDIUM)
         #100ns;
-        write_reg(3'h0, 8'hA5);
+        write_reg(UART_THR_ADDR, 8'hA5);
         `uvm_info("UART_INT", "Trigger: TX byte 0xA5 (no parity bit in data)", UVM_MEDIUM)
         #20us;
         lcr_val[3] = 1'b0;
-        write_reg(3'h3, lcr_val);
+        write_reg(UART_LCR_ADDR, lcr_val);
       end
       INT_MODEM_STATUS: begin
         logic [7:0] mcr_val;
-        read_reg(3'h4, mcr_val);
+        read_reg(UART_MCR_ADDR, mcr_val);
         mcr_val[0] = ~mcr_val[0];
-        write_reg(3'h4, mcr_val);
+        write_reg(UART_MCR_ADDR, mcr_val);
         `uvm_info("UART_INT", "Trigger: Modem control toggled (MCR[0])", UVM_MEDIUM)
         #10us;
       end
@@ -773,7 +808,7 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
       injected_count++;
 
       #5us;
-      read_reg(3'h5, lsr_val);
+      read_reg(UART_LSR_ADDR, lsr_val);
       case (inj_type)
         INJ_PARITY: begin
           if (lsr_val[2]) begin
