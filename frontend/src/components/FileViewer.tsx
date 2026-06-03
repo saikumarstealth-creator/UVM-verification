@@ -48,67 +48,71 @@ interface TokenStyle {
 }
 
 function tokenizeLine(line: string): TokenStyle[] {
-  const tokens: TokenStyle[] = []
-  let i = 0
+  try {
+    const tokens: TokenStyle[] = []
+    let i = 0
 
-  while (i < line.length) {
-    if (line[i] === '/' && i + 1 < line.length && line[i + 1] === '/') {
-      tokens.push({ text: line.slice(i), className: 'text-eda-text-tertiary italic' })
-      return tokens
-    }
-
-    if (line[i] === '"') {
-      const end = line.indexOf('"', i + 1)
-      if (end === -1) { tokens.push({ text: line.slice(i), className: 'text-green-400' }); return tokens }
-      tokens.push({ text: line.slice(i, end + 1), className: 'text-green-400' })
-      i = end + 1
-      continue
-    }
-
-    if (line[i] === "'" && i + 2 < line.length && line[i + 2] === "'") {
-      tokens.push({ text: line.slice(i, i + 3), className: 'text-green-400' })
-      i += 3
-      continue
-    }
-
-    if (/[0-9]/.test(line[i]) && (i === 0 || /[\s,([=+\-/*]/.test(line[i - 1]))) {
-      let num = ''
-      while (i < line.length && /[0-9'xz?bhod]/.test(line[i])) { num += line[i]; i++ }
-      tokens.push({ text: num, className: 'text-orange-400' })
-      continue
-    }
-
-    if (/[a-zA-Z_`]/.test(line[i]) || line[i] === '\\') {
-      let word = ''
-      if (line[i] === '\\') { word += '\\'; i++ }
-      while (i < line.length && /[a-zA-Z0-9_$]/.test(line[i])) { word += line[i]; i++ }
-      const lower = word.toLowerCase().replace(/^`/, '')
-      if (SV_DIRECTIVES.has(word) || (word.startsWith('`') && word.length > 1)) {
-        tokens.push({ text: word, className: 'text-pink-400 font-semibold' })
-      } else if (SV_KEYWORDS.has(lower) || lower.startsWith('uvm_')) {
-        tokens.push({ text: word, className: 'text-pink-400' })
-      } else if (i < line.length && line[i] === '(') {
-        tokens.push({ text: word, className: 'text-eda-accent' })
-      } else if (word.startsWith('`')) {
-        tokens.push({ text: word, className: 'text-pink-400 font-semibold' })
-      } else {
-        tokens.push({ text: word, className: 'text-eda-text' })
+    while (i < line.length) {
+      if (line[i] === '/' && i + 1 < line.length && line[i + 1] === '/') {
+        tokens.push({ text: line.slice(i), className: 'text-eda-text-tertiary italic' })
+        return tokens
       }
-      continue
-    }
 
-    const operators = /[{}()\[\];,:.=+*/<>!&|^~%@#$?]/
-    if (operators.test(line[i])) {
-      tokens.push({ text: line[i], className: 'text-eda-text-secondary' })
+      if (line[i] === '"') {
+        const end = line.indexOf('"', i + 1)
+        if (end === -1) { tokens.push({ text: line.slice(i), className: 'text-green-400' }); return tokens }
+        tokens.push({ text: line.slice(i, end + 1), className: 'text-green-400' })
+        i = end + 1
+        continue
+      }
+
+      if (line[i] === "'" && i + 2 < line.length && line[i + 2] === "'") {
+        tokens.push({ text: line.slice(i, i + 3), className: 'text-green-400' })
+        i += 3
+        continue
+      }
+
+      if (/[0-9]/.test(line[i]) && (i === 0 || /[\s,([=+\-/*]/.test(line[i - 1]))) {
+        let num = ''
+        while (i < line.length && /[0-9'xz?bhod]/.test(line[i])) { num += line[i]; i++ }
+        tokens.push({ text: num, className: 'text-orange-400' })
+        continue
+      }
+
+      if (/[a-zA-Z_`]/.test(line[i]) || line[i] === '\\') {
+        let word = ''
+        if (line[i] === '\\') { word += '\\'; i++ }
+        while (i < line.length && /[a-zA-Z0-9_$]/.test(line[i])) { word += line[i]; i++ }
+        const lower = word.toLowerCase().replace(/^`/, '')
+        if (SV_DIRECTIVES.has(word) || (word.startsWith('`') && word.length > 1)) {
+          tokens.push({ text: word, className: 'text-pink-400 font-semibold' })
+        } else if (SV_KEYWORDS.has(lower) || lower.startsWith('uvm_')) {
+          tokens.push({ text: word, className: 'text-pink-400' })
+        } else if (i < line.length && line[i] === '(') {
+          tokens.push({ text: word, className: 'text-eda-accent' })
+        } else if (word.startsWith('`')) {
+          tokens.push({ text: word, className: 'text-pink-400 font-semibold' })
+        } else {
+          tokens.push({ text: word, className: 'text-eda-text' })
+        }
+        continue
+      }
+
+      const operators = /[{}()\[\];,:.=+*/<>!&|^~%@#$?]/
+      if (operators.test(line[i])) {
+        tokens.push({ text: line[i], className: 'text-eda-text-secondary' })
+        i++
+        continue
+      }
+
+      tokens.push({ text: line[i], className: 'text-eda-text' })
       i++
-      continue
     }
 
-    tokens.push({ text: line[i], className: 'text-eda-text' })
-    i++
+    return tokens
+  } catch {
+    return [{ text: line, className: 'text-eda-text' }]
   }
-
-  return tokens
 }
 
 const FILE_TYPE_BADGES: Record<string, { label: string; color: string }> = {
@@ -153,15 +157,21 @@ const FileViewer: React.FC = () => {
     }
   }, [taskId, showDashboard, dashboardHtml])
 
+  const fileReqId = React.useRef(0)
+
   const handleFileSelect = useCallback(async (file: string) => {
+    const reqId = ++fileReqId.current
+    setFileContent(null)
     setSelectedFile(file)
-    if (taskId) {
-      const content = await getFileContent(taskId, file)
-      setFileContent(content)
-    }
     setSearchQuery('')
     setSearchResults([])
     setShowSearch(false)
+    if (taskId) {
+      const content = await getFileContent(taskId, file)
+      if (reqId === fileReqId.current) {
+        setFileContent(typeof content === 'string' ? content : null)
+      }
+    }
   }, [taskId, getFileContent, setSelectedFile, setFileContent])
 
   const performSearch = useCallback((query: string) => {
@@ -222,16 +232,17 @@ const FileViewer: React.FC = () => {
   ]
 
   const renderCode = () => {
-    if (!fileContent) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full text-eda-text-tertiary p-8">
-          <FileCode className="w-10 h-10 mb-3 opacity-30" />
-          <p className="text-xs">Select a file to view its contents</p>
-        </div>
-      )
-    }
+    try {
+      if (!fileContent) {
+        return (
+          <div className="flex flex-col items-center justify-center h-full text-eda-text-tertiary p-8">
+            <FileCode className="w-10 h-10 mb-3 opacity-30" />
+            <p className="text-xs">Select a file to view its contents</p>
+          </div>
+        )
+      }
 
-    const lines = fileContent.split('\n')
+      const lines = fileContent.split('\n')
 
     return (
       <pre className="flex-1 overflow-auto text-[11px] font-mono leading-relaxed" style={{ scrollbarWidth: 'thin' }}>
@@ -264,6 +275,14 @@ const FileViewer: React.FC = () => {
         </div>
       </pre>
     )
+    } catch {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-eda-text-tertiary p-8">
+          <FileCode className="w-10 h-10 mb-3 opacity-30" />
+          <p className="text-xs">Error rendering file content</p>
+        </div>
+      )
+    }
   }
 
   const hasFiles = generatedFiles.length > 0
