@@ -42,8 +42,11 @@ class FieldDef(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def coerce_reset(cls, data):
+    def coerce_fields(cls, data):
         if isinstance(data, dict):
+            if "width" in data:
+                w = data.pop("width")
+                data.setdefault("bits", str(w) if isinstance(w, int) else w)
             if "reset" in data and isinstance(data["reset"], (int, float)):
                 val = int(data["reset"])
                 data["reset"] = str(val) if val == 0 else f"'h{val:X}" if val > 9 else str(val)
