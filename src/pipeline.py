@@ -52,9 +52,17 @@ def generate_coverage_html_report(path: str, spec: DesignSpec, qs: QualityScore,
             raccess = reg.access if hasattr(reg, "access") else "rw"
             rcov = max(0.0, min(100.0, qs.register_coverage_score * 100 + (hash(rname) % 20 - 10)))
             rcolor = "#00d4aa" if rcov >= 90 else "#ffd93d" if rcov >= 70 else "#ff6b6b"
+            if hasattr(reg, 'address') and reg.address:
+                raw = reg.address
+                try:
+                    addr_val = int(str(raw).lstrip("0x").rstrip("h"), 16)
+                except (ValueError, TypeError):
+                    addr_val = i * 4
+            else:
+                addr_val = i * 4
             reg_rows += f"""<tr>
   <td>{rname}</td>
-  <td>0x{reg.address if hasattr(reg, 'address') else i * 4:02X}</td>
+  <td>0x{addr_val:02X}</td>
   <td>{raccess.upper()}</td>
   <td><div class="bar" style="width:100%;background:#444;max-width:120px;"><div class="bar-fill" style="width:{rcov:.0f}%;background:{rcolor};"></div></div></td>
   <td style="color:{rcolor}">{rcov:.0f}%</td>
