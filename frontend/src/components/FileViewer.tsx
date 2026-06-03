@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileCode, FileText, Package, Database, Cpu, ClipboardCheck, ArrowDownToLine } from 'lucide-react'
+import { FileCode, FileText, Package, Database, Cpu, ClipboardCheck, ArrowDownToLine, BarChart3 } from 'lucide-react'
 import useAppStore from '../store/appStore'
 import { useGenerationAPI } from '../hooks/useGenerationAPI'
 import { useState } from 'react'
@@ -16,6 +16,24 @@ const FileViewer: React.FC = () => {
   } = useAppStore()
 
   const { getFileContent, downloadFile, downloadAll } = useGenerationAPI()
+  const [showDashboard, setShowDashboard] = useState(false)
+  const [dashboardHtml, setDashboardHtml] = useState<string | null>(null)
+
+  const loadDashboard = async () => {
+    if (!taskId) return
+    setShowDashboard(!showDashboard)
+    if (!showDashboard && !dashboardHtml) {
+      try {
+        const base = window.location.origin
+        const resp = await fetch(`${base}/api/generate/${taskId}/dashboard`)
+        if (resp.ok) {
+          setDashboardHtml(await resp.text())
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
   const [copied, setCopied] = useState(false)
 
   const handleFileSelect = async (file: string) => {
@@ -131,15 +149,28 @@ const FileViewer: React.FC = () => {
           )}
         </div>
         
-        {isComplete && taskId && (
-          <button
-            onClick={() => downloadAll(taskId)}
-            className="flex items-center gap-1.5 text-xs text-eda-accent hover:text-eda-accent-hover transition-colors"
-          >
-            <ArrowDownToLine className="w-3.5 h-3.5" />
-            Download ZIP
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {isComplete && taskId && (
+            <>
+              <button
+                onClick={loadDashboard}
+                className={`flex items-center gap-1.5 text-xs transition-colors ${
+                  showDashboard ? 'text-eda-accent' : 'text-eda-text-tertiary hover:text-eda-accent'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                Dashboard
+              </button>
+              <button
+                onClick={() => downloadAll(taskId)}
+                className="flex items-center gap-1.5 text-xs text-eda-accent hover:text-eda-accent-hover transition-colors"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                Download ZIP
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -216,7 +247,16 @@ const FileViewer: React.FC = () => {
             </div>
           )}
           
-          {renderCode()}
+          {showDashboard && dashboardHtml ? (
+            <iframe
+              srcDoc={dashboardHtml}
+              className="w-full h-full border-0"
+              title="Coverage Dashboard"
+              sandbox="allow-scripts"
+            />
+          ) : (
+            renderCode()
+          )}
         </div>
       </div>
     </div>

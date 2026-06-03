@@ -32,16 +32,18 @@ class InterfaceDef(BaseModel):
     name: str = "bus"
     signals: List[SignalDef] = Field(min_length=1)
     description: Optional[str] = None
+
+class FieldDef(BaseModel):
+    name: str
+    bits: str
+    description: Optional[str] = None
     access: Optional[str] = None
     reset: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
-    def alias_width(cls, data):
+    def coerce_reset(cls, data):
         if isinstance(data, dict):
-            if "width" in data and "bits" not in data:
-                w = data.pop("width")
-                data["bits"] = str(w) if isinstance(w, int) else w
             if "reset" in data and isinstance(data["reset"], (int, float)):
                 val = int(data["reset"])
                 data["reset"] = str(val) if val == 0 else f"'h{val:X}" if val > 9 else str(val)

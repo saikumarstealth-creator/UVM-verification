@@ -266,6 +266,21 @@ async def download_all_files(task_id: str):
     )
 
 
+@app.get("/api/generate/{task_id}/dashboard")
+async def get_coverage_dashboard(task_id: str):
+    """Get the generated coverage dashboard HTML."""
+    pipeline = pipeline_manager.get_pipeline(task_id)
+    if not pipeline:
+        raise HTTPException(status_code=404, detail=f"Pipeline {task_id} not found")
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dashboard_path = os.path.join(repo_root, "output", task_id, "coverage_summary.html")
+    if not os.path.exists(dashboard_path):
+        raise HTTPException(status_code=404, detail="Coverage dashboard not yet generated for this pipeline")
+    with open(dashboard_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    return Response(content=html, media_type="text/html")
+
+
 @app.get("/api/generate/{task_id}/ipxact")
 async def download_ipxact(task_id: str):
     """Download IP-XACT XML for a completed pipeline."""
