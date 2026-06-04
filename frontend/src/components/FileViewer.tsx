@@ -82,7 +82,12 @@ function tokenizeLine(line: string): TokenStyle[] {
       if (/[a-zA-Z_`]/.test(line[i]) || line[i] === '\\') {
         let word = ''
         if (line[i] === '\\') { word += '\\'; i++ }
-        while (i < line.length && /[a-zA-Z0-9_$]/.test(line[i])) { word += line[i]; i++ }
+        while (i < line.length && /[a-zA-Z0-9_$`]/.test(line[i])) { word += line[i]; i++ }
+        if (word === '') {
+          tokens.push({ text: line[i], className: 'text-eda-text' })
+          i++
+          continue
+        }
         const lower = word.toLowerCase().replace(/^`/, '')
         if (SV_DIRECTIVES.has(word) || (word.startsWith('`') && word.length > 1)) {
           tokens.push({ text: word, className: 'text-pink-400 font-semibold' })
