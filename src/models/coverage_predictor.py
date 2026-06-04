@@ -221,23 +221,23 @@ class CoveragePredictor:
         X_scaled = self._scaler.fit_transform(X)
         n_feat = X_scaled.shape[1]
         rf = RandomForestRegressor(
-            n_estimators=min(500, max(100, n_feat * 30)),
-            max_depth=min(20, max(5, n_feat * 3)),
-            min_samples_leaf=2,
+            n_estimators=min(200, max(50, n_feat * 10)),
+            max_depth=min(15, max(3, n_feat * 2)),
+            min_samples_leaf=4,
             random_state=self.random_state,
             n_jobs=-1,
         )
         gbr = GradientBoostingRegressor(
-            n_estimators=min(400, max(100, n_feat * 25)),
-            max_depth=min(10, max(3, n_feat * 2)),
-            learning_rate=0.06,
+            n_estimators=min(150, max(50, n_feat * 8)),
+            max_depth=min(8, max(3, n_feat)),
+            learning_rate=0.08,
             subsample=0.85,
             random_state=self.random_state,
         )
         lr = LinearRegression()
         try:
-            rf_cv = cross_val_score(rf, X_scaled, y, cv=min(5, len(X) // 10))
-            gbr_cv = cross_val_score(gbr, X_scaled, y, cv=min(5, len(X) // 10))
+            rf_cv = cross_val_score(rf, X_scaled, y, cv=min(3, len(X) // 20))
+            gbr_cv = cross_val_score(gbr, X_scaled, y, cv=min(3, len(X) // 20))
             logger.debug("RF CV: %.3f +/- %.3f", rf_cv.mean(), rf_cv.std())
             logger.debug("GBR CV: %.3f +/- %.3f", gbr_cv.mean(), gbr_cv.std())
         except Exception:
@@ -317,6 +317,12 @@ class CoveragePredictor:
     def predict_coverage(
         self, spec: Any, _generated_files: Optional[Dict] = None
     ) -> Dict[str, Any]:
+        # Lazy training on first call — fast with small n_samples
+        if not self._fitted and HAS_SKLEARN:
+            try:
+                self.train_synthetic(n_samples=1000)
+            except Exception:
+                pass
         feat = SpecFeatures.from_spec(spec)
         if not self._fitted or not HAS_SKLEARN:
             return self._heuristic_prediction(feat)

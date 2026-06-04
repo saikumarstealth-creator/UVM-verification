@@ -256,10 +256,6 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self._rl_learner: Optional[AdvancedReinforcementLearner] = None
         self._code_validator: Optional[AdvancedCodeValidator] = None
         self._coverage_predictor = CoveragePredictor(random_state=42)
-        try:
-            self._coverage_predictor.train_synthetic(n_samples=50000)
-        except Exception as e:
-            logger.warning("CoveragePredictor init failed: %s", e)
 
         self._metrics = MetricsTracker()
         self._cache = GenerationCache(ttl_seconds=cache_ttl) if enable_caching else None
@@ -392,7 +388,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "protocol": protocol,
         })
 
-        # Coverage prediction
+        # Coverage prediction (lazy-trained by CoveragePredictor on first call)
         try:
             self.last_coverage_prediction = self._coverage_predictor.predict_coverage(spec, final_result.files)
         except Exception as e:
