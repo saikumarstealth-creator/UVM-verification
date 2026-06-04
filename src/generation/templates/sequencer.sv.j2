@@ -2,7 +2,15 @@
 class {{ spec.design_name }}_sequencer extends uvm_sequencer #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_sequencer)
 
+  virtual {{ spec.design_name }}_intf vif;
+
   function new(string n, uvm_component p);
     super.new(n, p);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db #(virtual {{ spec.design_name }}_intf)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", $sformatf("Virtual interface not set for %s", get_full_name()))
   endfunction
 endclass
