@@ -282,12 +282,14 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     end
 {% endif %}
 
-    if (tr.addr inside {3'h3, 3'h4, 3'h7}) begin
+    if (tr.addr inside { {% for r in regs %}{{ addr_bits }}'h{{ r.address.replace('0x', '').replace('h', '') }}{% if not loop.last %}, {% endif %}{% endfor %} }) begin
       if (tr.data === expected) begin
         match_count++;
+        reg_match_count[tr.addr]++;
         `uvm_info("SB", $sformatf("READ MATCH: addr=0x%0h data=0x%02h", tr.addr, tr.data), UVM_HIGH)
       end else begin
         mismatch_count++;
+        reg_mismatch_count[tr.addr]++;
         log_error($sformatf("READ MISMATCH: addr=0x%0h expected=0x%02h got=0x%02h",
                   tr.addr, expected, tr.data));
       end
@@ -636,6 +638,10 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     end
     cov_wordlen_seen[dbits - 5] = 1;
     cov_parity_seen[pen + eps*2] = 1;
+{% if p == "uart" %}
+    if (cov_handle != null)
+      cov_handle.sample_uart_config(baud, dbits, sbits, pen + eps*2);
+{% endif %}
     `uvm_info("SB_REC_CFG", $sformatf("record_config: baud=%0d dbits=%0d sbits=%0d pen=%0d eps=%0d",
               baud, dbits, sbits, pen, eps), UVM_MEDIUM)
   endfunction

@@ -34,7 +34,7 @@ Examples:
     parser.add_argument("--auto-train", action="store_true", help="Enable coverage-driven auto-training loop")
     parser.add_argument("--max-iterations", type=int, default=5, help="Max auto-training iterations (default: 5)")
     parser.add_argument("--coverage-target", type=float, default=90.0, help="Coverage target %% (default: 90)")
-    parser.add_argument("--simulator", default="stub", choices=["stub", "icarus", "vcs", "questa"],
+    parser.add_argument("--simulator", default="stub", choices=["stub", "icarus", "vcs", "questa", "xcelium", "xrun"],
                         help="Simulator backend (default: stub)")
     return parser
 

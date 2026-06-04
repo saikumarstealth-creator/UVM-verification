@@ -46,7 +46,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.3.0"
     api_version: str = "v1"
-    simulators: List[str] = ["stub", "icarus"]
+    simulators: List[str] = ["stub", "icarus", "vcs", "questa", "xcelium"]
 
 
 class VersionInfo(BaseModel):

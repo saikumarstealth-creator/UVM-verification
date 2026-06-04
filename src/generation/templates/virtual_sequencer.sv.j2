@@ -13,8 +13,17 @@ class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
 
 {% if p == "uart" %}
   // Additional UART sub-sequencers for multi-port / layered protocols
+  // Number of sub-seqrs = number of interfaces in spec
   uvm_sequencer #({{ spec.design_name }}_seq_item) uart0_seqr;
+{% if spec.interfaces|length > 1 %}
   uvm_sequencer #({{ spec.design_name }}_seq_item) uart1_seqr;
+{% endif %}
+{% if spec.interfaces|length > 2 %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) uart2_seqr;
+{% endif %}
+{% if spec.interfaces|length > 3 %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) uart3_seqr;
+{% endif %}
 {% elif p == "apb" %}
   uvm_sequencer #({{ spec.design_name }}_seq_item) apb_seqr;
 {% elif p == "axi4lite" %}
@@ -36,7 +45,15 @@ class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
 {% if p == "uart" %}
     void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "bus_seqr", bus_seqr));
     void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart0_seqr", uart0_seqr));
+{% if spec.interfaces|length > 1 %}
     void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart1_seqr", uart1_seqr));
+{% endif %}
+{% if spec.interfaces|length > 2 %}
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart2_seqr", uart2_seqr));
+{% endif %}
+{% if spec.interfaces|length > 3 %}
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart3_seqr", uart3_seqr));
+{% endif %}
 {% else %}
     void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "bus_seqr", bus_seqr));
 {% endif %}

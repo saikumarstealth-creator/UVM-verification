@@ -125,7 +125,7 @@ class AutoTrainConfig(BaseModel):
     max_iterations: int = Field(default=5, ge=1, le=50)
     coverage_target: float = Field(default=90.0, ge=0.0, le=100.0)
     coverage_gain_min: float = Field(default=2.0, ge=0.0, description="Min % gain per iteration to continue")
-    simulator: str = Field(default="stub", pattern=r"^(stub|icarus|vcs|questa)$")
+    simulator: str = Field(default="stub", pattern=r"^(stub|icarus|vcs|questa|xcelium|xrun)$")
     sim_timeout: int = Field(default=300, ge=10)
     num_seeds: int = Field(default=3, ge=1, le=20, description="Number of regression seeds per iteration")
     generate_regression_test: bool = True

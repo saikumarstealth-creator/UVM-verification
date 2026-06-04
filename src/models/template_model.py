@@ -21,19 +21,21 @@ class TemplateModel(GenerationModel):
     }
 
     TEMPLATE_MAP = {
+        "env/{name}_env.sv": "env.sv.j2",
+        "env/{name}_scoreboard.sv": "scoreboard.sv.j2",
+        "env/{name}_coverage_collector.sv": "coverage_collector.sv.j2",
+        "agent/{name}_driver.sv": "driver.sv.j2",
+        "agent/{name}_monitor.sv": "monitor.sv.j2",
+        "agent/{name}_sequencer.sv": "sequencer.sv.j2",
+        "agent/{name}_sequence_item.sv": "sequence_item.sv.j2",
+        "sequences/{name}_sequence.sv": "sequence.sv.j2",
+        "tests/{name}_test.sv": "test.sv.j2",
+        "sequences/{name}_reg_model_adapter.sv": "reg_model_adapter.sv.j2",
+        "sequences/{name}_register_info_pkg.sv": "register_info_pkg.sv.j2",
+        "{name}_reg_block.sv": "reg_block.sv.j2",
+        "{name}_interface.sv": "interface.sv.j2",
         "testbench.sv": "testbench.sv.j2",
-        "interface_{name}.sv": "interface.sv.j2",
-        "sequence_item_{name}.sv": "sequence_item.sv.j2",
-        "driver_{name}.sv": "driver.sv.j2",
-        "monitor_{name}.sv": "monitor.sv.j2",
-        "serial_monitor_{name}.sv": "serial_monitor.sv.j2",
-        "agent_{name}.sv": "agent.sv.j2",
-        "scoreboard_{name}.sv": "scoreboard.sv.j2",
-        "coverage_collector_{name}.sv": "coverage_collector.sv.j2",
-        "ral_model_{name}.sv": "ral_model.sv.j2",
-        "base_sequence_{name}.sv": "sequence.sv.j2",
-        "test_{name}.sv": "test.sv.j2",
-        "environment_{name}.sv": "env.sv.j2",
+        "rtl/protocol_core.v": "rtl/protocol_core.v.j2",
     }
 
     RTL_MAP = {

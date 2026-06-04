@@ -1,0 +1,129 @@
+// UVM Register Metadata Package for {{ spec.design_name }}
+// Auto-generated from YAML spec — drives metadata-driven sequences
+// Enables generic register access without protocol-specific knowledge
+{% set regs = spec.registers if spec.registers else [] %}
+{% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
+{% set max_addr_val = addr_ints|max if addr_ints else 0 %}
+{% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
+{% set sizes = regs|map(attribute='size')|select('number')|list %}
+{% set data_width = sizes|max if sizes else 8 %}
+
+package {{ spec.design_name }}_reg_info_pkg;
+
+  // -----------------------------------------------------------------------
+  // Access Policy Enum
+  // -----------------------------------------------------------------------
+  typedef enum bit [2:0] {
+    RO  = 3'b001,  // Read-only
+    WO  = 3'b010,  // Write-only
+    RW  = 3'b011,  // Read-Write
+    RC  = 3'b100,  // Read-Clear
+    W1C = 3'b101,  // Write-1-to-Clear
+    NA  = 3'b000   // Not applicable
+  } access_policy_e;
+
+  // -----------------------------------------------------------------------
+  // Field Information
+  // -----------------------------------------------------------------------
+  typedef struct {
+    string        name;
+    int           msb;
+    int           lsb;
+    int           width;
+    access_policy_e access;
+    logic [63:0]  reset_val;
+  } field_info_t;
+
+  // -----------------------------------------------------------------------
+  // Register Information
+  // -----------------------------------------------------------------------
+  typedef struct {
+    string        name;
+    logic [{{ addr_bits-1 }}:0] address;
+    int           size;
+    access_policy_e access;
+    logic [63:0]  reset_val;
+    int           num_fields;
+    field_info_t  fields[16];
+  } register_info_t;
+
+  // -----------------------------------------------------------------------
+  // Register Database
+  // -----------------------------------------------------------------------
+  function automatic register_info_t get_register_by_name(string name);
+    register_info_t r;
+    r.name = "";
+    {% for reg in regs %}
+    if (name == "{{ reg.name|lower }}") begin
+      r.name = "{{ reg.name }}";
+      r.address = {{ addr_bits }}'h{{ reg.address.replace('0x', '').replace('h', '') }};
+      r.size = {{ reg.size if reg.size else 8 }};
+      r.reset_val = {% if reg.reset is defined and reg.reset %}{{ reg.size if reg.size else 8 }}'h{{ reg.reset|string|replace('0x', '')|replace('h', '') }}{% else %}'h0{% endif %};
+      {% if reg.access is defined and reg.access %}
+      {% set ra = reg.access|lower %}
+      {% if ra == 'ro' %}r.access = RO;
+      {% elif ra == 'wo' %}r.access = WO;
+      {% elif ra == 'rw' %}r.access = RW;
+      {% elif ra == 'rc' %}r.access = RC;
+      {% elif ra == 'w1c' %}r.access = W1C;
+      {% else %}r.access = RW;
+      {% endif %}
+      {% else %}r.access = RW;
+      {% endif %}
+      {% if reg.fields %}
+      r.num_fields = {{ reg.fields|length }};
+      {% for f in reg.fields %}
+      {% if ':' in f.bits %}{% set parts = f.bits.split(':') %}{% set msb = parts[0]|int %}{% set lsb = parts[1]|int %}{% else %}{% set msb = f.bits|int - 1 %}{% set lsb = 0 %}{% endif %}
+      r.fields[{{ loop.index0 }}].name = "{{ f.name }}";
+      r.fields[{{ loop.index0 }}].msb = {{ msb }};
+      r.fields[{{ loop.index0 }}].lsb = {{ lsb }};
+      r.fields[{{ loop.index0 }}].width = {{ msb - lsb + 1 }};
+      r.fields[{{ loop.index0 }}].reset_val = {% if f.reset is defined and f.reset %}{{ msb - lsb + 1 }}'h{{ f.reset|string|replace('0x', '')|replace('h', '') }}{% else %}'h0{% endif %};
+      {% endfor %}
+      {% else %}
+      r.num_fields = 0;
+      {% endif %}
+      return r;
+    end
+    {% endfor %}
+    return r;
+  endfunction
+
+  function automatic register_info_t get_register_by_offset(logic [{{ addr_bits-1 }}:0] addr);
+    {% for reg in regs %}
+    if (addr == {{ addr_bits }}'h{{ reg.address.replace('0x', '').replace('h', '') }})
+      return get_register_by_name("{{ reg.name|lower }}");
+    {% endfor %}
+    register_info_t r;
+    r.name = "";
+    return r;
+  endfunction
+
+  // -----------------------------------------------------------------------
+  // Register Count
+  // -----------------------------------------------------------------------
+  function automatic int get_num_registers();
+    return {{ regs|length }};
+  endfunction
+
+  // -----------------------------------------------------------------------
+  // Register Name List (for iterating in sequences)
+  // -----------------------------------------------------------------------
+  function automatic void get_all_register_names(ref string names[$]);
+    {% for reg in regs %}
+    names.push_back("{{ reg.name|lower }}");
+    {% endfor %}
+  endfunction
+
+  // -----------------------------------------------------------------------
+  // Access Policy Helpers
+  // -----------------------------------------------------------------------
+  function automatic bit is_readable(access_policy_e ap);
+    return (ap inside {RO, RW, RC});
+  endfunction
+
+  function automatic bit is_writable(access_policy_e ap);
+    return (ap inside {WO, RW, W1C});
+  endfunction
+
+endpackage

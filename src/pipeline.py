@@ -364,6 +364,9 @@ class TBPipeline:
         if sim_type == "questa":
             from src.simulation.questa import QuestaSimulator
             return QuestaSimulator(work_dir=sim_output_path(self.cfg))
+        if sim_type == "xcelium" or sim_type == "xrun":
+            from src.simulation.xcelium import XceliumSimulator
+            return XceliumSimulator(work_dir=sim_output_path(self.cfg))
         return StubSimulator(work_dir=sim_output_path(self.cfg))
 
     def _merge_cfg(self, loaded: PipelineConfig) -> None:
