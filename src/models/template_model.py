@@ -26,13 +26,12 @@ class TemplateModel(GenerationModel):
         "env/{name}_coverage_collector.sv": "coverage_collector.sv.j2",
         "agent/{name}_driver.sv": "driver.sv.j2",
         "agent/{name}_monitor.sv": "monitor.sv.j2",
-        "agent/{name}_sequencer.sv": "sequencer.sv.j2",
+        "agent/{name}_agent.sv": "agent.sv.j2",
         "agent/{name}_sequence_item.sv": "sequence_item.sv.j2",
         "sequences/{name}_sequence.sv": "sequence.sv.j2",
         "tests/{name}_test.sv": "test.sv.j2",
-        "sequences/{name}_reg_model_adapter.sv": "reg_model_adapter.sv.j2",
         "sequences/{name}_register_info_pkg.sv": "register_info_pkg.sv.j2",
-        "{name}_reg_block.sv": "reg_block.sv.j2",
+        "{name}_ral_model.sv": "ral_model.sv.j2",
         "{name}_interface.sv": "interface.sv.j2",
         "testbench.sv": "testbench.sv.j2",
         "rtl/protocol_core.v": "rtl/protocol_core.v.j2",
@@ -105,7 +104,7 @@ class TemplateModel(GenerationModel):
         output_dir = Path(cfg.generation.output_dir) / f"{name}_tb"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for subdir in ["sequences", "tests", "env", "agent"]:
+        for subdir in ["sequences", "tests", "env", "agent", "rtl"]:
             (output_dir / subdir).mkdir(parents=True, exist_ok=True)
 
         generated: Dict[str, str] = {}
