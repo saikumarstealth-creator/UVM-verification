@@ -169,7 +169,10 @@ class PipelineManager:
             tb_pipeline = TBPipeline(pipeline_cfg)
             pipeline.update_step(PipelineStep.ML_GENERATION, 60, "Generating testbench...")
             
-            result = tb_pipeline.run(spec_path)
+            # Run pipeline in a thread executor to avoid blocking the event loop
+            # (keeps WebSocket broadcasts flowing during generation)
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, tb_pipeline.run, spec_path)
             
             try:
                 os.unlink(spec_path)
