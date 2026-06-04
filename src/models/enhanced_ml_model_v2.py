@@ -203,7 +203,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
 
     def __init__(
         self,
-        name: str = "enhanced_ml_model_v2",
+        name_or_config: Any = "enhanced_ml_model_v2",
         config: Optional[Any] = None,
         templates_dir: str = "src/generation/templates",
         strict_validation: bool = True,
@@ -218,6 +218,22 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         enable_caching: bool = True,
         cache_ttl: int = 3600,
     ):
+        # Accept PipelineConfig as first positional arg (test compatibility)
+        if isinstance(name_or_config, PipelineConfig):
+            cfg = name_or_config
+            name = "enhanced_ml_model_v2"
+            self._user_cfg = cfg
+            if cfg.ml:
+                exploration_strategy = cfg.ml.exploration_strategy or exploration_strategy
+                use_llm = cfg.ml.use_llm if hasattr(cfg.ml, 'use_llm') else use_llm
+                use_semantic_encoder = cfg.ml.use_semantic_encoder if hasattr(cfg.ml, 'use_semantic_encoder') else use_semantic_encoder
+                use_learning = cfg.ml.use_learning if hasattr(cfg.ml, 'use_learning') else use_learning
+                learning_storage_path = cfg.ml.learning_storage_path or learning_storage_path
+                strict_validation = cfg.ml.strict_validation if hasattr(cfg.ml, 'strict_validation') else strict_validation
+        elif isinstance(name_or_config, str):
+            name = name_or_config
+        else:
+            name = "enhanced_ml_model_v2"
         super().__init__(name)
 
         self._templates_dir = templates_dir
@@ -383,11 +399,195 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             logger.debug("Coverage prediction failed: %s", e)
             self.last_coverage_prediction = None
 
+        # Store last result for learn() / generate() introspect
+        self._last_generation_result = final_result
+        self._last_spec_dict = spec_dict
+        self._last_design_name = design_name
+        self._last_protocol = protocol
+        self._last_selected_source = selected
+        self._last_spec = spec
+
         # Update cache
         if self._cache and final_result.files and not final_result.errors:
             self._cache.set(spec_dict, protocol, final_result.files)
 
         return final_result.files
+
+    @staticmethod
+    def _coerce_spec_dict(spec_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce raw YAML dict types to what DesignSpec Pydantic model expects."""
+        sd = dict(spec_dict)
+        # Registers: address must be hex string, bits must be string
+        registers = sd.get("registers", [])
+        if registers:
+            coerced = []
+            for r in registers:
+                r = dict(r)
+                addr = r.get("address")
+                if addr is not None:
+                    r["address"] = f"0x{int(addr):x}" if isinstance(addr, int) else str(addr)
+                fields = r.get("fields", [])
+                if fields:
+                    cf = []
+                    for f in fields:
+                        f = dict(f)
+                        b = f.get("bits")
+                        if b is not None:
+                            f["bits"] = str(b)
+                        cf.append(f)
+                    r["fields"] = cf
+                coerced.append(r)
+            sd["registers"] = coerced
+        return sd
+
+    def generate(
+        self,
+        spec_dict: Dict[str, Any],
+        cfg: Optional[PipelineConfig] = None,
+    ) -> Dict[str, Any]:
+        """Public API: generate from raw spec dict (test-compatible interface).
+
+        Returns a rich result dict with ``passed``, ``generated_files``,
+        ``source``, ``strategy``, and ``validation_results``.
+        """
+        try:
+            spec = DesignSpec(**self._coerce_spec_dict(spec_dict))
+        except Exception as e:
+            logger.error("Failed to build DesignSpec from dict: %s", e)
+            return {"passed": False, "generated_files": {}, "source": "error", "strategy": "error"}
+
+        # Auto-train template model if not yet trained
+        if not self._template_model._is_trained:
+            self._template_model.train([spec])
+
+        if cfg is None:
+            cfg = getattr(self, '_user_cfg', None)
+        if cfg is None:
+            from src.config import GenerationConfig, MLConfig
+            strategy_name = self._exploration_strategy.value if hasattr(self._exploration_strategy, 'value') else "ucb"
+            # Reverse-map enum value to MLConfig-accepted string
+            rev = {"epsilon_greedy": "epsilon_greedy", "softmax": "softmax", "ucb": "ucb", "thompson_sampling": "thompson"}
+            strategy_name = rev.get(strategy_name, "ucb")
+            cfg = PipelineConfig(
+                generation=GenerationConfig(templates_dir=self._templates_dir),
+                ml=MLConfig(
+                    enabled=True,
+                    model_type="v2",
+                    use_llm=self._use_llm,
+                    use_semantic_encoder=self._use_semantic_encoder,
+                    use_learning=self._use_learning,
+                    exploration_strategy=strategy_name,
+                    learning_storage_path=self._learning_storage_path,
+                ),
+            )
+
+        files = self.predict(spec, cfg)
+
+        # Build result dict from stored generation result
+        gen = getattr(self, '_last_generation_result', None)
+        passed = bool(files) and (gen is None or not gen.errors)
+
+        result = {
+            "passed": passed,
+            "generated_files": files,
+            "source": gen.source.value if gen else "template",
+            "strategy": gen.strategy_used if gen else "template",
+        }
+
+        # Attach validation results if available
+        if gen and gen.validation_report:
+            val_details = {}
+            for f in gen.validation_report.files:
+                checks = [
+                    {"check_name": i.message.split(":")[0] if ":" in i.message else "syntax",
+                     "passed": i.severity.value != "error",
+                     "message": i.message}
+                    for i in (f.issues or [])
+                ]
+                val_details[f.filename] = {
+                    "passed": f.passed,
+                    "score": f.score,
+                    "error_count": f.error_count,
+                    "checks": checks,
+                }
+            result["validation_results"] = val_details
+
+        self._last_generation_result_dict = result
+        return result
+
+    def learn(self, result: Dict[str, Any], reward: float) -> None:
+        """Feed back a generation result for online learning."""
+        gen = getattr(self, '_last_generation_result', None)
+        if gen is None:
+            logger.warning("No last generation result to learn from")
+            return
+
+        spec_dict = getattr(self, '_last_spec_dict', {})
+        design_name = getattr(self, '_last_design_name', "unknown")
+        protocol = getattr(self, '_last_protocol', "unknown")
+        selected_source = getattr(self, '_last_selected_source', GenerationSource.TEMPLATE)
+
+        # Override auto-computed reward with user-provided one
+        if not self._use_learning:
+            return
+
+        score = gen.score
+        cov_bonus = 0.0
+        if self.last_coverage_prediction:
+            cov_pct = self.last_coverage_prediction.get("coverage", {}).get("expected", 50)
+            cov_bonus = 0.3 if cov_pct >= 80 else (0.1 if cov_pct >= 60 else (-0.2 if cov_pct < 40 else 0.0))
+
+        adjusted_reward = max(-1.0, min(1.0, reward + cov_bonus))
+
+        used_source = gen.source.value if gen.source != selected_source else selected_source.value
+
+        if gen.validation_report:
+            for file_result in gen.validation_report.files:
+                if self._rl_learner:
+                    self._rl_learner.update(
+                        protocol=protocol, file_type=file_result.file_type,
+                        generation_source=used_source,
+                        reward=adjusted_reward if file_result.passed else -0.3,
+                        spec_dict=spec_dict,
+                        metadata={"design_name": design_name, "score": file_result.score,
+                                  "error_count": file_result.error_count},
+                    )
+                if self._pattern_learner:
+                    if file_result.passed and file_result.score >= 0.7:
+                        self._pattern_learner.record_success(
+                            file_type=file_result.file_type, protocol=protocol, score=file_result.score)
+                    else:
+                        for issue in file_result.issues:
+                            if issue.severity.value == "error":
+                                self._pattern_learner.record_error(
+                                    error_msg=issue.message, file_type=file_result.file_type,
+                                    line_num=issue.line_number)
+
+        self._generation_history.append({
+            "timestamp": datetime.now().isoformat(),
+            "design_name": design_name, "protocol": protocol,
+            "selected_source": selected_source.value,
+            "actual_source": gen.source.value,
+            "strategy_used": gen.strategy_used, "score": score,
+            "passed": result.get("passed", False), "reward": adjusted_reward,
+        })
+
+        if self._rl_learner and len(self._generation_history) % 10 == 0:
+            self._rl_learner.replay_experiences(batch_size=32)
+
+    def save_learning_state(self, path: str) -> None:
+        """Public: persist learning state to disk."""
+        old_path = self._learning_storage_path
+        self._learning_storage_path = path
+        self._save_learning_state()
+        self._learning_storage_path = old_path
+
+    def load_learning_state(self, path: str) -> None:
+        """Public: restore learning state from disk."""
+        old_path = self._learning_storage_path
+        self._learning_storage_path = path
+        self._load_learning_state()
+        self._learning_storage_path = old_path
 
     def _get_strategy_plan(self, primary: GenerationSource, available: List[str]) -> List[str]:
         all_strategies = ["template"]

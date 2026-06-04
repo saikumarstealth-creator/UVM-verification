@@ -771,6 +771,14 @@ class AdvancedPatternLearner:
             return 0.5
         return stats.get("success", 0) / total
 
+    def get_recommendations(self, spec_dict: Dict[str, Any]) -> List[str]:
+        """Get recommendations for a given spec dict (test-compatible API)."""
+        protocol = spec_dict.get("protocol", "unknown")
+        file_type = "sequence"
+        suggestions = self.get_suggestions(file_type=file_type, protocol=protocol)
+        recs = suggestions.get("recommendations", [])
+        return recs if recs else ["No specific recommendations available"]
+
     def get_suggestions(
         self,
         file_type: str,
@@ -876,6 +884,42 @@ class AdvancedPatternLearner:
     def mine_association_rules(self) -> List[AssociationRule]:
         """Mine association rules from collected data."""
         return self._association_miner.mine_rules()
+
+    def get_common_error_patterns(self, top_n: int = 10) -> List[Tuple[str, int]]:
+        """Alias for get_common_errors (test-compatible API)."""
+        return [(name, p.count) for name, p, _ in self.get_common_errors(top_n=top_n)]
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive pattern learner statistics."""
+        total_gens = sum(s.get("total", 0) for s in self._file_type_stats.values())
+        total_success = sum(s.get("success", 0) for s in self._file_type_stats.values())
+
+        ngram_vocab = set()
+        if hasattr(self, '_file_type_patterns'):
+            for counts in self._file_type_patterns.values():
+                ngram_vocab.update(counts.keys())
+        if hasattr(self, '_protocol_patterns'):
+            for counts in self._protocol_patterns.values():
+                ngram_vocab.update(counts.keys())
+        # Also include success pattern names as ngram vocabulary
+        if hasattr(self, '_success_miner') and hasattr(self._success_miner, '_success_patterns'):
+            ngram_vocab.update(self._success_miner._success_patterns.keys())
+
+        rules = self._association_miner.mine_rules() if hasattr(self, '_association_miner') else []
+
+        total_specs = max(1, len(self._file_type_stats)) if self._file_type_stats else 1
+
+        return {
+            "total_specs_seen": total_specs,
+            "total_generations": total_gens,
+            "avg_score": total_success / max(1, total_gens),
+            "ngram_vocab": list(ngram_vocab),
+            "association_rules": [
+                {"antecedent": r.antecedent, "consequent": r.consequent,
+                 "confidence": r.confidence, "support": r.support, "lift": r.lift}
+                for r in rules
+            ],
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         return {

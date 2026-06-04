@@ -151,6 +151,39 @@ class PrioritizedReplayBuffer:
                 if priority > self._max_priority:
                     self._max_priority = priority
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "capacity": self.capacity,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "_max_priority": self._max_priority,
+            "_beta_increment": self._beta_increment,
+            "experiences": [
+                {"state": e.state, "action": e.action, "reward": e.reward,
+                 "next_state": e.next_state, "td_error": e.td_error,
+                 "priority": e.priority, "metadata": e.metadata}
+                for e in self.buffer
+            ],
+            "priorities": list(self.priorities),
+            "_episode_rewards": self._episode_rewards,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "PrioritizedReplayBuffer":
+        buf = cls(capacity=d.get("capacity", 10000), alpha=d.get("alpha", 0.6), beta=d.get("beta", 0.4))
+        buf._max_priority = d.get("_max_priority", 1.0)
+        buf._beta_increment = d.get("_beta_increment", (1.0 - 0.4) / 10000)
+        for ed in d.get("experiences", []):
+            exp = Experience(
+                state=ed["state"], action=ed["action"], reward=ed["reward"],
+                next_state=ed.get("next_state"), td_error=ed.get("td_error", 0.0),
+                priority=ed.get("priority", 1.0), metadata=ed.get("metadata"),
+            )
+            buf.buffer.append(exp)
+        buf.priorities.extend(d.get("priorities", []))
+        buf._episode_rewards = d.get("_episode_rewards", [])
+        return buf
+
     def sample_recent(self, batch_size: int, recency_weight: float = 0.7) -> List[Experience]:
         if len(self.buffer) < batch_size:
             return list(self.buffer)
@@ -192,6 +225,9 @@ class EligibilityTraces:
         self.lambda_ = lambda_
         self.discount = discount
         self._traces: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+
+    def __len__(self) -> int:
+        return sum(len(actions) for actions in self._traces.values())
 
     def update(self, state: str, action: str) -> None:
         for s in list(self._traces.keys()):
@@ -718,11 +754,40 @@ class AdvancedReinforcementLearner:
     def is_converged(self) -> bool:
         return self._converged
 
+    def get_state_stats(self) -> Dict[str, Dict[str, Any]]:
+        """Return per-state statistics (best action, Q-value, visits)."""
+        stats = {}
+        for state in self._q_values:
+            actions = self._q_values[state]
+            if not actions:
+                continue
+            best_action = max(actions.keys(), key=lambda a: actions[a])
+            best_value = actions[best_action]
+            action_stats = self._action_stats.get(state, {})
+            total_visits = sum(
+                action_stats[a].visit_count for a in actions if a in action_stats
+            )
+            stats[state] = {
+                "best_action": best_action,
+                "best_q_value": best_value,
+                "num_actions": len(actions),
+                "visit_count": total_visits,
+                "actions": {
+                    a: {
+                        "q_value": self._q_values[state][a],
+                        "visit_count": action_stats[a].visit_count if a in action_stats else 0,
+                        "total_reward": action_stats[a].total_reward if a in action_stats else 0.0,
+                    }
+                    for a in actions
+                },
+            }
+        return stats
+
     def get_performance_stats(self) -> Dict[str, Any]:
         buffer_stats = self._replay_buffer.get_recent_performance()
         all_states = list(self._q_values.keys())
         total_actions = sum(len(v) for v in self._q_values.values())
-        state_stats = {}
+        state_stats = self.get_state_stats()
         for state in all_states:
             actions = self._q_values[state]
             if not actions:
@@ -791,6 +856,7 @@ class AdvancedReinforcementLearner:
                 for state, actions in self._action_stats.items()
             },
             "best_actions": self._best_actions.copy(),
+            "replay_buffer": self._replay_buffer.to_dict() if hasattr(self._replay_buffer, 'to_dict') else {},
         }
 
     @classmethod
@@ -821,6 +887,10 @@ class AdvancedReinforcementLearner:
                 learner._q_values_q2[state][action] = value
         for state, value in d.get("state_values", {}).items():
             learner._state_values[state] = value
+        rb_dict = d.get("replay_buffer", {})
+        if rb_dict and hasattr(PrioritizedReplayBuffer, 'from_dict'):
+            learner._replay_buffer = PrioritizedReplayBuffer.from_dict(rb_dict)
+
         for state, actions in d.get("action_stats", {}).items():
             if state not in learner._action_stats:
                 learner._action_stats[state] = {}
