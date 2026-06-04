@@ -105,7 +105,7 @@ class TemplateModel(GenerationModel):
         output_dir = Path(cfg.generation.output_dir) / f"{name}_tb"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for subdir in ["sequences", "tests", "env"]:
+        for subdir in ["sequences", "tests", "env", "agent"]:
             (output_dir / subdir).mkdir(parents=True, exist_ok=True)
 
         generated: Dict[str, str] = {}
