@@ -1,0 +1,8 @@
+// UVM Sequencer for {{ spec.design_name }}
+class {{ spec.design_name }}_sequencer extends uvm_sequencer #({{ spec.design_name }}_seq_item);
+  `uvm_component_utils({{ spec.design_name }}_sequencer)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+endclass

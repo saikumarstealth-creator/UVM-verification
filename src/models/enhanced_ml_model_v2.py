@@ -213,10 +213,10 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         llm_model_name: Optional[str] = None,
         learning_storage_path: Optional[str] = None,
         exploration_strategy: str = "ucb",
-        max_concurrent_strategies: int = 3,
+        max_concurrent_strategies: int = 6,
         quality_threshold: float = 0.6,
         enable_caching: bool = True,
-        cache_ttl: int = 3600,
+        cache_ttl: int = 86400,
     ):
         # Accept PipelineConfig as first positional arg (test compatibility)
         if isinstance(name, PipelineConfig):
@@ -257,7 +257,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self._code_validator: Optional[AdvancedCodeValidator] = None
         self._coverage_predictor = CoveragePredictor(random_state=42)
         try:
-            self._coverage_predictor.train_synthetic(n_samples=5000)
+            self._coverage_predictor.train_synthetic(n_samples=50000)
         except Exception as e:
             logger.warning("CoveragePredictor init failed: %s", e)
 
@@ -292,7 +292,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                 self._rl_learner = AdvancedReinforcementLearner(
                     exploration_strategy=self._exploration_strategy,
                     use_eligibility_traces=True,
-                    replay_buffer_capacity=10000,
+                    replay_buffer_capacity=100000,
                 )
             if self._learning_storage_path and os.path.exists(self._learning_storage_path):
                 self._load_learning_state()
@@ -905,10 +905,10 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "error_count": final_result.validation_report.total_errors if final_result.validation_report else 0,
         }
         self._generation_history.append(history_entry)
-        if len(self._generation_history) > 500:
-            self._generation_history = self._generation_history[-500:]
+        if len(self._generation_history) > 2000:
+            self._generation_history = self._generation_history[-2000:]
         if self._rl_learner and len(self._generation_history) % 10 == 0:
-            self._rl_learner.replay_experiences(batch_size=32)
+            self._rl_learner.replay_experiences(batch_size=128)
         if self._learning_storage_path:
             self._save_learning_state()
 

@@ -21,24 +21,23 @@ class TemplateModel(GenerationModel):
     }
 
     TEMPLATE_MAP = {
-        "env/{name}_env.sv": "env.sv.j2",
-        "env/{name}_scoreboard.sv": "scoreboard.sv.j2",
-        "env/{name}_coverage_collector.sv": "coverage_collector.sv.j2",
-        "agent/{name}_driver.sv": "driver.sv.j2",
-        "agent/{name}_monitor.sv": "monitor.sv.j2",
-        "agent/{name}_agent.sv": "agent.sv.j2",
-        "agent/{name}_sequence_item.sv": "sequence_item.sv.j2",
-        "sequences/{name}_sequence.sv": "sequence.sv.j2",
-        "tests/{name}_test.sv": "test.sv.j2",
-        "sequences/{name}_register_info_pkg.sv": "register_info_pkg.sv.j2",
-        "{name}_ral_model.sv": "ral_model.sv.j2",
-        "{name}_interface.sv": "interface.sv.j2",
         "testbench.sv": "testbench.sv.j2",
-        "rtl/protocol_core.v": "rtl/protocol_core.v.j2",
-    }
-
-    RTL_MAP = {
-        "rtl/protocol_core.v": "rtl/protocol_core.v.j2",
+        "interface_{name}.sv": "interface.sv.j2",
+        "driver_{name}.sv": "driver.sv.j2",
+        "monitor_{name}.sv": "monitor.sv.j2",
+        "sequencer_{name}.sv": "sequencer.sv.j2",
+        "agent_{name}.sv": "agent.sv.j2",
+        "env_{name}.sv": "env.sv.j2",
+        "scoreboard_{name}.sv": "scoreboard.sv.j2",
+        "ral_{name}.sv": "ral_model.sv.j2",
+        "test_{name}.sv": "test.sv.j2",
+        "compile.f": "compile.f.j2",
+        "top_tb.sv": "top_tb.sv.j2",
+        "coverage_collector_{name}.sv": "coverage_collector.sv.j2",
+        "sequence_item_{name}.sv": "sequence_item.sv.j2",
+        "sequence_{name}.sv": "sequence.sv.j2",
+        "register_info_pkg_{name}.sv": "register_info_pkg.sv.j2",
+        "protocol_core_{name}.v": "rtl/protocol_core.v.j2",
     }
 
     PROTOCOL_CHECKER_MAP = {
@@ -104,8 +103,7 @@ class TemplateModel(GenerationModel):
         output_dir = Path(cfg.generation.output_dir) / f"{name}_tb"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for subdir in ["sequences", "tests", "env", "agent", "rtl"]:
-            (output_dir / subdir).mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         generated: Dict[str, str] = {}
 
@@ -167,18 +165,6 @@ class TemplateModel(GenerationModel):
         # Assertions
         for out_pattern, template_file in self.ASSERTION_MAP.items():
             out_name = out_pattern.format(name=name)
-            tmpl = env.get_template(template_file)
-            content = tmpl.render(spec=spec)
-            out_path = output_dir / out_name
-            if out_path.exists() and not cfg.generation.overwrite:
-                continue
-            out_path.write_text(content, encoding="utf-8")
-            generated[out_name] = str(out_path)
-
-        # RTL files
-        rtl_dir = output_dir / "rtl"
-        rtl_dir.mkdir(parents=True, exist_ok=True)
-        for out_name, template_file in self.RTL_MAP.items():
             tmpl = env.get_template(template_file)
             content = tmpl.render(spec=spec)
             out_path = output_dir / out_name

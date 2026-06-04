@@ -13,16 +13,16 @@ class TBMetrics:
         expected = {
             "testbench.sv",
             f"interface_{spec.design_name}.sv",
-            f"sequence_item_{spec.design_name}.sv",
             f"driver_{spec.design_name}.sv",
             f"monitor_{spec.design_name}.sv",
+            f"sequencer_{spec.design_name}.sv",
             f"agent_{spec.design_name}.sv",
+            f"env_{spec.design_name}.sv",
             f"scoreboard_{spec.design_name}.sv",
-            f"coverage_collector_{spec.design_name}.sv",
-            f"base_sequence_{spec.design_name}.sv",
+            f"ral_{spec.design_name}.sv",
             f"test_{spec.design_name}.sv",
-            f"environment_{spec.design_name}.sv",
             "compile.f",
+            "top_tb.sv",
         }
         generated_set = set(generated_files)
         if not expected:

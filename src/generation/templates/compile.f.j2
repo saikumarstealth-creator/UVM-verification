@@ -1,23 +1,23 @@
 # Compile file for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
-+incdir+../src
-+incdir+../rtl
++incdir+.
 {% for f in spec.files|default([]) %}
 ../{{ f }}
 {% else %}
-../ral_model.sv
-../interface.sv
-../sequence_item.sv
-../driver.sv
-../monitor.sv
+top_tb.sv
+testbench.sv
+interface_{{ spec.design_name }}.sv
+driver_{{ spec.design_name }}.sv
+monitor_{{ spec.design_name }}.sv
+sequencer_{{ spec.design_name }}.sv
+agent_{{ spec.design_name }}.sv
+scoreboard_{{ spec.design_name }}.sv
+coverage_collector_{{ spec.design_name }}.sv
+env_{{ spec.design_name }}.sv
+sequence_item_{{ spec.design_name }}.sv
+sequence_{{ spec.design_name }}.sv
+test_{{ spec.design_name }}.sv
+ral_{{ spec.design_name }}.sv
 {% if spec.protocol|default("wishbone") == "uart" %}
 ../serial_monitor.sv
 {% endif %}
-../agent.sv
-../scoreboard.sv
-../coverage_collector.sv
-../env.sv
-../sequence.sv
-../test.sv
-../testbench.sv
-../rtl/*.v
 {% endfor %}

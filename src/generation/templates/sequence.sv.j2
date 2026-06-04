@@ -1361,6 +1361,161 @@ class uart_full_regression extends uvm_sequence #({{ spec.design_name }}_seq_ite
   endtask
 endclass
 
+// -------------------------------------------------------------------------
+// UART FIFO Overflow Sequence — fills TX FIFO, verifies overflow handling
+// -------------------------------------------------------------------------
+class uart_fifo_overflow_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_fifo_overflow_seq)
+
+  rand int num_overflow_bytes;
+
+  constraint c_overflow {
+    num_overflow_bytes inside {[16:64]};
+  }
+
+  function new(string n = "uart_fifo_overflow_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lsr_val;
+    int overflow_events;
+
+    `uvm_info("UART_FIFO", $sformatf("FIFO overflow test: %0d bytes", num_overflow_bytes), UVM_LOW)
+
+    for (int i = 0; i < num_overflow_bytes; i++) begin
+      write_reg(UART_THR_ADDR, 8'($urandom_range(0, 255)));
+      if (i >= 16 && (i % 4) == 0) begin
+        read_reg(UART_LSR_ADDR, lsr_val);
+        if (lsr_val[1]) begin
+          overflow_events++;
+          `uvm_info("UART_FIFO", $sformatf("Overflow flag detected at byte %0d", i), UVM_MEDIUM)
+        end
+      end
+    end
+
+    if (overflow_events > 0)
+      `uvm_info("UART_FIFO", $sformatf("FIFO overflow correctly detected: %0d times", overflow_events), UVM_LOW)
+    else
+      `uvm_warning("UART_FIFO", "No overflow events detected — FIFO may be larger than test data")
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Stress Sequence — rapid config changes + continuous traffic
+// -------------------------------------------------------------------------
+class uart_stress_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_stress_seq)
+
+  rand int stress_iterations;
+
+  constraint c_stress {
+    stress_iterations inside {[5:20]};
+  }
+
+  function new(string n = "uart_stress_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    int baud_list[5] = '{9600, 19200, 57600, 115200, 1000000};
+    int random_data[$];
+    int total_tx;
+    int total_rx;
+
+    `uvm_info("UART_STRESS", $sformatf("Starting stress test: %0d iterations", stress_iterations), UVM_LOW)
+
+    for (int iter = 0; iter < stress_iterations; iter++) begin
+      uart_config_seq cfg_seq;
+      int chosen_baud = baud_list[$urandom_range(0, 4)];
+      int chosen_bits = 5 + $urandom_range(0, 3);
+      int chosen_stop = 1 + $urandom_range(0, 1);
+
+      cfg_seq = uart_config_seq::type_id::create($sformatf("stress_cfg_%0d", iter));
+      cfg_seq.reg_model = reg_model;
+      cfg_seq.baud_rate = chosen_baud;
+      cfg_seq.data_bits = chosen_bits;
+      cfg_seq.stop_bits = chosen_stop;
+      cfg_seq.parity_en = $urandom;
+      cfg_seq.start(m_sequencer);
+      total_tx++;
+
+      repeat (3) begin
+        uart_tx_seq tx_seq;
+        tx_seq = uart_tx_seq::type_id::create($sformatf("stress_tx_%0d_%0d", iter, total_tx));
+        tx_seq.reg_model = reg_model;
+        tx_seq.num_bytes = 1 + $urandom_range(0, 4);
+        if (!tx_seq.randomize()) begin
+          `uvm_error("UART_STRESS", "TX seq randomization failed")
+        end else begin
+          tx_seq.start(m_sequencer);
+          total_tx++;
+        end
+      end
+      #10us;
+    end
+
+    `uvm_info("UART_STRESS", $sformatf(
+      "Stress test complete: %0d iterations, %0d TX ops",
+      stress_iterations, total_tx), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Long Run Sequence — sustained traffic of 100+ bytes
+// -------------------------------------------------------------------------
+class uart_long_run_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils(uart_long_run_seq)
+
+  rand int total_bytes;
+  int tx_completed;
+  int errors;
+
+  constraint c_long_run {
+    total_bytes inside {[100:500]};
+  }
+
+  function new(string n = "uart_long_run_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    uart_config_seq cfg_seq;
+    logic [7:0] expected_data[$];
+    int chunk_size = 16;
+
+    `uvm_info("UART_LONG", $sformatf("Long run test: %0d total bytes", total_bytes), UVM_LOW)
+
+    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.start(m_sequencer);
+
+    for (int i = 0; i < total_bytes; i += chunk_size) begin
+      uart_tx_seq tx_seq;
+      int this_chunk = (i + chunk_size > total_bytes) ? total_bytes - i : chunk_size;
+
+      tx_seq = uart_tx_seq::type_id::create($sformatf("long_tx_%0d", i));
+      tx_seq.reg_model = reg_model;
+      tx_seq.num_bytes = this_chunk;
+      if (!tx_seq.randomize()) begin
+        `uvm_error("UART_LONG", "TX chunk randomization failed")
+      end else begin
+        tx_seq.start(m_sequencer);
+        tx_completed += this_chunk;
+        foreach (tx_seq.tx_data[j]) expected_data.push_back(tx_seq.tx_data[j]);
+      end
+      #2us;
+    end
+
+    `uvm_info("UART_LONG", $sformatf(
+      "Long run complete: %0d/%0d bytes TX",
+      tx_completed, total_bytes), UVM_LOW)
+
+    if (errors > 0)
+      `uvm_error("UART_LONG", $sformatf("%0d errors during long run test", errors))
+  endtask
+endclass
+
 {% endif %}
 
 {% if p == "apb" %}
@@ -1606,6 +1761,150 @@ class {{ spec.design_name }}_apb_virtual_seq extends uvm_sequence #({{ spec.desi
   endtask
 endclass
 
+// -------------------------------------------------------------------------
+// APB Wait State Sequence — exercises all wait state configurations
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_wait_state_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_wait_state_seq)
+
+  rand int ws_idle;
+  rand int ws_setup;
+  rand int ws_access;
+  int completed;
+  int errors;
+
+  constraint c_ws {
+    ws_idle   inside {[0:7]};
+    ws_setup  inside {[0:3]};
+    ws_access inside {[1:15]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_apb_wait_state_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] cfg, readback;
+
+    cfg = {4'b0, 1'b0, 2'b0, ws_idle[2:0]};
+    write_reg(0, cfg);
+    cfg = {4'b0, 1'b0, ws_setup[1:0], 1'b0};
+    write_reg(1, cfg);
+    cfg = {4'b0, 1'b0, ws_access[3:0]};
+    write_reg(2, cfg);
+
+    `uvm_info("APB_WS", $sformatf(
+      "Wait states: idle=%0d setup=%0d access=%0d", ws_idle, ws_setup, ws_access), UVM_LOW)
+
+    for (int i = 0; i < 10; i++) begin
+      logic [7:0] d_in = $urandom_range(0, 255);
+      write_reg(3, d_in);
+      read_reg(3, readback);
+      if (readback === d_in) completed++;
+      else errors++;
+      #(ws_access * 10);
+    end
+
+    if (errors == 0)
+      `uvm_info("APB_WS", $sformatf("All %0d transactions passed with wait states", completed), UVM_LOW)
+    else
+      `uvm_error("APB_WS", $sformatf("%0d errors with wait states idle=%0d setup=%0d access=%0d",
+                errors, ws_idle, ws_setup, ws_access))
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// APB PSLVERR Sequence — exhaustive slave error response testing
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_pslverr_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_pslverr_seq)
+
+  rand int num_injections;
+  int errors_seen;
+  int recoveries;
+
+  constraint c_pslverr { num_injections inside {[1:10]}; }
+
+  function new(string n = "{{ spec.design_name }}_apb_pslverr_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] val;
+
+    `uvm_info("APB_ERR", $sformatf("PSLVERR injection: %0d transactions", num_injections), UVM_LOW)
+
+    write_reg(0, 8'b0000_1000);
+
+    for (int i = 0; i < num_injections; i++) begin
+      {{ spec.design_name }}_seq_item err_req;
+      err_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("pslverr_%0d", i));
+      start_item(err_req);
+      if (!err_req.randomize() with {
+        we == 1; addr == {{ max_addr_val }}; data == 8'($urandom_range(0, 255)); delay == 0;
+      }) `uvm_fatal("RAND", "PSLVERR req randomization failed")
+      finish_item(err_req);
+
+      read_reg({{ max_addr_val }}, val);
+      if (val !== 8'hA5) begin
+        errors_seen++;
+        `uvm_info("APB_ERR", $sformatf("SLVERR on transaction %0d", i), UVM_MEDIUM)
+      end
+      #100;
+    end
+
+    write_reg(0, 8'h00);
+    write_reg(0, 8'hA5);
+    read_reg(0, val);
+    if (val == 8'hA5) begin
+      recoveries = 1;
+      `uvm_info("APB_ERR", "Slave recovered after PSLVERR injection", UVM_LOW)
+    end else begin
+      `uvm_error("APB_ERR", "Slave did not recover after PSLVERR")
+    end
+
+    `uvm_info("APB_ERR", $sformatf(
+      "PSLVERR report: %0d injections, %0d errors seen, recovered=%0s",
+      num_injections, errors_seen, recoveries ? "YES" : "NO"), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// APB Illegal Access Sequence — out-of-bounds addresses, invalid transfers
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_apb_illegal_access_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_apb_illegal_access_seq)
+
+  int illegal_ops;
+  int error_responses;
+
+  function new(string n = "{{ spec.design_name }}_apb_illegal_access_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] val;
+    logic [7:0] illegal_addrs[$] = '{8'hFF, 8'hFE, 8'h80, 8'h81, 8'h40};
+
+    `uvm_info("APB_ILL", "Starting illegal access test", UVM_LOW)
+
+    foreach (illegal_addrs[i]) begin
+      write_reg(illegal_addrs[i], 8'hA5);
+      illegal_ops++;
+      #10;
+      read_reg(illegal_addrs[i], val);
+      `uvm_info("APB_ILL", $sformatf("Illegal addr 0x%0h: readback=0x%02h", illegal_addrs[i], val), UVM_MEDIUM)
+    end
+
+    write_reg({{ max_addr_val + 1 }}, 8'h55);
+    illegal_ops++;
+    read_reg({{ max_addr_val + 1 }}, val);
+    `uvm_info("APB_ILL", $sformatf("OOB addr 0x%0h: readback=0x%02h", {{ max_addr_val + 1 }}, val), UVM_MEDIUM)
+
+    `uvm_info("APB_ILL", $sformatf("Illegal access test: %0d operations attempted", illegal_ops), UVM_LOW)
+  endtask
+endclass
+
 // =========================================================================
 //  APB Sequence Library — for regression automation
 // =========================================================================
@@ -1618,6 +1917,9 @@ class {{ spec.design_name }}_apb_seq_lib extends uvm_sequence_library #({{ spec.
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_write_read_seq::get_type());
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_error_seq::get_type());
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_back2back_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_wait_state_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_pslverr_seq::get_type());
+    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_illegal_access_seq::get_type());
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_virtual_seq::get_type());
   endfunction
 
@@ -1630,29 +1932,849 @@ endclass
 
 {% endif %}
 
-{% if p == "axi4lite" %}
-class {{ spec.design_name }}_axi_burst_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
-  `uvm_object_utils({{ spec.design_name }}_axi_burst_seq)
+{% if p == "i2c" %}
 
-  rand int burst_len;
-  constraint c_burst { burst_len inside {[1:4]}; }
+// =========================================================================
+//  I2C Sequences — protocol-level transactions
+// =========================================================================
 
-  function new(string n = "{{ spec.design_name }}_axi_burst_seq");
+// -------------------------------------------------------------------------
+// I2C Master Write Sequence — standard 7-bit address write
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_master_write_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_master_write_seq)
+
+  rand logic [6:0] slave_addr;
+  rand logic [7:0] write_data[$];
+  rand bit         use_10bit_addr;
+
+  constraint c_i2c_wr {
+    write_data.size() inside {[1:32]};
+    slave_addr inside {[8'h00:8'h77]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_i2c_master_write_seq");
     super.new(n);
   endfunction
 
   task body;
+    `uvm_info("I2C_WR", $sformatf("I2C write: addr=0x%02h, %0d bytes", slave_addr, write_data.size()), UVM_LOW)
+
+    write_reg(0, {1'b0, slave_addr});
+    write_reg(1, 8'h01);
+
+    foreach (write_data[i]) begin
+      write_reg(2, write_data[i]);
+      #500;
+      if (sb_handle != null) sb_handle.record_tx(2, write_data[i]);
+    end
+
+    write_reg(1, 8'h00);
+    `uvm_info("I2C_WR", "I2C write complete", UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C Master Read Sequence
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_master_read_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_master_read_seq)
+
+  rand logic [6:0] slave_addr;
+  rand int         num_bytes;
+  logic [7:0]      read_data[$];
+
+  constraint c_i2c_rd {
+    num_bytes inside {[1:16]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_i2c_master_read_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("I2C_RD", $sformatf("I2C read: addr=0x%02h, %0d bytes", slave_addr, num_bytes), UVM_LOW)
+
+    write_reg(0, {1'b1, slave_addr});
+    write_reg(1, 8'h02);
+
+    for (int i = 0; i < num_bytes; i++) begin
+      logic [7:0] val;
+      read_reg(3, val);
+      read_data.push_back(val);
+      if (sb_handle != null) sb_handle.record_rx(3, val);
+      #500;
+    end
+
+    write_reg(1, 8'h00);
+    `uvm_info("I2C_RD", $sformatf("I2C read complete: %0d bytes received", read_data.size()), UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C Repeated Start Sequence — write-then-read with repeated start
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_repeated_start_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_repeated_start_seq)
+
+  rand logic [6:0] slave_addr;
+  rand logic [7:0] write_data;
+  logic [7:0]      read_data;
+  bit              repeated_start_detected;
+
+  function new(string n = "{{ spec.design_name }}_i2c_repeated_start_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("I2C_RSTART", $sformatf("Repeated start: write 0x%02h then read from 0x%02h",
+              write_data, slave_addr), UVM_LOW)
+
+    write_reg(0, {1'b0, slave_addr});
+    write_reg(1, 8'h05);
+
+    write_reg(2, write_data);
+    #200;
+
+    write_reg(0, {1'b1, slave_addr});
+    write_reg(1, 8'h06);
+
+    #500;
+    read_reg(3, read_data);
+    #200;
+
+    write_reg(1, 8'h00);
+
+    if (sb_handle != null) sb_handle.record_tx(0, write_data);
+    `uvm_info("I2C_RSTART", $sformatf("Repeated start complete: wrote 0x%02h, read 0x%02h",
+              write_data, read_data), UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C Arbitration Loss Sequence — tests multi-master arbitration
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_arbitration_loss_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_arbitration_loss_seq)
+
+  int arbitration_attempts;
+  int arbitration_losses;
+
+  function new(string n = "{{ spec.design_name }}_i2c_arbitration_loss_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("I2C_ARB", "Starting arbitration loss test", UVM_LOW)
+
+    for (int i = 0; i < 5; i++) begin
+      {{ spec.design_name }}_seq_item arb_req;
+      arb_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("arb_req_%0d", i));
+      start_item(arb_req);
+      if (!arb_req.randomize() with {
+        we == 1; addr == 0; data == 8'($urandom_range(0, 255)); delay == 0;
+      }) `uvm_fatal("RAND", "Arb req randomization failed")
+      finish_item(arb_req);
+      arbitration_attempts++;
+      #200;
+    end
+
+    `uvm_info("I2C_ARB", $sformatf(
+      "Arbitration test: %0d attempts, %0d losses",
+      arbitration_attempts, arbitration_losses), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C Clock Stretch Sequence — tests slave clock stretching
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_clock_stretch_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_clock_stretch_seq)
+
+  rand int stretch_cycles;
+  int total_stretched;
+
+  constraint c_stretch { stretch_cycles inside {[1:8]}; }
+
+  function new(string n = "{{ spec.design_name }}_i2c_clock_stretch_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("I2C_STR", $sformatf("Clock stretch test: %0d cycles", stretch_cycles), UVM_LOW)
+
+    write_reg(4, stretch_cycles);
+
+    for (int i = 0; i < 3; i++) begin
+      write_reg(2, 8'($urandom_range(0, 255)));
+      #(stretch_cycles * 1000);
+      total_stretched++;
+    end
+
+    write_reg(4, 0);
+    `uvm_info("I2C_STR", $sformatf("Clock stretch: %0d transactions with %0d cycle stretch",
+              total_stretched, stretch_cycles), UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C NACK Sequence — tests slave NACK response
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_nack_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_nack_seq)
+
+  rand logic [6:0] invalid_addr;
+  int nack_count;
+
+  constraint c_nack_addr { invalid_addr inside {[8'h78:8'h7F]}; }
+
+  function new(string n = "{{ spec.design_name }}_i2c_nack_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] status;
+
+    `uvm_info("I2C_NACK", $sformatf("NACK test: invalid addr 0x%02h", invalid_addr), UVM_LOW)
+
+    write_reg(0, {1'b0, invalid_addr});
+    write_reg(1, 8'h01);
+    write_reg(2, 8'hA5);
+    #200;
+
+    read_reg(5, status);
+    `uvm_info("I2C_NACK", $sformatf("NACK status: 0x%02h", status), UVM_MEDIUM)
+
+    if (status[0]) begin
+      nack_count++;
+      `uvm_info("I2C_NACK", "NACK correctly detected", UVM_LOW)
+    end else begin
+      `uvm_warning("I2C_NACK", "NACK not detected — slave may have ACKed invalid addr")
+    end
+
+    write_reg(1, 8'h00);
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C 10-bit Address Sequence — tests extended addressing
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_10bit_addr_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_i2c_10bit_addr_seq)
+
+  rand logic [9:0] addr_10bit;
+  rand logic [7:0] test_data;
+
+  function new(string n = "{{ spec.design_name }}_i2c_10bit_addr_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("I2C_10BIT", $sformatf("10-bit addr test: 0x%03h data=0x%02h", addr_10bit, test_data), UVM_LOW)
+
+    write_reg(6, addr_10bit[7:0]);
+    write_reg(7, {6'b0, addr_10bit[9:8]});
+    write_reg(0, 8'hF0);
+    write_reg(1, 8'h01);
+    write_reg(2, test_data);
+    #500;
+
+    if (sb_handle != null) sb_handle.record_tx(2, test_data);
+    write_reg(1, 8'h00);
+    `uvm_info("I2C_10BIT", "10-bit addr write complete", UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// I2C Virtual Sequence
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_i2c_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_i2c_virtual_seq)
+  `uvm_declare_p_sequencer({{ spec.design_name }}_virtual_sequencer)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+  {{ spec.design_name }}_scoreboard sb_handle;
+
+  function new(string n = "{{ spec.design_name }}_i2c_virtual_seq");
+    super.new(n);
+  endfunction
+
+  virtual task pre_body();
+    if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
+      `uvm_warning("CFG", $sformatf("Scoreboard not found for %s", get_type_name()))
+  endtask
+
+  task body;
+    {{ spec.design_name }}_i2c_master_write_seq    wr_seq;
+    {{ spec.design_name }}_i2c_master_read_seq     rd_seq;
+    {{ spec.design_name }}_i2c_repeated_start_seq  rs_seq;
+    {{ spec.design_name }}_i2c_nack_seq            nack_seq;
+
+    `uvm_info("I2C_VSEQ", "Starting I2C virtual sequence", UVM_LOW)
+
+    wr_seq = {{ spec.design_name }}_i2c_master_write_seq::type_id::create("wr_seq");
+    wr_seq.reg_model = reg_model;
+    wr_seq.slave_addr = 7'h50;
+    wr_seq.write_data = {8'h55, 8'hAA, 8'h33};
+    wr_seq.start(p_sequencer.bus_seqr);
+
+    rd_seq = {{ spec.design_name }}_i2c_master_read_seq::type_id::create("rd_seq");
+    rd_seq.reg_model = reg_model;
+    rd_seq.slave_addr = 7'h50;
+    rd_seq.num_bytes = 3;
+    rd_seq.start(p_sequencer.bus_seqr);
+
+    rs_seq = {{ spec.design_name }}_i2c_repeated_start_seq::type_id::create("rs_seq");
+    rs_seq.reg_model = reg_model;
+    rs_seq.slave_addr = 7'h50;
+    rs_seq.write_data = 8'hCC;
+    rs_seq.start(p_sequencer.bus_seqr);
+
+    nack_seq = {{ spec.design_name }}_i2c_nack_seq::type_id::create("nack_seq");
+    nack_seq.reg_model = reg_model;
+    nack_seq.invalid_addr = 7'h7F;
+    nack_seq.start(p_sequencer.bus_seqr);
+
+    `uvm_info("I2C_VSEQ", "I2C virtual sequence complete", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+//  I2C Sequence Library
+// =========================================================================
+class {{ spec.design_name }}_i2c_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_i2c_seq_lib)
+  `uvm_sequence_library_utils({{ spec.design_name }}_i2c_seq_lib)
+
+  static function void add_sequences();
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_master_write_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_master_read_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_repeated_start_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_arbitration_loss_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_clock_stretch_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_nack_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_10bit_addr_seq::get_type());
+    {{ spec.design_name }}_i2c_seq_lib::add_sequence({{ spec.design_name }}_i2c_virtual_seq::get_type());
+  endfunction
+
+  function new(string name = "{{ spec.design_name }}_i2c_seq_lib");
+    super.new(name);
+    init_sequence_library();
+    add_sequences();
+  endfunction
+endclass
+
+{% endif %}
+
+{% if p == "spi" %}
+
+// =========================================================================
+//  SPI Sequences — protocol-level transactions
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// SPI Write Sequence — writes data to SPI slave
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_spi_write_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_spi_write_seq)
+
+  rand logic [7:0] write_data[$];
+  rand int         ss_delay;
+
+  constraint c_spi_wr {
+    write_data.size() inside {[1:32]};
+    ss_delay inside {[0:15]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_spi_write_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("SPI_WR", $sformatf("SPI write: %0d bytes, SS delay=%0d",
+              write_data.size(), ss_delay), UVM_LOW)
+
+    write_reg(0, ss_delay);
+    write_reg(1, 8'h01);
+
+    foreach (write_data[i]) begin
+      write_reg(2, write_data[i]);
+      #500;
+      if (sb_handle != null) sb_handle.record_tx(2, write_data[i]);
+    end
+
+    write_reg(1, 8'h00);
+    `uvm_info("SPI_WR", "SPI write complete", UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// SPI Read Sequence — reads data from SPI slave
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_spi_read_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_spi_read_seq)
+
+  rand int num_bytes;
+  logic [7:0] read_data[$];
+
+  constraint c_spi_rd { num_bytes inside {[1:16]}; }
+
+  function new(string n = "{{ spec.design_name }}_spi_read_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("SPI_RD", $sformatf("SPI read: %0d bytes", num_bytes), UVM_LOW)
+
+    write_reg(1, 8'h02);
+
+    for (int i = 0; i < num_bytes; i++) begin
+      logic [7:0] val;
+      read_reg(3, val);
+      read_data.push_back(val);
+      if (sb_handle != null) sb_handle.record_rx(3, val);
+      #500;
+    end
+
+    write_reg(1, 8'h00);
+    `uvm_info("SPI_RD", $sformatf("SPI read complete: %0d bytes", read_data.size()), UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// SPI FIFO Overflow Sequence — stress TX FIFO with burst data
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_spi_fifo_overflow_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_spi_fifo_overflow_seq)
+
+  rand int burst_size;
+  int overflow_events;
+
+  constraint c_spi_fifo { burst_size inside {[16:64]}; }
+
+  function new(string n = "{{ spec.design_name }}_spi_fifo_overflow_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] status;
+
+    `uvm_info("SPI_FIFO", $sformatf("FIFO overflow test: %0d bytes", burst_size), UVM_LOW)
+
+    write_reg(1, 8'h01);
+
+    for (int i = 0; i < burst_size; i++) begin
+      write_reg(2, 8'($urandom_range(0, 255)));
+      if (i % 8 == 0) begin
+        read_reg(4, status);
+        if (status[1]) overflow_events++;
+      end
+    end
+
+    write_reg(1, 8'h00);
+
+    if (overflow_events > 0)
+      `uvm_info("SPI_FIFO", $sformatf("FIFO overflow detected: %0d events", overflow_events), UVM_LOW)
+    else
+      `uvm_info("SPI_FIFO", "No overflow — FIFO depth adequate for burst", UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// SPI Mode Fault Sequence — tests SPI mode fault detection
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_spi_mode_fault_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_spi_mode_fault_seq)
+
+  int mode_faults;
+
+  function new(string n = "{{ spec.design_name }}_spi_mode_fault_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] status;
+
+    `uvm_info("SPI_MF", "SPI mode fault test", UVM_LOW)
+
+    write_reg(5, 8'h01);
+    #1000;
+
+    for (int i = 0; i < 3; i++) begin
+      write_reg(2, 8'($urandom_range(0, 255)));
+      #500;
+    end
+
+    read_reg(5, status);
+    `uvm_info("SPI_MF", $sformatf("Mode fault status: 0x%02h", status), UVM_MEDIUM)
+
+    write_reg(5, 8'h00);
+    `uvm_info("SPI_MF", "Mode fault test complete", UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// SPI Clock Polarity/Phase Sequence — tests CPOL/CPHA configurations
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_spi_clock_mode_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_spi_clock_mode_seq)
+
+  rand int cpol;
+  rand int cpha;
+
+  constraint c_mode { cpol inside {[0:1]}; cpha inside {[0:1]}; }
+
+  function new(string n = "{{ spec.design_name }}_spi_clock_mode_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("SPI_MODE", $sformatf("SPI mode: CPOL=%0d CPHA=%0d", cpol, cpha), UVM_LOW)
+
+    write_reg(6, {6'b0, cpha, cpol});
+
+    write_reg(1, 8'h01);
+    write_reg(2, 8'hA5);
+    #500;
+    write_reg(2, 8'h5A);
+    #500;
+    write_reg(2, 8'hFF);
+    #500;
+    write_reg(1, 8'h00);
+
+    `uvm_info("SPI_MODE", "SPI clock mode test complete", UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// SPI Virtual Sequence
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_spi_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_spi_virtual_seq)
+  `uvm_declare_p_sequencer({{ spec.design_name }}_virtual_sequencer)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+  {{ spec.design_name }}_scoreboard sb_handle;
+
+  function new(string n = "{{ spec.design_name }}_spi_virtual_seq");
+    super.new(n);
+  endfunction
+
+  virtual task pre_body();
+    if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
+      `uvm_warning("CFG", "Scoreboard not found")
+  endtask
+
+  task body;
+    {{ spec.design_name }}_spi_write_seq        wr_seq;
+    {{ spec.design_name }}_spi_read_seq         rd_seq;
+    {{ spec.design_name }}_spi_clock_mode_seq   mode_seq;
+
+    `uvm_info("SPI_VSEQ", "Starting SPI virtual sequence", UVM_LOW)
+
+    mode_seq = {{ spec.design_name }}_spi_clock_mode_seq::type_id::create("mode_seq");
+    mode_seq.reg_model = reg_model;
+    mode_seq.cpol = 0; mode_seq.cpha = 0;
+    mode_seq.start(p_sequencer.bus_seqr);
+
+    wr_seq = {{ spec.design_name }}_spi_write_seq::type_id::create("wr_seq");
+    wr_seq.reg_model = reg_model;
+    wr_seq.write_data = {8'h55, 8'hAA, 8'h33, 8'hCC};
+    wr_seq.start(p_sequencer.bus_seqr);
+
+    rd_seq = {{ spec.design_name }}_spi_read_seq::type_id::create("rd_seq");
+    rd_seq.reg_model = reg_model;
+    rd_seq.num_bytes = 4;
+    rd_seq.start(p_sequencer.bus_seqr);
+
+    `uvm_info("SPI_VSEQ", "SPI virtual sequence complete", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+//  SPI Sequence Library
+// =========================================================================
+class {{ spec.design_name }}_spi_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_spi_seq_lib)
+  `uvm_sequence_library_utils({{ spec.design_name }}_spi_seq_lib)
+
+  static function void add_sequences();
+    {{ spec.design_name }}_spi_seq_lib::add_sequence({{ spec.design_name }}_spi_write_seq::get_type());
+    {{ spec.design_name }}_spi_seq_lib::add_sequence({{ spec.design_name }}_spi_read_seq::get_type());
+    {{ spec.design_name }}_spi_seq_lib::add_sequence({{ spec.design_name }}_spi_fifo_overflow_seq::get_type());
+    {{ spec.design_name }}_spi_seq_lib::add_sequence({{ spec.design_name }}_spi_mode_fault_seq::get_type());
+    {{ spec.design_name }}_spi_seq_lib::add_sequence({{ spec.design_name }}_spi_clock_mode_seq::get_type());
+    {{ spec.design_name }}_spi_seq_lib::add_sequence({{ spec.design_name }}_spi_virtual_seq::get_type());
+  endfunction
+
+  function new(string name = "{{ spec.design_name }}_spi_seq_lib");
+    super.new(name);
+    init_sequence_library();
+    add_sequences();
+  endfunction
+endclass
+
+{% endif %}
+
+{% if p == "axi4lite" %}
+
+// =========================================================================
+//  AXI4-Lite Sequences
+// =========================================================================
+
+// -------------------------------------------------------------------------
+// AXI Write Burst Sequence — burst of write transactions
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_axi_write_burst_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_axi_write_burst_seq)
+
+  rand int burst_len;
+  rand logic [7:0] burst_data[$];
+
+  constraint c_axi_wr_burst {
+    burst_len inside {[1:16]};
+    burst_data.size() == burst_len;
+  }
+
+  function new(string n = "{{ spec.design_name }}_axi_write_burst_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("AXI_WR", $sformatf("Write burst: %0d transactions", burst_len), UVM_LOW)
+
     for (int i = 0; i < burst_len; i++) begin
-      req = {{ spec.design_name }}_seq_item::type_id::create("req");
-      start_item(req);
-      if (!req.randomize() with { addr == i; we == 1; })
-        `uvm_fatal("RAND", "AXI write req randomization failed")
-      finish_item(req);
-      start_item(req);
-      if (!req.randomize() with { addr == i; we == 0; })
-        `uvm_fatal("RAND", "AXI read req randomization failed")
-      finish_item(req);
+      {{ spec.design_name }}_seq_item wr_req;
+      wr_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("axi_wr_%0d", i));
+      start_item(wr_req);
+      if (!wr_req.randomize() with {
+        we == 1; addr == i; data == local::burst_data[i]; delay == 0;
+      }) `uvm_fatal("RAND", "AXI write req randomization failed")
+      finish_item(wr_req);
+      if (sb_handle != null) sb_handle.record_tx(i, burst_data[i]);
+      #100;
+    end
+
+    `uvm_info("AXI_WR", $sformatf("Write burst complete: %0d writes", burst_len), UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// AXI Read Burst Sequence — burst of read transactions
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_axi_read_burst_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_axi_read_burst_seq)
+
+  rand int burst_len;
+  logic [7:0] read_results[$];
+  int mismatches;
+
+  constraint c_axi_rd_burst { burst_len inside {[1:16]}; }
+
+  function new(string n = "{{ spec.design_name }}_axi_read_burst_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("AXI_RD", $sformatf("Read burst: %0d transactions", burst_len), UVM_LOW)
+
+    for (int i = 0; i < burst_len; i++) begin
+      logic [7:0] rd_data;
+      {{ spec.design_name }}_seq_item rd_req;
+      rd_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("axi_rd_%0d", i));
+      start_item(rd_req);
+      if (!rd_req.randomize() with {
+        we == 0; addr == i; delay == 0;
+      }) `uvm_fatal("RAND", "AXI read req randomization failed")
+      finish_item(rd_req);
+      get_response(rsp);
+      rd_data = rsp.data;
+      read_results.push_back(rd_data);
+      if (sb_handle != null) sb_handle.record_rx(i, rd_data);
+      #100;
+    end
+
+    `uvm_info("AXI_RD", $sformatf("Read burst complete: %0d reads, %0d mismatches",
+              burst_len, mismatches), UVM_MEDIUM)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// AXI Write-Read Compare Sequence — write then read back and compare
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_axi_write_read_cmp_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_axi_write_read_cmp_seq)
+
+  rand logic [2:0] target_addr;
+  rand logic [7:0] write_val;
+  int matches;
+  int mismatches;
+
+  function new(string n = "{{ spec.design_name }}_axi_write_read_cmp_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] read_val;
+
+    write_reg(target_addr, write_val);
+    #50;
+    read_reg(target_addr, read_val);
+
+    if (read_val === write_val) begin
+      matches++;
+      `uvm_info("AXI_CMP", $sformatf("Match: addr=0x%0h data=0x%02h", target_addr, write_val), UVM_MEDIUM)
+    end else begin
+      mismatches++;
+      `uvm_error("AXI_CMP", $sformatf("Mismatch: addr=0x%0h wrote=0x%02h read=0x%02h",
+                 target_addr, write_val, read_val))
     end
   endtask
 endclass
+
+// -------------------------------------------------------------------------
+// AXI Outstanding Transaction Sequence — multiple outstanding transactions
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_axi_outstanding_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_axi_outstanding_seq)
+
+  rand int outstanding_count;
+  int completed;
+
+  constraint c_outstanding { outstanding_count inside {[2:8]}; }
+
+  function new(string n = "{{ spec.design_name }}_axi_outstanding_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    {{ spec.design_name }}_seq_item outstanding_reqs[$];
+
+    `uvm_info("AXI_OUT", $sformatf("Outstanding transactions: %0d", outstanding_count), UVM_LOW)
+
+    for (int i = 0; i < outstanding_count; i++) begin
+      {{ spec.design_name }}_seq_item req;
+      req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("out_req_%0d", i));
+      start_item(req);
+      if (!req.randomize() with {
+        we == 1; addr == i; data == 8'($urandom_range(0, 255)); delay == 0;
+      }) `uvm_fatal("RAND", "Outstanding req randomization failed")
+      finish_item(req);
+      outstanding_reqs.push_back(req);
+    end
+
+    foreach (outstanding_reqs[i]) begin
+      get_response(rsp);
+      completed++;
+    end
+
+    `uvm_info("AXI_OUT", $sformatf("Outstanding test: %0d/%0d completed", completed, outstanding_count), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// AXI Illegal Address Sequence — tests address decode error handling
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_axi_illegal_addr_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_axi_illegal_addr_seq)
+
+  int illegal_ops;
+  logic [7:0] illegal_addrs[$] = '{8'hFF, 8'hFE, 8'h80};
+
+  function new(string n = "{{ spec.design_name }}_axi_illegal_addr_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] val;
+
+    `uvm_info("AXI_ILL", "Starting illegal address test", UVM_LOW)
+
+    foreach (illegal_addrs[i]) begin
+      write_reg(illegal_addrs[i], 8'hA5);
+      illegal_ops++;
+      #50;
+      read_reg(illegal_addrs[i], val);
+      `uvm_info("AXI_ILL", $sformatf("Addr 0x%0h: readback=0x%02h", illegal_addrs[i], val), UVM_MEDIUM)
+    end
+
+    `uvm_info("AXI_ILL", $sformatf("Illegal access: %0d operations", illegal_ops), UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// AXI Virtual Sequence
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_axi_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_axi_virtual_seq)
+  `uvm_declare_p_sequencer({{ spec.design_name }}_virtual_sequencer)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+  {{ spec.design_name }}_scoreboard sb_handle;
+
+  function new(string n = "{{ spec.design_name }}_axi_virtual_seq");
+    super.new(n);
+  endfunction
+
+  virtual task pre_body();
+    if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
+      `uvm_warning("CFG", "Scoreboard not found")
+  endtask
+
+  task body;
+    {{ spec.design_name }}_axi_write_burst_seq    wr_seq;
+    {{ spec.design_name }}_axi_read_burst_seq     rd_seq;
+    {{ spec.design_name }}_axi_write_read_cmp_seq cmp_seq;
+    {{ spec.design_name }}_axi_outstanding_seq    out_seq;
+
+    `uvm_info("AXI_VSEQ", "Starting AXI virtual sequence", UVM_LOW)
+
+    wr_seq = {{ spec.design_name }}_axi_write_burst_seq::type_id::create("wr_seq");
+    wr_seq.reg_model = reg_model;
+    wr_seq.burst_len = 4;
+    wr_seq.burst_data = {8'h55, 8'hAA, 8'h33, 8'hCC};
+    wr_seq.start(p_sequencer.bus_seqr);
+
+    rd_seq = {{ spec.design_name }}_axi_read_burst_seq::type_id::create("rd_seq");
+    rd_seq.reg_model = reg_model;
+    rd_seq.burst_len = 4;
+    rd_seq.start(p_sequencer.bus_seqr);
+
+    cmp_seq = {{ spec.design_name }}_axi_write_read_cmp_seq::type_id::create("cmp_seq");
+    cmp_seq.reg_model = reg_model;
+    cmp_seq.target_addr = 0; cmp_seq.write_val = 8'hA5;
+    cmp_seq.start(p_sequencer.bus_seqr);
+
+    out_seq = {{ spec.design_name }}_axi_outstanding_seq::type_id::create("out_seq");
+    out_seq.reg_model = reg_model;
+    out_seq.outstanding_count = 4;
+    out_seq.start(p_sequencer.bus_seqr);
+
+    `uvm_info("AXI_VSEQ", "AXI virtual sequence complete", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+//  AXI Sequence Library
+// =========================================================================
+class {{ spec.design_name }}_axi_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils({{ spec.design_name }}_axi_seq_lib)
+  `uvm_sequence_library_utils({{ spec.design_name }}_axi_seq_lib)
+
+  static function void add_sequences();
+    {{ spec.design_name }}_axi_seq_lib::add_sequence({{ spec.design_name }}_axi_write_burst_seq::get_type());
+    {{ spec.design_name }}_axi_seq_lib::add_sequence({{ spec.design_name }}_axi_read_burst_seq::get_type());
+    {{ spec.design_name }}_axi_seq_lib::add_sequence({{ spec.design_name }}_axi_write_read_cmp_seq::get_type());
+    {{ spec.design_name }}_axi_seq_lib::add_sequence({{ spec.design_name }}_axi_outstanding_seq::get_type());
+    {{ spec.design_name }}_axi_seq_lib::add_sequence({{ spec.design_name }}_axi_illegal_addr_seq::get_type());
+    {{ spec.design_name }}_axi_seq_lib::add_sequence({{ spec.design_name }}_axi_virtual_seq::get_type());
+  endfunction
+
+  function new(string name = "{{ spec.design_name }}_axi_seq_lib");
+    super.new(name);
+    init_sequence_library();
+    add_sequences();
+  endfunction
+endclass
+
 {% endif %}

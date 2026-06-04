@@ -2,9 +2,9 @@
 {% set p = spec.protocol|default("wishbone") %}
 class {{ spec.design_name }}_agent extends uvm_agent;
   `uvm_component_utils({{ spec.design_name }}_agent)
-  {{ spec.design_name }}_driver     driver;
-  {{ spec.design_name }}_monitor    monitor;
-  uvm_sequencer #({{ spec.design_name }}_seq_item) sequencer;
+  {{ spec.design_name }}_driver      driver;
+  {{ spec.design_name }}_monitor     monitor;
+  {{ spec.design_name }}_sequencer   sequencer;
 
   uvm_analysis_port #({{ spec.design_name }}_seq_item) write_ap;
   uvm_analysis_port #({{ spec.design_name }}_seq_item) read_ap;
@@ -12,7 +12,7 @@ class {{ spec.design_name }}_agent extends uvm_agent;
   function new(string n, uvm_component p); super.new(n, p); endfunction
 
   function void build_phase(uvm_phase phase);
-    sequencer = uvm_sequencer#({{ spec.design_name }}_seq_item)::type_id::create("sequencer", this);
+    sequencer = {{ spec.design_name }}_sequencer::type_id::create("sequencer", this);
     driver    = {{ spec.design_name }}_driver::type_id::create("driver", this);
     monitor   = {{ spec.design_name }}_monitor::type_id::create("monitor", this);
     write_ap  = new("write_ap", this);

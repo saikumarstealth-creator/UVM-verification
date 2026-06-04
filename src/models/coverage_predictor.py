@@ -174,7 +174,7 @@ class CoveragePredictor:
         self._version: int = 1
         self._train_timestamp: Optional[str] = None
 
-    def train_synthetic(self, n_samples: int = 5000) -> CoveragePredictor:
+    def train_synthetic(self, n_samples: int = 50000) -> CoveragePredictor:
         if not HAS_SKLEARN:
             logger.warning("sklearn not available -- using heuristic fallback")
             self._fitted = True
@@ -207,8 +207,8 @@ class CoveragePredictor:
 
     def update_online(self, feature: np.ndarray, actual_coverage: float) -> None:
         self._training_data.append((feature, actual_coverage))
-        if len(self._training_data) > 10000:
-            self._training_data = self._training_data[-10000:]
+        if len(self._training_data) > 50000:
+            self._training_data = self._training_data[-50000:]
         if len(self._training_data) % 50 == 0:
             X = np.array([d[0] for d in self._training_data])
             y = np.array([d[1] for d in self._training_data])
@@ -221,17 +221,17 @@ class CoveragePredictor:
         X_scaled = self._scaler.fit_transform(X)
         n_feat = X_scaled.shape[1]
         rf = RandomForestRegressor(
-            n_estimators=min(300, max(50, n_feat * 20)),
-            max_depth=min(15, max(3, n_feat * 2)),
-            min_samples_leaf=3,
+            n_estimators=min(500, max(100, n_feat * 30)),
+            max_depth=min(20, max(5, n_feat * 3)),
+            min_samples_leaf=2,
             random_state=self.random_state,
             n_jobs=-1,
         )
         gbr = GradientBoostingRegressor(
-            n_estimators=min(200, max(50, n_feat * 15)),
-            max_depth=min(8, max(2, n_feat)),
-            learning_rate=0.08,
-            subsample=0.8,
+            n_estimators=min(400, max(100, n_feat * 25)),
+            max_depth=min(10, max(3, n_feat * 2)),
+            learning_rate=0.06,
+            subsample=0.85,
             random_state=self.random_state,
         )
         lr = LinearRegression()
