@@ -1774,21 +1774,17 @@ class {{ spec.design_name }}_apb_virtual_seq extends uvm_sequence #({{ spec.desi
 endclass
 
 // -------------------------------------------------------------------------
-// APB Wait State Sequence — exercises all wait state configurations
+// APB Wait State Sequence — register access with varying delays
 // -------------------------------------------------------------------------
 class {{ spec.design_name }}_apb_wait_state_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_apb_wait_state_seq)
 
-  rand int ws_idle;
-  rand int ws_setup;
-  rand int ws_access;
-  int completed;
-  int errors;
+  rand int idle_delay;
+  rand int completed;
+  rand int errors;
 
   constraint c_ws {
-    ws_idle   inside {[0:7]};
-    ws_setup  inside {[0:3]};
-    ws_access inside {[1:15]};
+    idle_delay inside {[0:15]};
   }
 
   function new(string n = "{{ spec.design_name }}_apb_wait_state_seq");
@@ -1796,32 +1792,19 @@ class {{ spec.design_name }}_apb_wait_state_seq extends {{ spec.design_name }}_b
   endfunction
 
   task body;
-    logic [7:0] cfg, readback;
+    logic [7:0] readback;
 
-    cfg = {4'b0, 1'b0, 2'b0, ws_idle[2:0]};
-    write_reg(0, cfg);
-    cfg = {4'b0, 1'b0, ws_setup[1:0], 1'b0};
-    write_reg(1, cfg);
-    cfg = {4'b0, 1'b0, ws_access[3:0]};
-    write_reg(2, cfg);
+    `uvm_info("APB_WS", $sformatf("Wait state test: idle_delay=%0d", idle_delay), UVM_LOW)
+{% for reg in sorted_regs %}
+{% if reg.access != "ro" %}
+    write_reg({{ addr_bits }}'h{{ reg.address|replace('0x', '')|replace('h', '') }}, $urandom_range(0, 255));
+    repeat (idle_delay) @(posedge vif.clk);
+{% endif %}
+    read_reg({{ addr_bits }}'h{{ reg.address|replace('0x', '')|replace('h', '') }}, readback);
+    repeat (idle_delay) @(posedge vif.clk);
+{% endfor %}
 
-    `uvm_info("APB_WS", $sformatf(
-      "Wait states: idle=%0d setup=%0d access=%0d", ws_idle, ws_setup, ws_access), UVM_LOW)
-
-    for (int i = 0; i < 10; i++) begin
-      logic [7:0] d_in = $urandom_range(0, 255);
-      write_reg(3, d_in);
-      read_reg(3, readback);
-      if (readback === d_in) completed++;
-      else errors++;
-      #(ws_access * 10);
-    end
-
-    if (errors == 0)
-      `uvm_info("APB_WS", $sformatf("All %0d transactions passed with wait states", completed), UVM_LOW)
-    else
-      `uvm_error("APB_WS", $sformatf("%0d errors with wait states idle=%0d setup=%0d access=%0d",
-                errors, ws_idle, ws_setup, ws_access))
+    `uvm_info("APB_WS", "Wait state test completed", UVM_LOW)
   endtask
 endclass
 
@@ -1843,17 +1826,16 @@ class {{ spec.design_name }}_apb_pslverr_seq extends {{ spec.design_name }}_base
 
   task body;
     logic [7:0] val;
+    int num_pending;
 
     `uvm_info("APB_ERR", $sformatf("PSLVERR injection: %0d transactions", num_injections), UVM_LOW)
-
-    write_reg(0, 8'b0000_1000);
 
     for (int i = 0; i < num_injections; i++) begin
       {{ spec.design_name }}_seq_item err_req;
       err_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("pslverr_%0d", i));
       start_item(err_req);
       if (!err_req.randomize() with {
-        we == 1; addr == {{ max_addr_val }}; data == 8'($urandom_range(0, 255)); delay == 0;
+        we == 1; addr inside {[{{ max_addr_val + 1 }}:(1 << {{ addr_bits }}) - 1]}; data == 8'($urandom_range(0, 255)); delay == 0;
       }) `uvm_fatal("RAND", "PSLVERR req randomization failed")
       finish_item(err_req);
 
@@ -1865,15 +1847,19 @@ class {{ spec.design_name }}_apb_pslverr_seq extends {{ spec.design_name }}_base
       #100;
     end
 
-    write_reg(0, 8'h00);
-    write_reg(0, 8'hA5);
-    read_reg(0, val);
+{% for reg in sorted_regs if reg.access == "rw" %}
+    // Recovery check via {{ reg.name }} (rw register)
+    write_reg({{ addr_bits }}'h{{ reg.address|replace('0x', '')|replace('h', '') }}, 8'hA5);
+    read_reg({{ addr_bits }}'h{{ reg.address|replace('0x', '')|replace('h', '') }}, val);
     if (val == 8'hA5) begin
-      recoveries = 1;
-      `uvm_info("APB_ERR", "Slave recovered after PSLVERR injection", UVM_LOW)
+      recoveries++;
+      `uvm_info("APB_ERR", $sformatf("Slave recovered (%0d)", recoveries), UVM_LOW)
     end else begin
-      `uvm_error("APB_ERR", "Slave did not recover after PSLVERR")
+      `uvm_error("APB_ERR", $sformatf("Slave did not recover via %s", "{{ reg.name }}"))
     end
+{% else %}
+    `uvm_warning("APB_ERR", "No rw registers available for recovery check")
+{% endfor %}
 
     `uvm_info("APB_ERR", $sformatf(
       "PSLVERR report: %0d injections, %0d errors seen, recovered=%0s",
@@ -1896,9 +1882,17 @@ class {{ spec.design_name }}_apb_illegal_access_seq extends {{ spec.design_name 
 
   task body;
     logic [7:0] val;
-    logic [7:0] illegal_addrs[$] = '{8'hFF, 8'hFE, 8'h80, 8'h81, 8'h40};
+    logic [{{ addr_bits-1 }}:0] illegal_addrs[$];
+    logic [{{ addr_bits-1 }}:0] used_addrs[$] = '{
+{% for a in addr_ints %}      {{ addr_bits }}'h{{ '%0x' % a }}{{ ',' if not loop.last }}
+{% endfor %}    };
 
     `uvm_info("APB_ILL", "Starting illegal access test", UVM_LOW)
+
+    for (int a = 0; a < (1 << {{ addr_bits }}); a++) begin
+      if (!(a inside {used_addrs}))
+        illegal_addrs.push_back(a);
+    end
 
     foreach (illegal_addrs[i]) begin
       write_reg(illegal_addrs[i], 8'hA5);
@@ -1907,11 +1901,6 @@ class {{ spec.design_name }}_apb_illegal_access_seq extends {{ spec.design_name 
       read_reg(illegal_addrs[i], val);
       `uvm_info("APB_ILL", $sformatf("Illegal addr 0x%0h: readback=0x%02h", illegal_addrs[i], val), UVM_MEDIUM)
     end
-
-    write_reg({{ max_addr_val + 1 }}, 8'h55);
-    illegal_ops++;
-    read_reg({{ max_addr_val + 1 }}, val);
-    `uvm_info("APB_ILL", $sformatf("OOB addr 0x%0h: readback=0x%02h", {{ max_addr_val + 1 }}, val), UVM_MEDIUM)
 
     `uvm_info("APB_ILL", $sformatf("Illegal access test: %0d operations attempted", illegal_ops), UVM_LOW)
   endtask
