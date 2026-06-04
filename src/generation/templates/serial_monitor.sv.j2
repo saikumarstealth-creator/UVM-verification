@@ -2,8 +2,8 @@
 // Monitors uart_tx and uart_rx lines, deserializes data, checks integrity
 {% set p = spec.protocol|default("wishbone") %}
 
-class uart_serial_item extends uvm_sequence_item;
-  `uvm_object_utils(uart_serial_item)
+class {{ spec.design_name }}_serial_item extends uvm_sequence_item;
+  `uvm_object_utils({{ spec.design_name }}_serial_item)
 
   typedef enum {TX, RX} direction_t;
   typedef enum {NONE, ODD, EVEN, MARK, SPACE} parity_t;
@@ -26,7 +26,7 @@ class uart_serial_item extends uvm_sequence_item;
     parity_mode inside {NONE, ODD, EVEN, MARK, SPACE};
   }
 
-  function new(string name = "uart_serial_item");
+  function new(string name = "{{ spec.design_name }}_serial_item");
     super.new(name);
     parity_error = 0;
     framing_error = 0;
@@ -43,15 +43,15 @@ endclass
 class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
   `uvm_component_utils({{ spec.design_name }}_serial_monitor)
 
-  uvm_analysis_port #(uart_serial_item) tx_port;
-  uvm_analysis_port #(uart_serial_item) rx_port;
+  uvm_analysis_port #({{ spec.design_name }}_serial_item) tx_port;
+  uvm_analysis_port #({{ spec.design_name }}_serial_item) rx_port;
 
   virtual {{ spec.design_name }}_intf vif;
 
   int baud_rate = 115200;
   int data_bits = 8;
   int stop_bits = 1;
-  uart_serial_item::parity_t parity_mode = uart_serial_item::NONE;
+  {{ spec.design_name }}_serial_item::parity_t parity_mode = {{ spec.design_name }}_serial_item::NONE;
 
   protected int clk_freq = 100_000_000;
   protected int cycles_per_bit;
@@ -77,7 +77,7 @@ class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
     `uvm_info("SER_MON", $sformatf("Baud rate set to %0d, cycles per bit = %0d", baud_rate, cycles_per_bit), UVM_MEDIUM)
   endfunction
 
-  function void set_format(int dbits = 8, int sbits = 1, uart_serial_item::parity_t parity = uart_serial_item::NONE);
+  function void set_format(int dbits = 8, int sbits = 1, {{ spec.design_name }}_serial_item::parity_t parity = {{ spec.design_name }}_serial_item::NONE);
     data_bits = dbits;
     stop_bits = sbits;
     parity_mode = parity;
@@ -95,11 +95,11 @@ class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
   endtask
 
   protected task monitor_tx();
-    uart_serial_item item;
+    {{ spec.design_name }}_serial_item item;
     forever begin
       @(negedge vif.uart_tx);
-      item = uart_serial_item::type_id::create("item");
-      item.dir = uart_serial_item::TX;
+      item = {{ spec.design_name }}_serial_item::type_id::create("item");
+      item.dir = {{ spec.design_name }}_serial_item::TX;
       item.baud_rate = baud_rate;
       item.data_bits = data_bits;
       item.stop_bits = stop_bits;
@@ -114,11 +114,11 @@ class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
   endtask
 
   protected task monitor_rx();
-    uart_serial_item item;
+    {{ spec.design_name }}_serial_item item;
     forever begin
       @(negedge vif.uart_rx);
-      item = uart_serial_item::type_id::create("item");
-      item.dir = uart_serial_item::RX;
+      item = {{ spec.design_name }}_serial_item::type_id::create("item");
+      item.dir = {{ spec.design_name }}_serial_item::RX;
       item.baud_rate = baud_rate;
       item.data_bits = data_bits;
       item.stop_bits = stop_bits;
@@ -132,7 +132,7 @@ class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
     end
   endtask
 
-  protected task receive_byte(ref logic line, output uart_serial_item item);
+  protected task receive_byte(ref logic line, output {{ spec.design_name }}_serial_item item);
     logic [10:0] shift_reg;
     logic parity_calc;
     int bit_cnt;
@@ -154,7 +154,7 @@ class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
 
     item.data = shift_reg[data_bits:1];
 
-    if (parity_mode != uart_serial_item::NONE) begin
+    if (parity_mode != {{ spec.design_name }}_serial_item::NONE) begin
       repeat(cycles_per_bit) @(posedge vif.clk);
       shift_reg[bit_cnt] = line;
 
@@ -180,15 +180,15 @@ class {{ spec.design_name }}_serial_monitor extends uvm_monitor;
     end
   endtask
 
-  protected function logic calc_parity(logic [7:0] data, int bits, uart_serial_item::parity_t mode);
+  protected function logic calc_parity(logic [7:0] data, int bits, {{ spec.design_name }}_serial_item::parity_t mode);
     logic parity;
     parity = ^data[bits-1:0];
 
     case (mode)
-      uart_serial_item::ODD:   return parity;
-      uart_serial_item::EVEN:  return ~parity;
-      uart_serial_item::MARK:  return 1'b1;
-      uart_serial_item::SPACE: return 1'b0;
+      {{ spec.design_name }}_serial_item::ODD:   return parity;
+      {{ spec.design_name }}_serial_item::EVEN:  return ~parity;
+      {{ spec.design_name }}_serial_item::MARK:  return 1'b1;
+      {{ spec.design_name }}_serial_item::SPACE: return 1'b0;
       default: return 1'b0;
     endcase
   endfunction

@@ -1,40 +1,20 @@
 // Enterprise Virtual Sequencer for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
-// Holds sub-sequencer handles for layered protocol environments.
-// Virtual sequences reference vsequencer.sub_seqr.* to arbitrate across
-// multiple protocol agents (e.g., AXI4-Lite + APB, or dual UART).
-{% set p = spec.protocol|default("wishbone") %}
+// Holds sub-sequencer handles for each interface in the spec.
+// Virtual sequences reference vsequencer.<name>_seqr to arbitrate across
+// multiple protocol agents.
+{%- set p = spec.protocol|default("wishbone") %}
+{%- set intfs = spec.interfaces if spec.interfaces else [] %}
 class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
   `uvm_component_utils({{ spec.design_name }}_virtual_sequencer)
 
-  // ── Sub-sequencer handles ──────────────────────────────────────────
-  // These are populated externally (via config DB or manual connection)
-  // so that virtual sequences can start items on any sub-sequencer.
-  uvm_sequencer #({{ spec.design_name }}_seq_item) bus_seqr;
-
-{% if p == "uart" %}
-  // Additional UART sub-sequencers for multi-port / layered protocols
-  // Number of sub-seqrs = number of interfaces in spec
-  uvm_sequencer #({{ spec.design_name }}_seq_item) uart0_seqr;
-{% if spec.interfaces|length > 1 %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) uart1_seqr;
-{% endif %}
-{% if spec.interfaces|length > 2 %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) uart2_seqr;
-{% endif %}
-{% if spec.interfaces|length > 3 %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) uart3_seqr;
-{% endif %}
-{% elif p == "apb" %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) apb_seqr;
-{% elif p == "axi4lite" %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) axi_seqr;
-{% elif p == "spi" %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) spi_seqr;
-{% elif p == "i2c" %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) i2c_seqr;
-{% else %}
-  uvm_sequencer #({{ spec.design_name }}_seq_item) wb_seqr;
-{% endif %}
+  // ── Sub-sequencer handles — one per interface ──────────────────────
+  // Populated via config DB so virtual sequences can start items
+  // on any sub-sequencer.
+{%- for intf in intfs %}
+  {%- set if_name = intf.name if intf is mapping else intf %}
+  {%- set sname = if_name|replace("_intf", "") + "_seqr" %}
+  uvm_sequencer #({{ spec.design_name }}_seq_item) {{ sname }};
+{%- endfor %}
 
   function new(string n, uvm_component p);
     super.new(n, p);
@@ -42,20 +22,10 @@ class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-{% if p == "uart" %}
-    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "bus_seqr", bus_seqr));
-    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart0_seqr", uart0_seqr));
-{% if spec.interfaces|length > 1 %}
-    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart1_seqr", uart1_seqr));
-{% endif %}
-{% if spec.interfaces|length > 2 %}
-    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart2_seqr", uart2_seqr));
-{% endif %}
-{% if spec.interfaces|length > 3 %}
-    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "uart3_seqr", uart3_seqr));
-{% endif %}
-{% else %}
-    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "bus_seqr", bus_seqr));
-{% endif %}
+{%- for intf in intfs %}
+  {%- set if_name = intf.name if intf is mapping else intf %}
+  {%- set sname = if_name|replace("_intf", "") + "_seqr" %}
+    void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "{{ sname }}", {{ sname }}));
+{%- endfor %}
   endfunction
 endclass

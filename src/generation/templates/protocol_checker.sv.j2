@@ -50,7 +50,7 @@ class {{ spec.design_name }}_protocol_checker extends uvm_monitor;
 {% if p == "apb" %}
     apb_protocol_monitor();
 {% elif p == "uart" %}
-    uart_protocol_monitor();
+    {{ spec.design_name }}_protocol_monitor();
 {% elif p == "wishbone" %}
     wishbone_protocol_monitor();
 {% elif p in ("spi", "i2c") %}
@@ -109,7 +109,7 @@ class {{ spec.design_name }}_protocol_checker extends uvm_monitor;
 
 {% elif p == "uart" %}
   // UART Protocol Checker
-  task uart_protocol_monitor();
+  task {{ spec.design_name }}_protocol_monitor();
     logic [7:0] rx_shift;
     int bit_count;
     bit in_frame;

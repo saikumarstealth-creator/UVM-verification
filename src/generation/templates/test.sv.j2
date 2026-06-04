@@ -139,11 +139,11 @@ endclass
 // Auto-generated per-sequence tests from YAML
 // =========================================================================
 {% set seq_to_class = {
-  "uart_smoke": "uart_config_seq",
-  "uart_reg_access": spec.design_name + "_all_regs_seq",
-  "uart_loopback": "uart_loopback_seq",
-  "uart_random": spec.design_name + "_random_regs_seq",
-  "uart_error_injection": "uart_error_injection_seq"
+  "{{ spec.design_name }}_smoke": "{{ spec.design_name }}_config_seq",
+  "{{ spec.design_name }}_reg_access": spec.design_name + "_all_regs_seq",
+  "{{ spec.design_name }}_loopback": "{{ spec.design_name }}_loopback_seq",
+  "{{ spec.design_name }}_random": spec.design_name + "_random_regs_seq",
+  "{{ spec.design_name }}_error_injection": "{{ spec.design_name }}_error_injection_seq"
 } %}
 
 {% for seq in seqs %}
@@ -155,17 +155,17 @@ class {{ seq.name }}_test extends {{ spec.design_name }}_base_test;
   endfunction
 
   task run_top_sequence();
-    {%- set sv_class = seq_to_class.get(seq.name, "uart_config_seq") %}
+    {%- set sv_class = seq_to_class.get(seq.name, "{{ spec.design_name }}_config_seq") %}
     {{ sv_class }} seq;
     seq = {{ sv_class }}::type_id::create("seq");
     if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
-{% if seq.name == "uart_loopback" %}
+{% if seq.name == "{{ spec.design_name }}_loopback" %}
     seq.test_data = '{8'h55, 8'hAA, 8'h33, 8'hCC};
-{% elif seq.name == "uart_error_injection" %}
-    seq.inj_type = uart_error_injection_seq::INJ_PARITY;
+{% elif seq.name == "{{ spec.design_name }}_error_injection" %}
+    seq.inj_type = {{ spec.design_name }}_error_injection_seq::INJ_PARITY;
     seq.num_injections = 5;
-{% elif seq.name == "uart_random" %}
+{% elif seq.name == "{{ spec.design_name }}_random" %}
     if (!seq.randomize()) `uvm_fatal("RAND", "Randomization failed")
 {% endif %}
     `uvm_info("TEST_{{ seq.name|upper }}", $sformatf("Starting test: {{ seq.description }}"), UVM_LOW)
@@ -179,19 +179,19 @@ endclass
 // Infrastructure tests
 // =========================================================================
 
-class uart_tx_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_tx_test)
+class {{ spec.design_name }}_tx_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_tx_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_config_seq cfg_seq;
-    uart_tx_seq tx_seq;
+    {{ spec.design_name }}_config_seq cfg_seq;
+    {{ spec.design_name }}_tx_seq tx_seq;
 
     `uvm_info("TEST_TX", "Configuring UART for TX test", UVM_LOW)
-    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    cfg_seq = {{ spec.design_name }}_config_seq::type_id::create("cfg_seq");
     if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
     cfg_seq.reg_model = reg_model;
     cfg_seq.baud_rate = 115200;
@@ -200,7 +200,7 @@ class uart_tx_test extends {{ spec.design_name }}_base_test;
     run_sequence_with_timeout(cfg_seq, 10ms);
 
     `uvm_info("TEST_TX", "Starting TX sequence", UVM_LOW)
-    tx_seq = uart_tx_seq::type_id::create("tx_seq");
+    tx_seq = {{ spec.design_name }}_tx_seq::type_id::create("tx_seq");
     if (tx_seq == null) `uvm_fatal("SEQ", "Failed to create tx_seq")
     tx_seq.reg_model = reg_model;
     tx_seq.tx_data = {8'h01, 8'h23, 8'h45, 8'h67, 8'h89, 8'hAB, 8'hCD, 8'hEF};
@@ -211,8 +211,8 @@ class uart_tx_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
-class uart_baud_rate_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_baud_rate_test)
+class {{ spec.design_name }}_baud_rate_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_baud_rate_test)
 
   int test_bauds[] = '{9600, 19200, 38400, 57600, 115200, 1000000};
 
@@ -221,12 +221,12 @@ class uart_baud_rate_test extends {{ spec.design_name }}_base_test;
   endfunction
 
   task run_top_sequence();
-    uart_config_seq cfg_seq;
+    {{ spec.design_name }}_config_seq cfg_seq;
 
     foreach (test_bauds[i]) begin
       `uvm_info("TEST_BAUD", $sformatf("Testing baud rate: %0d", test_bauds[i]), UVM_LOW)
 
-      cfg_seq = uart_config_seq::type_id::create($sformatf("cfg_seq_%0d", i));
+      cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_seq_%0d", i));
       if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
       cfg_seq.reg_model = reg_model;
       cfg_seq.baud_rate = test_bauds[i];
@@ -239,15 +239,15 @@ class uart_baud_rate_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
-class uart_format_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_format_test)
+class {{ spec.design_name }}_format_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_format_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_config_seq cfg_seq;
+    {{ spec.design_name }}_config_seq cfg_seq;
     int data_bits[] = '{5, 6, 7, 8};
     int stop_bits[] = '{1, 2};
     int parity_en[] = '{0, 1};
@@ -258,7 +258,7 @@ class uart_format_test extends {{ spec.design_name }}_base_test;
           `uvm_info("TEST_FMT", $sformatf("Format: %0d bits, %0d stop(s), parity=%0d",
                     data_bits[db], stop_bits[sb], parity_en[pe]), UVM_LOW)
 
-          cfg_seq = uart_config_seq::type_id::create($sformatf("cfg_seq_%0d_%0d_%0d", db, sb, pe));
+          cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_seq_%0d_%0d_%0d", db, sb, pe));
           if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
           cfg_seq.reg_model = reg_model;
           cfg_seq.baud_rate = 115200;
@@ -275,20 +275,20 @@ class uart_format_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
-class uart_fifo_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_fifo_test)
+class {{ spec.design_name }}_fifo_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_fifo_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_config_seq cfg_seq;
-    uart_tx_seq tx_seq;
+    {{ spec.design_name }}_config_seq cfg_seq;
+    {{ spec.design_name }}_tx_seq tx_seq;
     logic [7:0] rd_data;
 
     `uvm_info("TEST_FIFO", "Configuring UART with FIFO enabled (FCR=0x07)", UVM_LOW)
-    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    cfg_seq = {{ spec.design_name }}_config_seq::type_id::create("cfg_seq");
     if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
     cfg_seq.reg_model = reg_model;
     cfg_seq.baud_rate = 115200;
@@ -303,7 +303,7 @@ class uart_fifo_test extends {{ spec.design_name }}_base_test;
 
     // Fill FIFO (16 bytes for 16550)
     `uvm_info("TEST_FIFO", "Filling TX FIFO with 16 bytes", UVM_LOW)
-    tx_seq = uart_tx_seq::type_id::create("tx_seq");
+    tx_seq = {{ spec.design_name }}_tx_seq::type_id::create("tx_seq");
     if (tx_seq == null) `uvm_fatal("SEQ", "Failed to create tx_seq")
     tx_seq.reg_model = reg_model;
     tx_seq.tx_data = '{16{8'hA5}};
@@ -323,38 +323,38 @@ class uart_fifo_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
-class uart_interrupt_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_interrupt_test)
+class {{ spec.design_name }}_interrupt_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_interrupt_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_interrupt_seq int_seq;
+    {{ spec.design_name }}_interrupt_seq int_seq;
     `uvm_info("TEST_INT", "Starting interrupt test — THR empty", UVM_LOW)
-    int_seq = uart_interrupt_seq::type_id::create("int_seq");
+    int_seq = {{ spec.design_name }}_interrupt_seq::type_id::create("int_seq");
     if (int_seq == null) `uvm_fatal("SEQ", "Failed to create int_seq")
     int_seq.reg_model = reg_model;
-    int_seq.int_type = uart_interrupt_seq::INT_TX_EMPTY;
+    int_seq.int_type = {{ spec.design_name }}_interrupt_seq::INT_TX_EMPTY;
     run_sequence_with_timeout(int_seq, 10ms);
     `uvm_info("TEST_INT", "Interrupt test completed", UVM_LOW)
   endtask
 endclass
 
-class uart_reset_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_reset_test)
+class {{ spec.design_name }}_reset_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_reset_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_reg_hw_reset_seq hw_rst_seq;
-    uart_reset_test_seq    sw_rst_seq;
+    {{ spec.design_name }}_reg_hw_reset_seq hw_rst_seq;
+    {{ spec.design_name }}_reset_test_seq    sw_rst_seq;
 
     `uvm_info("TEST_RST", "Starting HW reset verification via RAL", UVM_LOW)
-    hw_rst_seq = uart_reg_hw_reset_seq::type_id::create("hw_rst_seq");
+    hw_rst_seq = {{ spec.design_name }}_reg_hw_reset_seq::type_id::create("hw_rst_seq");
     if (hw_rst_seq == null) `uvm_fatal("SEQ", "Failed to create hw_rst_seq")
     hw_rst_seq.reg_model = reg_model;
     begin
@@ -372,7 +372,7 @@ class uart_reset_test extends {{ spec.design_name }}_base_test;
     end
 
     `uvm_info("TEST_RST", "Starting register reset value verification", UVM_LOW)
-    sw_rst_seq = uart_reset_test_seq::type_id::create("sw_rst_seq");
+    sw_rst_seq = {{ spec.design_name }}_reset_test_seq::type_id::create("sw_rst_seq");
     if (sw_rst_seq == null) `uvm_fatal("SEQ", "Failed to create sw_rst_seq")
     sw_rst_seq.reg_model = reg_model;
     run_sequence_with_timeout(sw_rst_seq, 10ms);
@@ -381,17 +381,17 @@ class uart_reset_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
-class uart_virtual_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_virtual_test)
+class {{ spec.design_name }}_virtual_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_virtual_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_virtual_seq vseq;
+    {{ spec.design_name }}_virtual_seq vseq;
     `uvm_info("TEST_VSEQ", "Starting virtual sequence test", UVM_LOW)
-    vseq = uart_virtual_seq::type_id::create("vseq");
+    vseq = {{ spec.design_name }}_virtual_seq::type_id::create("vseq");
     if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;
@@ -400,19 +400,19 @@ class uart_virtual_test extends {{ spec.design_name }}_base_test;
   endtask
 endclass
 
-class uart_regression_test extends {{ spec.design_name }}_base_test;
-  `uvm_component_utils(uart_regression_test)
+class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_regression_test)
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   task run_top_sequence();
-    uart_virtual_seq vseq;
+    {{ spec.design_name }}_virtual_seq vseq;
 
     `uvm_info("TEST_REGRESS", "Starting full regression via virtual sequence", UVM_LOW)
 
-    vseq = uart_virtual_seq::type_id::create("vseq");
+    vseq = {{ spec.design_name }}_virtual_seq::type_id::create("vseq");
     if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;

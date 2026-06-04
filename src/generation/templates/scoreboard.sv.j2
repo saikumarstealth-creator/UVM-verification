@@ -30,9 +30,9 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   uvm_analysis_imp #({{ spec.design_name }}_seq_item, {{ spec.design_name }}_scoreboard) item_export;
 {% if p == "uart" %}
   `uvm_analysis_imp_decl(_tx)
-  uvm_analysis_imp_tx #(uart_serial_item, {{ spec.design_name }}_scoreboard) tx_export;
+  uvm_analysis_imp_tx #({{ spec.design_name }}_serial_item, {{ spec.design_name }}_scoreboard) tx_export;
   `uvm_analysis_imp_decl(_rx)
-  uvm_analysis_imp_rx #(uart_serial_item, {{ spec.design_name }}_scoreboard) rx_export;
+  uvm_analysis_imp_rx #({{ spec.design_name }}_serial_item, {{ spec.design_name }}_scoreboard) rx_export;
 {% endif %}
 
   uvm_analysis_port #(transaction_t) write_ap;
@@ -422,7 +422,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   endfunction
 
 {% if p == "uart" %}
-  function void write_tx(uart_serial_item item);
+  function void write_tx({{ spec.design_name }}_serial_item item);
     logic [7:0] expected;
 
     tx_serial_count++;
@@ -458,7 +458,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     end
   endfunction
 
-  function void write_rx(uart_serial_item item);
+  function void write_rx({{ spec.design_name }}_serial_item item);
     logic [7:0] expected;
 
     rx_serial_count++;

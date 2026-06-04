@@ -44,7 +44,7 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   localparam PARITY_MARK  = 3;
   localparam PARITY_SPACE = 4;
 
-  covergroup uart_config_cg with function sample(int baud_rate, int data_bits, int stop_bits, int parity_mode);
+  covergroup {{ spec.design_name }}_config_cg with function sample(int baud_rate, int data_bits, int stop_bits, int parity_mode);
     option.per_instance = 1;
     option.cross_auto_bin_max = 256;
     cp_baud: coverpoint baud_rate {
@@ -78,13 +78,13 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   endgroup
 
   function void sample_uart_config(int baud, int dbits, int sbits, int parity_mode);
-    uart_config_cg.sample(baud, dbits, sbits, parity_mode);
+    {{ spec.design_name }}_config_cg.sample(baud, dbits, sbits, parity_mode);
     if (!(baud inside {baud_rates_covered}))
       baud_rates_covered.push_back(baud);
   endfunction
 
   // UART interrupt type coverage (IIR[3:1] encoding)
-  covergroup uart_interrupt_cg with function sample(int int_type, bit irq_asserted);
+  covergroup {{ spec.design_name }}_interrupt_cg with function sample(int int_type, bit irq_asserted);
     option.per_instance = 1;
     cp_int_type: coverpoint int_type {
       bins rx_data      = {0};
@@ -97,11 +97,11 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   endgroup
 
   function void sample_interrupt(int int_type, bit irq_asserted);
-    uart_interrupt_cg.sample(int_type, irq_asserted);
+    {{ spec.design_name }}_interrupt_cg.sample(int_type, irq_asserted);
   endfunction
 
   // Error injection type coverage
-  covergroup uart_error_cg with function sample(int err_type, bit hw_detected, bit parity_enabled);
+  covergroup {{ spec.design_name }}_error_cg with function sample(int err_type, bit hw_detected, bit parity_enabled);
     option.per_instance = 1;
     cp_err_type: coverpoint err_type {
       bins parity  = {0};
@@ -119,11 +119,11 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   endgroup
 
   function void sample_error(int err_type, bit hw_detected, bit parity_enabled = 0);
-    uart_error_cg.sample(err_type, hw_detected, parity_enabled);
+    {{ spec.design_name }}_error_cg.sample(err_type, hw_detected, parity_enabled);
   endfunction
 
   // Loopback pass/fail coverage
-  covergroup uart_loopback_cg with function sample(int matches, int mismatches);
+  covergroup {{ spec.design_name }}_loopback_cg with function sample(int matches, int mismatches);
     option.per_instance = 1;
     cp_result: coverpoint (mismatches == 0) {
       bins pass = {1};
@@ -143,7 +143,7 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   endgroup
 
   function void sample_loopback(int matches, int mismatches);
-    uart_loopback_cg.sample(matches, mismatches);
+    {{ spec.design_name }}_loopback_cg.sample(matches, mismatches);
   endfunction
 {% endif %}
 
@@ -193,10 +193,10 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     reg_address_cg = new();
     data_pattern_cg = new();
 {% if p == "uart" %}
-    uart_config_cg = new();
-    uart_interrupt_cg = new();
-    uart_error_cg = new();
-    uart_loopback_cg = new();
+    {{ spec.design_name }}_config_cg = new();
+    {{ spec.design_name }}_interrupt_cg = new();
+    {{ spec.design_name }}_error_cg = new();
+    {{ spec.design_name }}_loopback_cg = new();
 {% endif %}
 {% if regs %}
 {% for r in regs %}
