@@ -154,8 +154,10 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
   }
 
   const updateDesignNameFromPreset = (value: string) => {
-    const newSpec = config.spec_yaml.replace(/design_name: .+/, `design_name: ${value}`)
-    updateConfig({ design_name: value, protocol: PRESETS[value]?.protocol || value, spec_yaml: newSpec })
+    const proto = PRESETS[value]?.protocol || value
+    let newSpec = config.spec_yaml.replace(/design_name: .+/, `design_name: ${value}`)
+    newSpec = newSpec.replace(/^protocol: .+$/m, `protocol: ${proto}`)
+    updateConfig({ design_name: value, protocol: proto, spec_yaml: newSpec })
   }
 
   return (
