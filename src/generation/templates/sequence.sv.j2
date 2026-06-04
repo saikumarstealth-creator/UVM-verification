@@ -68,38 +68,30 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   protected task write_reg(logic [2:0] addr, logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
+      uvm_reg rg;
 {% if p == "uart" %}
-      if (addr inside {UART_DLL_ADDR, UART_DLH_ADDR}) begin
+      if (addr inside {3'h0, 3'h1}) begin
         logic [7:0] lcr_val;
+        string      rg_name;
         reg_model.lcr.read(st, lcr_val, .parent(this));
-        if (addr == UART_DLL_ADDR) begin
-          if (lcr_val[7]) begin
-            {% if 'dll' in reg_names %}reg_model.dll.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLL register not defined"){% endif %}
-          end else begin
-            {% if 'thr' in reg_names %}reg_model.thr.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "THR register not defined"){% endif %}
-          end
-        end else begin
-          if (lcr_val[7]) begin
-            {% if 'dlh' in reg_names %}reg_model.dlh.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLH register not defined"){% endif %}
-          end else begin
-            {% if 'ier' in reg_names %}reg_model.ier.write(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "IER register not defined"){% endif %}
-          end
-        end
+        if (addr == 3'h0)
+          rg_name = lcr_val[7] ? "dll" : "thr";
+        else
+          rg_name = lcr_val[7] ? "dlh" : "ier";
+        rg = reg_model.get_reg_by_name(rg_name);
+        if (rg != null)
+          rg.write(st, data, .parent(this));
+        else
+          `uvm_warning("DLAB", $sformatf("Register '%s' not found in reg_model", rg_name))
         if (sb_handle != null) sb_handle.record_tx(addr, data);
         return;
       end
 {% endif %}
-      case (addr)
-{% set seen = [] %}
-{% for reg in sorted_regs if reg.name|lower not in ro_regs %}
-  {% set a = reg.address.replace('0x', '').replace('h', '') %}
-  {% if a not in seen %}
-    {% set _ = seen.append(a) %}
-        {{ addr_bits }}'h{{ a }}: reg_model.{{ reg.name|lower }}.write(st, data, .parent(this));
-  {% endif %}
-{% endfor %}
-        default: `uvm_error("REG", $sformatf("Write to invalid address 0x%0h", addr))
-      endcase
+      rg = reg_model.get_reg_by_offset(addr);
+      if (rg != null)
+        rg.write(st, data, .parent(this));
+      else
+        `uvm_error("REG", $sformatf("Write to unmapped address 0x%0h", addr))
     end else begin
       {{ spec.design_name }}_seq_item req_h;
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
@@ -118,38 +110,30 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   protected task read_reg(logic [2:0] addr, output logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
+      uvm_reg rg;
 {% if p == "uart" %}
-      if (addr inside {UART_DLL_ADDR, UART_DLH_ADDR}) begin
+      if (addr inside {3'h0, 3'h1}) begin
         logic [7:0] lcr_val;
+        string      rg_name;
         reg_model.lcr.read(st, lcr_val, .parent(this));
-        if (addr == UART_DLL_ADDR) begin
-          if (lcr_val[7]) begin
-            {% if 'dll' in reg_names %}reg_model.dll.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLL register not defined"){% endif %}
-          end else begin
-            {% if 'rbr' in reg_names %}reg_model.rbr.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "RBR register not defined"){% endif %}
-          end
-        end else begin
-          if (lcr_val[7]) begin
-            {% if 'dlh' in reg_names %}reg_model.dlh.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "DLH register not defined"){% endif %}
-          end else begin
-            {% if 'ier' in reg_names %}reg_model.ier.read(st, data, .parent(this));{% else %}`uvm_warning("DLAB", "IER register not defined"){% endif %}
-          end
-        end
+        if (addr == 3'h0)
+          rg_name = lcr_val[7] ? "dll" : "rbr";
+        else
+          rg_name = lcr_val[7] ? "dlh" : "ier";
+        rg = reg_model.get_reg_by_name(rg_name);
+        if (rg != null)
+          rg.read(st, data, .parent(this));
+        else
+          `uvm_warning("DLAB", $sformatf("Register '%s' not found in reg_model", rg_name))
         if (sb_handle != null) sb_handle.record_rx(addr, data);
         return;
       end
 {% endif %}
-      case (addr)
-{% set seen = [] %}
-{% for reg in sorted_regs %}
-  {% set a = reg.address.replace('0x', '').replace('h', '') %}
-  {% if a not in seen %}
-    {% set _ = seen.append(a) %}
-        {{ addr_bits }}'h{{ a }}: reg_model.{{ reg.name|lower }}.read(st, data, .parent(this));
-  {% endif %}
-{% endfor %}
-        default: `uvm_error("REG", $sformatf("Read from invalid address 0x%0h", addr))
-      endcase
+      rg = reg_model.get_reg_by_offset(addr);
+      if (rg != null)
+        rg.read(st, data, .parent(this));
+      else
+        `uvm_error("REG", $sformatf("Read from unmapped address 0x%0h", addr))
     end else begin
       {{ spec.design_name }}_seq_item req_h;
       req_h = {{ spec.design_name }}_seq_item::type_id::create("req_h");
