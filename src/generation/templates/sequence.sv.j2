@@ -16,7 +16,7 @@
 {% set reg_addresses = addr_ints|sort %}
 {% set reg_upper = regs|map(attribute='name')|map('upper')|list %}
 
-// Register address constants (generated from spec)
+// Register address constants (generated from spec — only if register exists)
 {% set seen_addrs = [] %}
 {% for reg in sorted_regs %}
 {% set a = reg.address|replace('0x', '')|replace('h', '') %}
@@ -26,16 +26,24 @@ localparam logic [{{ addr_bits-1 }}:0] {{ spec.design_name|upper }}_{{ reg.name|
 {% endif %}
 {% endfor %}
 {% if p == "uart" %}
-// UART 16550 register address constants (always defined for UART protocol)
-localparam logic [2:0] UART_THR_ADDR = 3'h0;  // THR (write, DLAB=0)
-localparam logic [2:0] UART_RBR_ADDR = 3'h0;  // RBR (read, DLAB=0)
-localparam logic [2:0] UART_DLL_ADDR = 3'h0;  // DLL (DLAB=1)
-localparam logic [2:0] UART_IER_ADDR = 3'h1;  // IER (DLAB=0)
-localparam logic [2:0] UART_DLH_ADDR = 3'h1;  // DLH (DLAB=1)
-localparam logic [2:0] UART_IIR_ADDR = 3'h2;  // IIR (read) / FCR (write)
-localparam logic [2:0] UART_LCR_ADDR = 3'h3;  // LCR
-localparam logic [2:0] UART_MCR_ADDR = 3'h4;  // MCR
-localparam logic [2:0] UART_LSR_ADDR = 3'h5;  // LSR
+  {% set _ua = {
+    '0x00': 'UART_THR', '0x0': 'UART_THR',
+    '0x01': 'UART_IER', '0x1': 'UART_IER',
+    '0x02': 'UART_IIR', '0x2': 'UART_IIR',
+    '0x03': 'UART_LCR', '0x3': 'UART_LCR',
+    '0x04': 'UART_MCR', '0x4': 'UART_MCR',
+    '0x05': 'UART_LSR', '0x5': 'UART_LSR',
+    '0x06': 'UART_MSR', '0x6': 'UART_MSR',
+    '0x07': 'UART_SCR', '0x7': 'UART_SCR',
+  } %}
+  {% for r in sorted_regs %}
+    {% set a_clean = r.address|lower %}
+    {% if a_clean in _ua %}
+      {% set const_name = _ua[a_clean] %}
+// {{ const_name }} — {{ r.name }} (address {{ r.address }})
+localparam logic [2:0] {{ const_name }}_ADDR = 3'h{{ a_clean|replace('0x', '')|replace('h', '') }};
+    {% endif %}
+  {% endfor %}
 {% endif %}
 
 // ---------------------------------------------------------------------------
@@ -70,10 +78,20 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       uvm_status_e st;
       uvm_reg rg;
 {% if p == "uart" %}
+      // DLAB resolution: if addr {0,1} AND a register at 0x3 (LCR) exists with DLAB bit
       if (addr inside {3'h0, 3'h1}) begin
         logic [7:0] lcr_val;
         string      rg_name;
-        reg_model.lcr.read(st, lcr_val, .parent(this));
+        uvm_reg lcr_rg = reg_model.get_reg_by_offset('h03);
+        if (lcr_rg == null) begin
+          // No LCR register in this spec — use direct register access
+          rg = reg_model.get_reg_by_offset(addr);
+          if (rg != null) rg.write(st, data, .parent(this));
+          else `uvm_error("REG", $sformatf("Write to unmapped address 0x%0h", addr))
+          if (sb_handle != null) sb_handle.record_tx(addr, data);
+          return;
+        end
+        lcr_rg.read(st, lcr_val, .parent(this));
         if (addr == 3'h0)
           rg_name = lcr_val[7] ? "dll" : "thr";
         else
@@ -112,10 +130,20 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       uvm_status_e st;
       uvm_reg rg;
 {% if p == "uart" %}
+      // DLAB resolution: if addr {0,1} AND a register at 0x3 (LCR) exists with DLAB bit
       if (addr inside {3'h0, 3'h1}) begin
         logic [7:0] lcr_val;
         string      rg_name;
-        reg_model.lcr.read(st, lcr_val, .parent(this));
+        uvm_reg lcr_rg = reg_model.get_reg_by_offset('h03);
+        if (lcr_rg == null) begin
+          // No LCR register in this spec — use direct register access
+          rg = reg_model.get_reg_by_offset(addr);
+          if (rg != null) rg.read(st, data, .parent(this));
+          else `uvm_error("REG", $sformatf("Read from unmapped address 0x%0h", addr))
+          if (sb_handle != null) sb_handle.record_rx(addr, data);
+          return;
+        end
+        lcr_rg.read(st, lcr_val, .parent(this));
         if (addr == 3'h0)
           rg_name = lcr_val[7] ? "dll" : "rbr";
         else
@@ -279,13 +307,18 @@ endclass
 
 {% if p == "uart" %}
 
+  {% set _reg_addr_set = sorted_regs|map(attribute='address')|map('lower')|list %}
+
 // =========================================================================
-//  UART-Specific Sequences
+//  UART-Specific Sequences — spec-driven: only generate sequences whose
+//  required registers exist in the YAML register map.
 // =========================================================================
 
 // -------------------------------------------------------------------------
 // UART Configuration Sequence — sets baud, word length, stop bits, parity
+// Requires: LCR (address 0x03)
 // -------------------------------------------------------------------------
+{% if '0x03' in _reg_addr_set or '0x3' in _reg_addr_set or '0x003' in _reg_addr_set %}
 class uart_config_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_config_seq)
 
@@ -350,10 +383,13 @@ class uart_config_seq extends {{ spec.design_name }}_base_seq;
     return (clk_freq / (16 * baud));
   endfunction
 endclass
+{% endif %}  {# /LCR exists check for uart_config_seq #}
 
 // -------------------------------------------------------------------------
 // UART Transmit Sequence — sends bytes via THR
+// Requires: THR/RBR/DLL (address 0x00) and LSR (address 0x05)
 // -------------------------------------------------------------------------
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
 class uart_tx_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_tx_seq)
 
@@ -401,10 +437,13 @@ class uart_tx_seq extends {{ spec.design_name }}_base_seq;
     `uvm_error("UART_TX", "Timeout waiting for TX empty")
   endtask
 endclass
+{% endif %}  {# /THR+LSR check for uart_tx_seq #}
 
 // -------------------------------------------------------------------------
 // UART Receive Sequence — waits for RX bytes via RBR
+// Requires: LSR (0x05) and RBR/THR/DLL (0x00)
 // -------------------------------------------------------------------------
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
 class uart_rx_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_rx_seq)
 
@@ -442,10 +481,14 @@ class uart_rx_seq extends {{ spec.design_name }}_base_seq;
     end
   endtask
 endclass
+{% endif %}  {# /LSR+RBR check for uart_rx_seq #}
 
 // -------------------------------------------------------------------------
 // UART Loopback Sequence — enables MCR loopback, TX/RX comparison
+// Requires: MCR (0x04), THR/RBR (0x00), LSR (0x05)
 // -------------------------------------------------------------------------
+{% set _lb_addrs = _reg_addr_set %}
+{% if ('0x04' in _lb_addrs or '0x4' in _lb_addrs) and ('0x00' in _lb_addrs or '0x0' in _lb_addrs) and ('0x05' in _lb_addrs or '0x5' in _lb_addrs) %}
 class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_loopback_seq)
 
@@ -535,10 +578,13 @@ class uart_loopback_seq extends {{ spec.design_name }}_base_seq;
     end
   endtask
 endclass
+{% endif %}  {# /MCR+THR+LSR check for uart_loopback_seq #}
 
 // -------------------------------------------------------------------------
 // UART Interrupt Sequence — test each interrupt type
+// Requires: IER (0x01), IIR (0x02), MCR (0x04), THR (0x00), LCR (0x03)
 // -------------------------------------------------------------------------
+{% if ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) and ('0x02' in _reg_addr_set or '0x2' in _reg_addr_set) and ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) %}
 class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_interrupt_seq)
 
@@ -656,10 +702,15 @@ class uart_interrupt_seq extends {{ spec.design_name }}_base_seq;
     endcase
   endtask
 endclass
+{% endif %}  {# /IIR+IER+MCR+THR+LCR check for uart_interrupt_seq #}
 
 // -------------------------------------------------------------------------
 // UART Baud Change Sequence — sweep all supported baud rates
+// Requires: LCR (0x03) for config_seq, THR+LSR (0x00+0x05) for tx_seq
 // -------------------------------------------------------------------------
+{% set _need_tx = ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+{% set _need_lcr = '0x03' in _reg_addr_set or '0x3' in _reg_addr_set or '0x003' in _reg_addr_set %}
+{% if _need_lcr and _need_tx %}
 class uart_baud_change_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_baud_change_seq)
 
@@ -691,6 +742,7 @@ class uart_baud_change_seq extends {{ spec.design_name }}_base_seq;
     end
   endtask
 endclass
+{% endif %}  {# /LCR+THR+LSR check for uart_baud_change_seq #}
 
 // -------------------------------------------------------------------------
 // UART Error Injection Sequence — injects parity, framing, break errors
@@ -698,7 +750,9 @@ endclass
 // manipulation).  The driver reads corrupt_parity / corrupt_stop_bit /
 // force_break during serialisation and corrupts the TX bitstream at the
 // pin level.  This is the IEEE 1800.2-correct method.
+// Requires: THR (0x00), LSR (0x05)
 // -------------------------------------------------------------------------
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
 class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_error_injection_seq)
 
@@ -838,10 +892,13 @@ class uart_error_injection_seq extends {{ spec.design_name }}_base_seq;
     end
   endtask
 endclass
+{% endif %}  {# /THR+LSR check for uart_error_injection_seq #}
 
 // -------------------------------------------------------------------------
 // UART Random Traffic Sequence — randomizes baud, parity, word length, data
+// Requires: LCR (0x03) for config_seq, THR+LSR (0x00+0x05) for tx_seq
 // -------------------------------------------------------------------------
+{% if _need_lcr and _need_tx %}
 class uart_random_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_random_seq)
 
@@ -900,6 +957,7 @@ class uart_random_seq extends {{ spec.design_name }}_base_seq;
     ), UVM_LOW)
   endtask
 endclass
+{% endif %}  {# /LCR+THR+LSR check for uart_random_seq #}
 
 // -------------------------------------------------------------------------
 // UART Register HW Reset Sequence — validates reset values via RAL
@@ -993,7 +1051,9 @@ endclass
 
 // -------------------------------------------------------------------------
 // UART Coverage Exploration Sequence — sweeps all config combinations
+// Requires: LCR (0x03) for config_seq, THR+LSR (0x00+0x05) for tx_seq
 // -------------------------------------------------------------------------
+{% if _need_lcr and _need_tx %}
 class uart_coverage_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils(uart_coverage_seq)
 
@@ -1074,13 +1134,20 @@ class uart_coverage_seq extends {{ spec.design_name }}_base_seq;
     covered_combos++;
   endtask
 endclass
+{% endif %}  {# /LCR+THR+LSR check for uart_coverage_seq #}
 
+{% set _need_vseq = _need_lcr and _need_tx %}
+{% set _need_vseq = _need_vseq and ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) %}
+{% set _need_vseq = _need_vseq and ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) %}
+{% set _need_vseq = _need_vseq and ('0x02' in _reg_addr_set or '0x2' in _reg_addr_set) %}
 // -------------------------------------------------------------------------
 // UART Virtual Sequence — orchestrates multiple sequences together
+// Requires: all registers for sub-sequences (0x00-0x05 must be defined)
 // Uses virtual sequencer handles for enterprise layering.
 // Start on vsequencer.bus_seqr (or sub-sequencer) via:
 //   p_sequencer.bus_seqr
 // -------------------------------------------------------------------------
+{% if _need_vseq %}
 class uart_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils(uart_virtual_seq)
   `uvm_declare_p_sequencer({{ spec.design_name }}_virtual_sequencer)
@@ -1138,28 +1205,45 @@ class uart_virtual_seq extends uvm_sequence #({{ spec.design_name }}_seq_item);
     `uvm_info("UART_VSEQ", "Virtual sequence completed", UVM_LOW)
   endtask
 endclass
+{% endif %}  {# /full-register check for uart_virtual_seq #}
 
+{% set _need_ier = '0x01' in _reg_addr_set or '0x1' in _reg_addr_set %}
+{% set _need_iir = '0x02' in _reg_addr_set or '0x2' in _reg_addr_set %}
+{% set _need_mcr = '0x04' in _reg_addr_set or '0x4' in _reg_addr_set %}
 // =========================================================================
 //  UART Sequence Library — for regression automation
+//  Spec-driven: only includes sequences whose register requirements are met.
 // =========================================================================
 class uart_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_item);
   `uvm_object_utils(uart_seq_lib)
   `uvm_sequence_library_utils(uart_seq_lib)
 
   static function void add_sequences();
+{% if _need_lcr %}
     uart_seq_lib::add_sequence(uart_config_seq::get_type());
+{% endif %}
+{% if _need_tx %}
     uart_seq_lib::add_sequence(uart_tx_seq::get_type());
     uart_seq_lib::add_sequence(uart_rx_seq::get_type());
+{% endif %}
+{% if _need_mcr and _need_tx %}
     uart_seq_lib::add_sequence(uart_loopback_seq::get_type());
+{% endif %}
+{% if _need_ier and _need_iir and _need_mcr and _need_tx and _need_lcr %}
     uart_seq_lib::add_sequence(uart_interrupt_seq::get_type());
+{% endif %}
+{% if _need_tx %}
     uart_seq_lib::add_sequence(uart_error_injection_seq::get_type());
+{% endif %}
+{% if _need_lcr and _need_tx %}
     uart_seq_lib::add_sequence(uart_random_seq::get_type());
     uart_seq_lib::add_sequence(uart_baud_change_seq::get_type());
     uart_seq_lib::add_sequence(uart_coverage_seq::get_type());
-    // RAL sequences omitted — they extend uvm_reg_sequence #(uvm_reg_item),
-    // not uvm_sequence #(bus_seq_item), and cannot be started on the bus sequencer.
-    // Start them via seq.start(null) using the RAL model's default_map sequencer.
     uart_seq_lib::add_sequence(uart_virtual_seq::get_type());
+{% endif %}
+    // Always generated (use reg_model generically):
+    uart_seq_lib::add_sequence(uart_reg_hw_reset_seq::get_type());
+    uart_seq_lib::add_sequence(uart_reg_bit_bash_seq::get_type());
     uart_seq_lib::add_sequence(uart_reset_test_seq::get_type());
   endfunction
 
