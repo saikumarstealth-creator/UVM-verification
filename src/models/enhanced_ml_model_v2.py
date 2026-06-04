@@ -203,7 +203,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
 
     def __init__(
         self,
-        name_or_config: Any = "enhanced_ml_model_v2",
+        name: Any = "enhanced_ml_model_v2",
         config: Optional[Any] = None,
         templates_dir: str = "src/generation/templates",
         strict_validation: bool = True,
@@ -219,9 +219,9 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         cache_ttl: int = 3600,
     ):
         # Accept PipelineConfig as first positional arg (test compatibility)
-        if isinstance(name_or_config, PipelineConfig):
-            cfg = name_or_config
-            name = "enhanced_ml_model_v2"
+        if isinstance(name, PipelineConfig):
+            cfg = name
+            name_str = "enhanced_ml_model_v2"
             self._user_cfg = cfg
             if cfg.ml:
                 exploration_strategy = cfg.ml.exploration_strategy or exploration_strategy
@@ -230,11 +230,11 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                 use_learning = cfg.ml.use_learning if hasattr(cfg.ml, 'use_learning') else use_learning
                 learning_storage_path = cfg.ml.learning_storage_path or learning_storage_path
                 strict_validation = cfg.ml.strict_validation if hasattr(cfg.ml, 'strict_validation') else strict_validation
-        elif isinstance(name_or_config, str):
-            name = name_or_config
+        elif isinstance(name, str):
+            name_str = name
         else:
-            name = "enhanced_ml_model_v2"
-        super().__init__(name)
+            name_str = "enhanced_ml_model_v2"
+        super().__init__(name_str)
 
         self._templates_dir = templates_dir
         self._strict_validation = strict_validation
