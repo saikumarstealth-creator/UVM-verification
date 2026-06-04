@@ -4,6 +4,9 @@ Pipeline Manager - Manages generation pipelines with real-time updates
 
 import uuid
 import asyncio
+import json
+import os
+import threading
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
@@ -17,6 +20,93 @@ from schemas import (
 )
 
 logger = logging.getLogger("pipeline_manager")
+
+# Directory for cross-worker pipeline state persistence
+PIPELINE_STATE_DIR = os.environ.get(
+    "UVMGEN_PIPELINE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "output", ".pipelines")
+)
+_state_lock = threading.Lock()
+
+
+def _serialize_pipeline(p: "PipelineState") -> dict:
+    return {
+        "task_id": p.task_id,
+        "config": {
+            "design_name": p.config.design_name,
+            "protocol": p.config.protocol,
+            "model_type": p.config.model_type,
+            "rl_strategy": p.config.rl_strategy,
+            "enable_learning": p.config.enable_learning,
+            "strict_uvm": p.config.strict_uvm,
+            "max_iterations": p.config.max_iterations,
+        },
+        "status": p.status.value,
+        "current_step": p.current_step.value if p.current_step else None,
+        "progress": p.progress,
+        "message": p.message,
+        "logs": p.logs[-200:],
+        "generated_files": p.generated_files,
+        "metrics": p.metrics,
+        "created_at": p.created_at.isoformat(),
+        "completed_steps": [s.value for s in p.completed_steps],
+    }
+
+
+def _deserialize_pipeline(d: dict) -> "PipelineState":
+    from schemas import GenerationConfig as GConfig
+    cfg = GConfig(
+        design_name=d["config"]["design_name"],
+        protocol=d["config"]["protocol"],
+        model_type=d["config"]["model_type"],
+        rl_strategy=d["config"]["rl_strategy"],
+        enable_learning=d["config"]["enable_learning"],
+        strict_uvm=d["config"]["strict_uvm"],
+        max_iterations=d["config"]["max_iterations"],
+    )
+    p = PipelineState(d["task_id"], cfg)
+    p.status = PipelineStatus(d["status"])
+    p.current_step = PipelineStep(d["current_step"]) if d.get("current_step") else None
+    p.progress = d.get("progress", 0)
+    p.message = d.get("message", "")
+    p.logs = d.get("logs", [])
+    p.generated_files = d.get("generated_files", {})
+    p.metrics = d.get("metrics", {})
+    p.completed_steps = [PipelineStep(s) for s in d.get("completed_steps", [])]
+    if d.get("created_at"):
+        try:
+            p.created_at = datetime.fromisoformat(d["created_at"])
+        except Exception:
+            pass
+    return p
+
+
+def _state_path(task_id: str) -> str:
+    return os.path.join(PIPELINE_STATE_DIR, f"{task_id}.json")
+
+
+def _save_state(pipeline: "PipelineState") -> None:
+    os.makedirs(PIPELINE_STATE_DIR, exist_ok=True)
+    path = _state_path(pipeline.task_id)
+    with _state_lock:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(_serialize_pipeline(pipeline), f, indent=2)
+        except Exception as e:
+            logger.warning("Failed to save pipeline state %s: %s", pipeline.task_id, e)
+
+
+def _load_state(task_id: str) -> Optional["PipelineState"]:
+    path = _state_path(task_id)
+    if not os.path.exists(path):
+        return None
+    with _state_lock:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return _deserialize_pipeline(json.load(f))
+        except Exception as e:
+            logger.warning("Failed to load pipeline state %s: %s", task_id, e)
+    return None
 
 
 class PipelineState:
@@ -45,11 +135,13 @@ class PipelineState:
         self.message = message
         self.add_log(f"{step.value}: {message}")
         logger.info(f"Pipeline {self.task_id}: {step.value} - {message} ({progress}%)")
+        _save_state(self)
     
     def complete_step(self, step: PipelineStep):
         if step not in self.completed_steps:
             self.completed_steps.append(step)
         self.add_log(f"✓ {step.value} completed")
+        _save_state(self)
 
 
 class PipelineManager:
@@ -62,13 +154,34 @@ class PipelineManager:
         pipeline = PipelineState(task_id, config)
         self.pipelines[task_id] = pipeline
         pipeline.add_log(f"Pipeline created: {config.design_name}")
+        _save_state(pipeline)
         logger.info(f"Created pipeline {task_id} for {config.design_name}")
         return task_id
     
     def get_pipeline(self, task_id: str) -> Optional[PipelineState]:
-        return self.pipelines.get(task_id)
+        # Check local cache first
+        p = self.pipelines.get(task_id)
+        if p is not None:
+            return p
+        # Fall back to file-based state (cross-worker)
+        p = _load_state(task_id)
+        if p is not None:
+            self.pipelines[task_id] = p
+        return p
     
     def get_all_pipelines(self) -> List[PipelineState]:
+        # Merge local cache with files
+        os.makedirs(PIPELINE_STATE_DIR, exist_ok=True)
+        try:
+            for fn in os.listdir(PIPELINE_STATE_DIR):
+                if fn.endswith(".json"):
+                    tid = fn[:-5]
+                    if tid not in self.pipelines:
+                        p = _load_state(tid)
+                        if p is not None:
+                            self.pipelines[tid] = p
+        except Exception:
+            pass
         return list(self.pipelines.values())
     
     async def run_generation(self, task_id: str) -> GenerationResponse:
@@ -240,6 +353,7 @@ class PipelineManager:
             pipeline.progress = 100
             pipeline.message = f"Generation {'passed' if passed else 'completed'} with {len(pipeline.generated_files)} files"
             pipeline.add_log(f"Pipeline complete - Status: {validation_status}")
+            _save_state(pipeline)
             
             return GenerationResponse(
                 task_id=task_id,
@@ -258,6 +372,7 @@ class PipelineManager:
             import traceback
             pipeline.add_log(traceback.format_exc())
             logger.error(f"Pipeline {task_id} failed: {e}")
+            _save_state(pipeline)
             
             return GenerationResponse(
                 task_id=task_id,
