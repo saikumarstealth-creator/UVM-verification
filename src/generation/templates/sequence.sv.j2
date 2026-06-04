@@ -996,6 +996,60 @@ class uart_reg_bit_bash_seq extends uvm_reg_bit_bash_seq;
 endclass
 
 // -------------------------------------------------------------------------
+// UART Register Access Sequence — validates RAL read/write for all regs
+// -------------------------------------------------------------------------
+class uart_reg_access_seq extends uvm_reg_access_seq;
+  `uvm_object_utils(uart_reg_access_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "uart_reg_access_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Memory Walk Sequence — validates address decoding
+// -------------------------------------------------------------------------
+class uart_reg_mem_walk_seq extends uvm_reg_mem_walk_seq;
+  `uvm_object_utils(uart_reg_mem_walk_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "uart_reg_mem_walk_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Register Aliasing Sequence — validates register independence
+// -------------------------------------------------------------------------
+class uart_reg_aliasing_seq extends uvm_reg_aliasing_seq;
+  `uvm_object_utils(uart_reg_aliasing_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+
+  function new(string name = "uart_reg_aliasing_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    model = reg_model;
+    super.body();
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
 // UART Reset Test — verifies all regs match expected reset values
 // -------------------------------------------------------------------------
 class uart_reset_test_seq extends {{ spec.design_name }}_base_seq;
@@ -1244,6 +1298,9 @@ class uart_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_ite
     // Always generated (use reg_model generically):
     uart_seq_lib::add_sequence(uart_reg_hw_reset_seq::get_type());
     uart_seq_lib::add_sequence(uart_reg_bit_bash_seq::get_type());
+    uart_seq_lib::add_sequence(uart_reg_access_seq::get_type());
+    uart_seq_lib::add_sequence(uart_reg_mem_walk_seq::get_type());
+    uart_seq_lib::add_sequence(uart_reg_aliasing_seq::get_type());
     uart_seq_lib::add_sequence(uart_reset_test_seq::get_type());
   endfunction
 
@@ -1252,6 +1309,56 @@ class uart_seq_lib extends uvm_sequence_library #({{ spec.design_name }}_seq_ite
     init_sequence_library();
     add_sequences();
   endfunction
+endclass
+
+// =========================================================================
+//  UART Regression Suites — smoke, full, nightly
+// =========================================================================
+
+// --- Smoke test: configure + loopback ---
+class uart_smoke_test extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils(uart_smoke_test)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+
+  function new(string name = "uart_smoke_test");
+    super.new(name);
+  endfunction
+
+  task body;
+    uart_config_seq   cfg_seq;
+    uart_loopback_seq lb_seq;
+
+    cfg_seq = uart_config_seq::type_id::create("cfg_seq");
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.randomize();
+    cfg_seq.start(m_sequencer);
+
+    lb_seq = uart_loopback_seq::type_id::create("lb_seq");
+    lb_seq.reg_model = reg_model;
+    lb_seq.test_data = {8'h55, 8'hAA};
+    lb_seq.start(m_sequencer);
+  endtask
+endclass
+
+// --- Full regression ---
+class uart_full_regression extends uvm_sequence #({{ spec.design_name }}_seq_item);
+  `uvm_object_utils(uart_full_regression)
+
+  {{ spec.design_name }}_reg_block  reg_model;
+
+  function new(string name = "uart_full_regression");
+    super.new(name);
+  endfunction
+
+  task body;
+    uart_seq_lib seq_lib;
+
+    seq_lib = uart_seq_lib::type_id::create("seq_lib");
+    seq_lib.reg_model = reg_model;
+    seq_lib.randomize();
+    seq_lib.start(m_sequencer);
+  endtask
 endclass
 
 {% endif %}
