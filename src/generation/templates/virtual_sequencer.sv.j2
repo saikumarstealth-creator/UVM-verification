@@ -11,7 +11,7 @@ class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
   // Populated via config DB so virtual sequences can start items
   // on any sub-sequencer.
 {%- for intf in intfs %}
-  {%- set if_name = intf.name if intf is mapping else intf %}
+  {%- set if_name = intf.name if intf.name is defined else intf %}
   {%- set sname = if_name|replace("_intf", "") + "_seqr" %}
   uvm_sequencer #({{ spec.design_name }}_seq_item) {{ sname }};
 {%- endfor %}
@@ -23,7 +23,7 @@ class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
 {%- for intf in intfs %}
-  {%- set if_name = intf.name if intf is mapping else intf %}
+  {%- set if_name = intf.name if intf.name is defined else intf %}
   {%- set sname = if_name|replace("_intf", "") + "_seqr" %}
     void'(uvm_config_db #(uvm_sequencer #({{ spec.design_name }}_seq_item))::get(this, "", "{{ sname }}", {{ sname }}));
 {%- endfor %}
