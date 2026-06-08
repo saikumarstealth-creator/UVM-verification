@@ -33,6 +33,36 @@ from src.models.template_model import TemplateModel
 from src.models.coverage_predictor import CoveragePredictor, SpecFeatures
 from src.config import PipelineConfig, DesignSpec
 
+
+def _retry_with_backoff(
+    fn, max_retries: int = 3, base_delay: float = 0.5, backoff: float = 2.0,
+) -> Any:
+    """Execute fn with exponential backoff on transient failures."""
+    import functools
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except (ConnectionError, TimeoutError, OSError) as e:
+            last_exc = e
+            if attempt < max_retries - 1:
+                delay = base_delay * (backoff ** attempt)
+                logger.warning("Transient failure (attempt %d/%d): %s — retrying in %.1fs", attempt + 1, max_retries, e, delay)
+                time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
+
+
+def _validate_spec_dict(spec_dict: Dict[str, Any]) -> None:
+    """Validate spec dict has required fields before generation."""
+    if not isinstance(spec_dict, dict):
+        raise TypeError(f"Expected dict, got {type(spec_dict).__name__}")
+    if "design_name" not in spec_dict:
+        raise ValueError("spec_dict must contain 'design_name'")
+    if "protocol" not in spec_dict:
+        logger.warning("spec_dict missing 'protocol', defaulting to 'unknown'")
+    if not spec_dict.get("design_name"):
+        raise ValueError("'design_name' must be a non-empty string")
+
 try:
     from src.features.extractors import RichSpecFeatureExtractor
     from src.models.similarity_index import SimilarityIndex, SearchResult
@@ -158,35 +188,65 @@ class MetricsTracker:
 
 
 class GenerationCache:
-    """Spec-driven cache with content-addressable keys."""
+    """Spec-driven cache with content-addressable keys, TTL, and size limits."""
 
-    def __init__(self, ttl_seconds: int = 3600):
+    def __init__(self, ttl_seconds: int = 3600, max_entries: int = 256):
         self._cache: Dict[str, Tuple[float, Dict[str, str]]] = {}
         self._ttl = ttl_seconds
+        self._max_entries = max_entries
+        self._access_order: List[str] = []
 
     def _make_key(self, spec_dict: Dict[str, Any], protocol: str) -> str:
         raw = json.dumps(spec_dict, sort_keys=True, default=str)
         return hashlib.md5(raw.encode()).hexdigest() + f"@{protocol}"
+
+    def _evict_if_needed(self) -> None:
+        if len(self._cache) > self._max_entries:
+            over = len(self._cache) - self._max_entries
+            for _ in range(over):
+                if self._access_order:
+                    oldest = self._access_order.pop(0)
+                    self._cache.pop(oldest, None)
+
+    def _clean_expired(self) -> None:
+        now = time.time()
+        expired = [k for k, (ts, _) in self._cache.items() if now - ts >= self._ttl]
+        for k in expired:
+            del self._cache[k]
+            if k in self._access_order:
+                self._access_order.remove(k)
 
     def get(self, spec_dict: Dict[str, Any], protocol: str) -> Optional[Dict[str, str]]:
         key = self._make_key(spec_dict, protocol)
         if key in self._cache:
             timestamp, files = self._cache[key]
             if time.time() - timestamp < self._ttl:
+                if key in self._access_order:
+                    self._access_order.remove(key)
+                self._access_order.append(key)
                 return files
             del self._cache[key]
+            if key in self._access_order:
+                self._access_order.remove(key)
         return None
 
     def set(self, spec_dict: Dict[str, Any], protocol: str, files: Dict[str, str]) -> None:
         key = self._make_key(spec_dict, protocol)
         self._cache[key] = (time.time(), files)
+        if key in self._access_order:
+            self._access_order.remove(key)
+        self._access_order.append(key)
+        self._evict_if_needed()
 
     def invalidate(self, spec_dict: Dict[str, Any], protocol: str) -> None:
         key = self._make_key(spec_dict, protocol)
         self._cache.pop(key, None)
+        if key in self._access_order:
+            self._access_order.remove(key)
 
     def clear(self) -> None:
         self._cache.clear()
+        self._access_order.clear()
 
 
 class EnhancedMLGenerationModelV2(GenerationModel):
@@ -326,11 +386,18 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         spec: DesignSpec,
         cfg: PipelineConfig,
         extra_seqs: Optional[List[str]] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, str]:
         if not HAS_ADVANCED:
             return self._template_model.predict(spec, cfg)
 
+        rid = request_id or f"gen_{int(time.time() * 1000)}_{id(spec)}"
+        def _log(msg: str, *args: Any) -> None:
+            logger.info("[%s] %s", rid, msg % args if args else msg)
+        _log("Starting prediction for %s", spec.design_name)
+
         spec_dict = spec.model_dump() if hasattr(spec, 'model_dump') else dict(spec)
+        _validate_spec_dict(spec_dict)
         design_name = spec.design_name
         protocol = spec_dict.get("protocol", "unknown")
 
@@ -338,18 +405,21 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if self._cache:
             cached = self._cache.get(spec_dict, protocol)
             if cached is not None:
-                logger.info("Cache hit for %s@%s", design_name, protocol)
+                _log("Cache hit for %s@%s", design_name, protocol)
                 return cached
 
         # Build validator
         self._code_validator = AdvancedCodeValidator(spec_dict)
         available_sources = self._get_available_sources()
 
+        _log("Available sources: %s", available_sources)
+
         start_time = time.time()
 
         # Ensemble: run top-K strategies concurrently
         selected = self._select_generation_strategy(spec_dict, protocol, available_sources)
         strategies_to_run = self._get_strategy_plan(selected, available_sources)
+        _log("Selected strategy=%s, plan=%s", selected.value, strategies_to_run)
 
         results: List[GenerationResult] = []
         with ThreadPoolExecutor(max_workers=min(self._max_concurrent, len(strategies_to_run))) as executor:
@@ -391,8 +461,10 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         # Coverage prediction (lazy-trained by CoveragePredictor on first call)
         try:
             self.last_coverage_prediction = self._coverage_predictor.predict_coverage(spec, final_result.files)
+            if self.last_coverage_prediction:
+                _log("Coverage prediction: %.1f%% expected", self.last_coverage_prediction.get("coverage", {}).get("expected", 0))
         except Exception as e:
-            logger.debug("Coverage prediction failed: %s", e)
+            logger.warning("[%s] Coverage prediction failed: %s", rid, e)
             self.last_coverage_prediction = None
 
         # Store last result for learn() / generate() introspect
@@ -440,17 +512,33 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self,
         spec_dict: Dict[str, Any],
         cfg: Optional[PipelineConfig] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Public API: generate from raw spec dict (test-compatible interface).
 
         Returns a rich result dict with ``passed``, ``generated_files``,
         ``source``, ``strategy``, and ``validation_results``.
+
+        Parameters
+        ----------
+        spec_dict : Dict[str, Any]
+            Specification dictionary with at minimum ``design_name`` and ``protocol``.
+        cfg : Optional[PipelineConfig]
+            Generation pipeline configuration. Auto-created from stored config if None.
+        request_id : Optional[str]
+            Correlation ID for request tracing across logs.
         """
+        rid = request_id or f"gen_{int(time.time() * 1000)}_{id(spec_dict)}"
+        try:
+            _validate_spec_dict(spec_dict)
+        except (TypeError, ValueError) as e:
+            logger.error("[%s] Input validation failed: %s", rid, e)
+            return {"passed": False, "generated_files": {}, "source": "error", "strategy": "error", "request_id": rid}
         try:
             spec = DesignSpec(**self._coerce_spec_dict(spec_dict))
         except Exception as e:
-            logger.error("Failed to build DesignSpec from dict: %s", e)
-            return {"passed": False, "generated_files": {}, "source": "error", "strategy": "error"}
+            logger.error("[%s] Failed to build DesignSpec from dict: %s", rid, e)
+            return {"passed": False, "generated_files": {}, "source": "error", "strategy": "error", "request_id": rid}
 
         # Auto-train template model if not yet trained
         if not self._template_model._is_trained:
@@ -477,7 +565,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                 ),
             )
 
-        files = self.predict(spec, cfg)
+        files = self.predict(spec, cfg, request_id=rid)
 
         # Build result dict from stored generation result
         gen = getattr(self, '_last_generation_result', None)
@@ -488,6 +576,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "generated_files": files,
             "source": gen.source.value if gen else "template",
             "strategy": gen.strategy_used if gen else "template",
+            "request_id": rid,
         }
 
         # Attach validation results if available
@@ -641,10 +730,6 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if len(available_sources) == 1:
             return GenerationSource(available_sources[0])
 
-        # Ensemble mode: run top strategies concurrently
-        if len(available_sources) >= 2:
-            return GenerationSource.ENSEMBLE
-
         if not self._use_learning or not self._rl_learner:
             if "retrieval" in available_sources and self._index and len(self._index) > 0:
                 return GenerationSource.RETRIEVAL
@@ -666,8 +751,8 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                 source_scores["llm"] += 2.0
             if feat.register_count > 8 and "retrieval" in source_scores:
                 source_scores["retrieval"] += 1.0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Coverage hint in strategy selection failed: %s", e)
 
         if not source_scores:
             return GenerationSource.TEMPLATE
@@ -683,12 +768,22 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         design_name: str,
         protocol: str,
     ) -> GenerationResult:
-        if strategy == "retrieval":
-            return self._generate_by_retrieval(spec, spec_dict, config, design_name, protocol)
-        elif strategy == "llm" and self._use_llm:
-            return self._generate_by_llm(spec, spec_dict, config, design_name, protocol)
-        else:
-            return self._generate_by_template(spec, config, design_name, protocol)
+        def _exec() -> GenerationResult:
+            if strategy == "retrieval":
+                return self._generate_by_retrieval(spec, spec_dict, config, design_name, protocol)
+            elif strategy == "llm" and self._use_llm:
+                return self._generate_by_llm(spec, spec_dict, config, design_name, protocol)
+            else:
+                return self._generate_by_template(spec, config, design_name, protocol)
+        try:
+            return _retry_with_backoff(_exec, max_retries=2, base_delay=0.25)
+        except Exception as e:
+            logger.error("Strategy %s failed after retries: %s", strategy, e)
+            return GenerationResult(
+                source=GenerationSource.TEMPLATE,
+                errors=[f"Strategy {strategy} failed after retries: {e}"],
+                strategy_used=strategy,
+            )
 
     def _generate_by_retrieval(
         self, spec: DesignSpec, spec_dict: Dict[str, Any], config: PipelineConfig,
@@ -987,6 +1082,34 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if self._pattern_learner:
             stats["pattern_learner"] = self._pattern_learner.get_suggestions(file_type="any", protocol="any")
         return stats
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """Return health status for production monitoring / readiness probes."""
+        components = {
+            "template_model": self._template_model is not None,
+            "similarity_index": self._index is not None and len(self._index) > 0,
+            "feature_extractor": self._extractor is not None,
+            "spec_adapter": self._adapter is not None,
+            "code_validator": self._code_validator is not None,
+            "rl_learner": self._rl_learner is not None,
+            "pattern_learner": self._pattern_learner is not None,
+            "coverage_predictor": self._coverage_predictor is not None,
+        }
+        all_ok = all(components.values())
+        return {
+            "status": "healthy" if all_ok else "degraded",
+            "version": self._model_version,
+            "components": components,
+            "index_size": len(self._index) if self._index else 0,
+            "cache_enabled": self._enable_caching,
+            "use_learning": self._use_learning,
+            "use_llm": self._use_llm,
+            "exploration_strategy": self._exploration_strategy.value if self._exploration_strategy else None,
+            "total_generations": len(self._generation_history),
+            "rl_converged": self._rl_learner.is_converged() if self._rl_learner else None,
+            "quality_threshold": self._quality_threshold,
+            "max_concurrent_strategies": self._max_concurrent,
+        }
 
     def invalidate_cache(self, spec: Optional[DesignSpec] = None) -> None:
         if not self._cache:
