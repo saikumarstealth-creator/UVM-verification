@@ -21,7 +21,8 @@ const Header: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[9px] text-eda-text-tertiary/60">AI-Powered Testbench Generation</span>
-            <span className="text-[7px] text-eda-text-tertiary/40">by Sai Kumar T.</span>
+            <span className="text-[9px] text-eda-text-tertiary/60">by</span>
+            <span className="text-[13px] text-eda-accent font-bold tracking-wide">Sai Kumar Taraka</span>
           </div>
         </div>
       </div>
