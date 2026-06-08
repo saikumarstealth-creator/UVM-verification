@@ -334,6 +334,51 @@ endclass
 // =========================================================================
 
 // -------------------------------------------------------------------------
+// UART Smoke / Sanity Sequence — reset, verify LSR[THRE], then configure
+// Requires: LSR+THR (0x00+0x05) for status check, LCR (0x03) for config
+// -------------------------------------------------------------------------
+{% set _need_smoke = ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+{% set _need_smoke = _need_smoke and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set or '0x003' in _reg_addr_set) %}
+{% if _need_smoke %}
+class {{ spec.design_name }}_smoke_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_smoke_seq)
+
+  function new(string n = "{{ spec.design_name }}_smoke_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lsr_val;
+    logic [7:0] thr_val;
+
+    `uvm_info("SMOKE", "=== UART Smoke/Sanity Test ===", UVM_LOW)
+
+    // 1. Read LSR — verify THRE (bit 5) and TEMT (bit 6) are set after reset
+    read_reg({{ addr_bits }}'h05, lsr_val);
+    `uvm_info("SMOKE", $sformatf("LSR after reset: 0x%02h (THRE=%0d, TEMT=%0d, DR=%0d)",
+              lsr_val, lsr_val[5], lsr_val[6], lsr_val[0]), UVM_LOW)
+
+    if (!lsr_val[5])
+      `uvm_warning("SMOKE", "THRE not set — TX may not be ready")
+
+    // 2. Configure UART at 115200 8N1 via LCR
+    write_reg({{ addr_bits }}'h03, 8'b000_000_11); // 8-bit word, 1 stop, no parity
+    read_reg({{ addr_bits }}'h03, lsr_val);
+    `uvm_info("SMOKE", $sformatf("LCR configured: 0x%02h", lsr_val), UVM_LOW)
+
+    // 3. Write a test byte to THR and read back (loopback not required for basic sanity)
+    write_reg({{ addr_bits }}'h00, 8'hA5);
+    #100;
+    read_reg({{ addr_bits }}'h05, lsr_val);
+    `uvm_info("SMOKE", $sformatf("After TX: LSR=0x%02h (THRE=%0d, TEMT=%0d)",
+              lsr_val, lsr_val[5], lsr_val[6]), UVM_LOW)
+
+    `uvm_info("SMOKE", "=== UART Smoke Test PASSED ===", UVM_LOW)
+  endtask
+endclass
+{% endif %}
+
+// -------------------------------------------------------------------------
 // UART Configuration Sequence — sets baud, word length, stop bits, parity
 // Requires: LCR (address 0x03)
 // -------------------------------------------------------------------------
@@ -959,6 +1004,133 @@ class {{ spec.design_name }}_ro_write_protect_seq extends {{ spec.design_name }}
       `uvm_info("RO_PROTECT", "*** All RO registers properly write-protected ***", UVM_LOW)
     else
       `uvm_error("RO_PROTECT", $sformatf("*** %0d RO register(s) NOT write-protected! ***", violations))
+  endtask
+endclass
+{% endif %}
+
+// -------------------------------------------------------------------------
+// UART LSR Status Sequence — verifies LSR status bits:
+//   DR[0], OE[1], PE[2], FE[3], BI[4], THRE[5], TEMT[6]
+// -------------------------------------------------------------------------
+{% if '0x05' in _reg_addr_set or '0x5' in _reg_addr_set %}
+class {{ spec.design_name }}_lsr_status_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_lsr_status_seq)
+
+  bit thre_ok;
+  bit temt_ok;
+  bit dr_ok;
+
+  function new(string n = "{{ spec.design_name }}_lsr_status_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lsr_val;
+
+    `uvm_info("LSR_STAT", "=== LSR Status Verification ===", UVM_LOW)
+
+    // 1. Verify THRE (bit 5) — should be set after reset (TX empty)
+    read_reg({{ addr_bits }}'h05, lsr_val);
+    thre_ok = lsr_val[5];
+    temt_ok = lsr_val[6];
+
+    `uvm_info("LSR_STAT", $sformatf("After reset: LSR=0x%02h (THRE=%0d, TEMT=%0d, DR=%0d)",
+              lsr_val, lsr_val[5], lsr_val[6], lsr_val[0]), UVM_LOW)
+
+    if (!thre_ok)
+      `uvm_warning("LSR_STAT", "THRE not set after reset — TX not ready")
+    if (!temt_ok)
+      `uvm_warning("LSR_STAT", "TEMT not set after reset — TX not empty")
+
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) %}
+    // 2. Write to THR (0x00) — THRE should clear momentarily
+    write_reg({{ addr_bits }}'h00, 8'hA5);
+    #100;
+    read_reg({{ addr_bits }}'h05, lsr_val);
+    `uvm_info("LSR_STAT", $sformatf("After THR write: LSR=0x%02h (THRE=%0d, TEMT=%0d)",
+              lsr_val, lsr_val[5], lsr_val[6]), UVM_LOW)
+{% endif %}
+
+    `uvm_info("LSR_STAT", "=== LSR Status Verification Complete ===", UVM_LOW)
+  endtask
+endclass
+{% endif %}
+
+// -------------------------------------------------------------------------
+// UART Parity Injection Sequence — dedicated parity error injection with
+// LSR.PE verification. Configures parity, injects corrupted TX, checks LSR.
+// -------------------------------------------------------------------------
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_parity_inject_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_parity_inject_seq)
+
+  rand int num_injections;
+  int pe_detected;
+  int pe_missed;
+
+  constraint c_parity_count { num_injections inside {[1:8]}; }
+
+  function new(string n = "{{ spec.design_name }}_parity_inject_seq");
+    super.new(n);
+    num_injections = 3;
+  endfunction
+
+  task body;
+    logic [7:0] lcr_val;
+    logic [7:0] lsr_val;
+    logic [7:0] data_to_send;
+
+    `uvm_info("PAR_INJ", $sformatf("=== Parity Injection Test (%0d injections) ===", num_injections), UVM_LOW)
+
+    // Configure parity: enable, even parity (LCR PEN=1, EPS=1)
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[3] = 1; // PEN
+    lcr_val[4] = 1; // EPS (even parity)
+    write_reg({{ addr_bits }}'h03, lcr_val);
+    `uvm_info("PAR_INJ", $sformatf("LCR configured for even parity: 0x%02h", lcr_val), UVM_LOW)
+
+    for (int i = 0; i < num_injections; i++) begin
+      {{ spec.design_name }}_seq_item inj_req;
+      inj_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("par_inj_%0d", i));
+
+      data_to_send = $urandom_range(0, 255);
+
+      start_item(inj_req);
+      if (!inj_req.randomize() with {
+        we == 1;
+        addr == {{ addr_bits }}'h0;
+        data == data_to_send;
+        delay == 0;
+        corrupt_parity == 1;
+        corrupt_stop_bit == 0;
+        force_break == 0;
+      }) `uvm_fatal("RAND", "Parity injection randomization failed")
+      finish_item(inj_req);
+
+      #500;
+
+      // Read LSR to check parity error flag
+      read_reg({{ addr_bits }}'h05, lsr_val);
+      if (lsr_val[2]) begin
+        pe_detected++;
+        `uvm_info("PAR_INJ", $sformatf("Inj %0d: parity error DETECTED LSR[2]=1 (data=0x%02h)", i, data_to_send), UVM_LOW)
+      end else begin
+        pe_missed++;
+        `uvm_error("PAR_INJ", $sformatf("Inj %0d: parity error NOT detected LSR[2]=0 (data=0x%02h)", i, data_to_send))
+      end
+
+      // Clear LSR by reading it
+      read_reg({{ addr_bits }}'h05, lsr_val);
+    end
+
+    `uvm_info("PAR_INJ", $sformatf(
+      "=== Parity Test Report: %0d/%0d detected, %0d missed ===",
+      pe_detected, num_injections, pe_missed), UVM_LOW)
+
+    if (pe_missed > 0)
+      `uvm_error("PAR_INJ", $sformatf("Parity error detection FAILED: %0d/%0d missed", pe_missed, num_injections))
+    else
+      `uvm_info("PAR_INJ", "Parity error detection PASSED", UVM_LOW)
   endtask
 endclass
 {% endif %}
@@ -1628,13 +1800,13 @@ endclass
 class {{ spec.design_name }}_apb_write_read_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_apb_write_read_seq)
 
-  rand logic [2:0] target_reg;
+  rand logic [{{ addr_bits-1 }}:0] target_reg;
   rand logic [7:0] write_data;
   int              match_count;
   int              mismatch_count;
 
   constraint c_apb_wr {
-    target_reg inside {[0:{{ max_addr_val }}]};
+    target_reg inside { {% for r in sorted_regs if r.name|lower not in ro_regs %}{{ addr_bits }}'h{{ r.address[2:] }}{% if not loop.last %}, {% endif %}{% endfor %} };
   }
 
   function new(string n = "{{ spec.design_name }}_apb_write_read_seq");
@@ -1684,11 +1856,11 @@ class {{ spec.design_name }}_apb_error_seq extends {{ spec.design_name }}_base_s
 
   task body;
     logic [7:0] val;
+    logic [{{ addr_bits-1 }}:0] write_addrs[$] = '{
+{% for r in sorted_regs if r.name|lower not in ro_regs %}      {{ addr_bits }}'h{{ r.address[2:] }}{{ ',' if not loop.last }}
+{% endfor %}    };
 
     `uvm_info("APB_ERR", $sformatf("Starting error injection: %0d transactions", num_errors), UVM_LOW)
-
-    // 1. Configure slave to inject error responses
-    write_reg(0, 8'b0000_1000);
 
     for (int i = 0; i < num_errors; i++) begin
       {{ spec.design_name }}_seq_item err_req;
@@ -1697,13 +1869,13 @@ class {{ spec.design_name }}_apb_error_seq extends {{ spec.design_name }}_base_s
       start_item(err_req);
       if (!err_req.randomize() with {
         we == 1;
-        addr == {{ max_addr_val }};
+        addr == write_addrs[i % write_addrs.size()];
         data == 8'hA5;
         delay inside {[0:3]};
       }) `uvm_fatal("RAND", "APB error req randomization failed")
       finish_item(err_req);
 
-      read_reg({{ max_addr_val }}, val);
+      read_reg(write_addrs[i % write_addrs.size()], val);
       if (val !== 8'hA5) begin
         errors_detected++;
         `uvm_info("APB_ERR", $sformatf("Error response on transaction %0d", i), UVM_MEDIUM)
@@ -1751,18 +1923,21 @@ class {{ spec.design_name }}_apb_back2back_seq extends {{ spec.design_name }}_ba
   task body;
     logic [7:0] patterns[];
     logic [7:0] readback;
+    logic [{{ addr_bits-1 }}:0] valid_addrs[$] = '{
+{% for r in sorted_regs if r.name|lower not in ro_regs %}      {{ addr_bits }}'h{{ r.address[2:] }}{{ ',' if not loop.last }}
+{% endfor %}    };
 
     patterns = new[burst_count];
     `uvm_info("APB_B2B", $sformatf("Starting back-to-back burst: %0d transactions", burst_count), UVM_LOW)
 
     for (int i = 0; i < burst_count; i++) begin
       patterns[i] = $urandom_range(0, 255);
-      write_reg(i % {{ max_addr_val + 1 }}, patterns[i]);
+      write_reg(valid_addrs[i % valid_addrs.size()], patterns[i]);
       completed++;
     end
 
     for (int i = 0; i < burst_count; i++) begin
-      read_reg(i % {{ max_addr_val + 1 }}, readback);
+      read_reg(valid_addrs[i % valid_addrs.size()], readback);
       if (readback !== patterns[i]) begin
         `uvm_error("APB_B2B", $sformatf(
           "Mismatch at index %0d: wrote 0x%02h, read 0x%02h", i, patterns[i], readback))

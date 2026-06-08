@@ -145,10 +145,10 @@ endclass
 // Auto-generated per-sequence tests from YAML
 // =========================================================================
 {% set seq_to_class = {
-  spec.design_name ~ "_smoke": spec.design_name ~ "_config_seq",
+  spec.design_name ~ "_smoke": spec.design_name ~ "_smoke_seq",
   spec.design_name ~ "_reg_access": spec.design_name ~ "_all_regs_seq",
   spec.design_name ~ "_loopback": spec.design_name ~ "_loopback_seq",
-  spec.design_name ~ "_random": spec.design_name ~ "_random_regs_seq",
+  spec.design_name ~ "_random": spec.design_name ~ "_random_seq",
   spec.design_name ~ "_error_injection": spec.design_name ~ "_error_injection_seq"
 } %}
 
@@ -458,6 +458,50 @@ class {{ spec.design_name }}_ro_write_protect_test extends {{ spec.design_name }
   endtask
 endclass
 {% endif %}
+
+// =========================================================================
+// UART LSR Status Test — verifies LSR register status bits
+// =========================================================================
+class {{ spec.design_name }}_lsr_status_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_lsr_status_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_lsr_status_seq lsr_seq;
+
+    `uvm_info("TEST_LSR", "Starting LSR status verification test", UVM_LOW)
+    lsr_seq = {{ spec.design_name }}_lsr_status_seq::type_id::create("lsr_seq");
+    if (lsr_seq == null) `uvm_fatal("SEQ", "Failed to create lsr_seq")
+    lsr_seq.reg_model = reg_model;
+    run_sequence_with_timeout(lsr_seq, 10ms);
+    `uvm_info("TEST_LSR", "LSR status test completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+// UART Parity Injection Test — injects parity errors, verifies LSR.PE
+// =========================================================================
+class {{ spec.design_name }}_parity_inject_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_parity_inject_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_parity_inject_seq par_seq;
+
+    `uvm_info("TEST_PAR", "Starting parity injection test", UVM_LOW)
+    par_seq = {{ spec.design_name }}_parity_inject_seq::type_id::create("par_seq");
+    if (par_seq == null) `uvm_fatal("SEQ", "Failed to create par_seq")
+    par_seq.reg_model = reg_model;
+    run_sequence_with_timeout(par_seq, 10ms);
+    `uvm_info("TEST_PAR", "Parity injection test completed", UVM_LOW)
+  endtask
+endclass
 
 {% elif p == "apb" %}
 
