@@ -1282,24 +1282,32 @@ class {{ spec.design_name }}_break_seq extends {{ spec.design_name }}_base_seq;
     // Read current LCR
     read_reg({{ addr_bits }}'h03, lcr_val);
 
-    // Set break enable (LCR[6] = 1)
+    // Set break enable (LCR[6] = 1) — hold for multiple frame times
     write_reg({{ addr_bits }}'h03, lcr_val | 8'h40);
     `uvm_info("BREAK_SEQ", "Break condition asserted (LCR[6]=1)", UVM_LOW)
-    #500;
+    #200000;
 
-    // Read LSR and verify BI (bit 4)
-    read_reg({{ addr_bits }}'h05, lsr_val);
-    if (lsr_val[4]) begin
-      break_detected++;
-      `uvm_info("BREAK_SEQ", "Break Interrupt (LSR[4]) detected", UVM_LOW)
-    end else begin
-      `uvm_warning("BREAK_SEQ", "Break Interrupt NOT detected")
+    // Poll LSR for BI (bit 4) with timeout
+    begin
+      int poll;
+      do begin
+        read_reg({{ addr_bits }}'h05, lsr_val);
+        poll++;
+        #10000;
+        if (poll > 50) break;
+      end while (!lsr_val[4]);
+      if (lsr_val[4]) begin
+        break_detected++;
+        `uvm_info("BREAK_SEQ", $sformatf("Break Interrupt (LSR[4]) detected after %0d polls", poll), UVM_LOW)
+      end else begin
+        `uvm_warning("BREAK_SEQ", "Break Interrupt NOT detected within timeout")
+      end
     end
 
     // Clear break (LCR[6] = 0)
     write_reg({{ addr_bits }}'h03, lcr_val & ~8'h40);
     `uvm_info("BREAK_SEQ", "Break condition de-asserted", UVM_LOW)
-    #200;
+    #100000;
 
     if (break_detected == 0)
       `uvm_error("BREAK_SEQ", "Break test FAILED — no break detected")
@@ -1342,17 +1350,32 @@ class {{ spec.design_name }}_overrun_seq extends {{ spec.design_name }}_base_seq
     write_reg({{ addr_bits }}'h04, mcr_val | 8'h10);
     `uvm_info("OVR_SEQ", "Loopback enabled (MCR[4]=1)", UVM_LOW)
 
-    // Flood TX without reading RBR to cause overrun
+    // Flood TX without reading RBR to cause overrun (writes are faster than serial TX)
     for (int i = 0; i < 20; i++) begin
       write_reg({{ addr_bits }}'h00, 8'($urandom_range(0, 255)));
       tx_count++;
-      #40;
+      #1000;
     end
 
-    // Check LSR for overrun (OE = bit 1)
-    read_reg({{ addr_bits }}'h05, lsr_val);
-    if (lsr_val[1]) begin
-      overrun_detected++;
+    // Wait for loopback data to arrive at RX (at 115200: ~87us/byte, 16 bytes ~1.4ms)
+    #200000;
+
+    // Poll LSR for overrun (OE = bit 1) with timeout
+    begin
+      int poll;
+      do begin
+        read_reg({{ addr_bits }}'h05, lsr_val);
+        poll++;
+        #10000;
+        if (poll > 100) break;
+      end while (!lsr_val[1]);
+      if (lsr_val[1]) begin
+        overrun_detected++;
+        `uvm_info("OVR_SEQ", $sformatf("Overrun (LSR[1]) detected after %0d TX, %0d polls", tx_count, poll), UVM_LOW)
+      end else begin
+        `uvm_warning("OVR_SEQ", "No overrun detected — may need more TX or faster baud")
+      end
+    end
       `uvm_info("OVR_SEQ", $sformatf("Overrun (LSR[1]) detected after %0d TX", tx_count), UVM_LOW)
     end else begin
       `uvm_warning("OVR_SEQ", "No overrun detected — may need more TX or faster baud")

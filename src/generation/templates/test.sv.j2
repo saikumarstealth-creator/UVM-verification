@@ -367,14 +367,29 @@ class {{ spec.design_name }}_fifo_test extends {{ spec.design_name }}_base_test;
     tx_seq.num_bytes = 16;
     run_sequence_with_timeout(tx_seq, 10ms);
 
-    // Read LSR to check FIFO status bits
-    read_reg(3'h05, rd_data);
-    `uvm_info("TEST_FIFO", $sformatf("LSR after FIFO fill=0x%0h (bit5=THR empty, bit6=TX empty)", rd_data), UVM_LOW)
+    // Read LSR to check FIFO status bits (poll with timeout)
+    `uvm_info("TEST_FIFO", "Polling LSR for THRE (bit5) and TEMT (bit6)", UVM_LOW)
+    begin
+      int poll_count;
+      do begin
+        read_reg(3'h05, rd_data);
+        poll_count++;
+        #1000;
+        if (poll_count > 100) begin
+          `uvm_warning("TEST_FIFO", $sformatf("Timeout polling THRE — last LSR=0x%0h", rd_data))
+          break;
+        end
+      end while (!rd_data[5] || !rd_data[6]);
+      `uvm_info("TEST_FIFO", $sformatf("LSR after FIFO drain=0x%0h (polled %0d times)", rd_data, poll_count), UVM_LOW)
+    end
 
     if (rd_data[5])
-      `uvm_info("TEST_FIFO", "THR empty (TX FIFO empty) — OK", UVM_LOW)
+      `uvm_info("TEST_FIFO", "THR empty (TX FIFO empty) - OK", UVM_LOW)
     else
-      `uvm_warning("TEST_FIFO", "TX FIFO not empty — possible overflow")
+      `uvm_warning("TEST_FIFO", "TX FIFO not empty - possible overflow")
+
+    if (rd_data[6])
+      `uvm_info("TEST_FIFO", "TX empty (all serialized) - OK", UVM_LOW)
 
     `uvm_info("TEST_FIFO", "FIFO test completed", UVM_LOW)
   endtask
