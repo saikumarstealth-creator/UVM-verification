@@ -82,6 +82,12 @@ class SequenceDef(BaseModel):
     description: str = ""
 
 
+class CoverageDef(BaseModel):
+    """Coverage specification from YAML (e.g. baud_rate bins, frame formats)."""
+    coverpoints: Dict[str, List[Any]] = {}
+    crosses: List[str] = []
+
+
 class DesignSpec(BaseModel):
     design_name: str = Field(min_length=1, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
     clock_reset: ClockResetDef = ClockResetDef()
@@ -89,6 +95,7 @@ class DesignSpec(BaseModel):
     registers: List[RegisterDef] = []
     protocol: str = Field(default="", pattern=r"^(uart|spi|i2c|axi4lite|apb|wishbone|)$")
     sequences: List[SequenceDef] = []
+    coverage: Optional[CoverageDef] = None
 
 # Pydantic v2 needs explicit rebuild when using `from __future__ import annotations`
 DesignSpec.model_rebuild()

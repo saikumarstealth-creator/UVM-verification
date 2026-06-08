@@ -10,6 +10,61 @@ from typing import Any, Dict, List, Optional
 from src.config import DesignSpec
 from src.generation.protocols import ProtocolLibrary
 
+# Known signal aliases per protocol (name → set of accepted names)
+PROTOCOL_SIGNAL_ALIASES: Dict[str, Dict[str, set]] = {
+    "apb": {
+        "select": {"psel", "sel"},
+        "enable": {"penable", "enable"},
+        "addr": {"paddr", "addr", "adr", "address"},
+        "write": {"pwrite", "write", "we"},
+        "wdata": {"pwdata", "wdata", "data_o", "dat_o", "wb_data_o"},
+        "rdata": {"prdata", "rdata", "data_i", "dat_i", "wb_data_i"},
+        "ready": {"pready", "ready", "ack", "wb_ack"},
+        "slverr": {"pslverr", "slverr"},
+    },
+    "wishbone": {
+        "cycle": {"wb_cyc", "cyc"},
+        "strobe": {"wb_stb", "stb"},
+        "write": {"wb_we", "we"},
+        "addr": {"wb_addr", "adr", "addr", "address"},
+        "data_o": {"wb_data_o", "dat_o", "data_o"},
+        "data_i": {"wb_data_i", "dat_i", "data_i"},
+        "ack": {"wb_ack", "ack"},
+    },
+    "axi4lite": {
+        "awaddr": {"awaddr", "aw_addr"},
+        "awvalid": {"awvalid", "aw_valid"},
+        "awready": {"awready", "aw_ready"},
+        "wdata": {"wdata", "wd", "w_data"},
+        "wvalid": {"wvalid", "w_valid"},
+        "wready": {"wready", "w_ready"},
+        "bvalid": {"bvalid", "b_valid"},
+        "bready": {"bready", "b_ready"},
+        "araddr": {"araddr", "ar_addr"},
+        "arvalid": {"arvalid", "ar_valid"},
+        "arready": {"arready", "ar_ready"},
+        "rdata": {"rdata", "rd", "r_data"},
+        "rvalid": {"rvalid", "r_valid"},
+        "rready": {"rready", "r_ready"},
+    },
+    "spi": {
+        "sclk": {"sclk", "spi_sclk", "clk"},
+        "mosi": {"mosi", "spi_mosi", "master_out"},
+        "miso": {"miso", "spi_miso", "master_in"},
+        "ss": {"ss_n", "ss", "spi_ss_n", "cs_n", "ncs", "chip_select"},
+    },
+    "i2c": {
+        "scl": {"scl", "i2c_scl"},
+        "sda": {"sda", "i2c_sda"},
+    },
+    "uart": {
+        "rx": {"srx", "uart_rx", "rx", "rxd", "sin"},
+        "tx": {"stx", "uart_tx", "tx", "txd", "sout"},
+        "cts": {"cts_n", "cts", "ctsn"},
+        "rts": {"rts_n", "rts", "rtsn"},
+    },
+}
+
 
 class ValidationResult:
     def __init__(self, is_valid: bool, errors: Optional[List[str]] = None, warnings: Optional[List[str]] = None):
@@ -114,22 +169,51 @@ class IndustryValidator:
 
     def _check_protocol_consistency(self, spec: DesignSpec) -> List[str]:
         errors = []
-        lib = ProtocolLibrary()
-        available = lib.list_available()
+        if not spec.protocol:
+            return errors
+
+        proto = spec.protocol.lower()
+        if proto not in PROTOCOL_SIGNAL_ALIASES:
+            return errors  # unknown protocol, skip
+
+        # Collect all signal names from interfaces (lowercase)
+        actual_sigs = set()
         for iface in spec.interfaces:
-            proto = getattr(iface, "protocol", None) or getattr(iface, "type", None)
-            if proto and proto.lower() in available:
-                try:
-                    proto_signals = {s["name"].lower() for s in lib.get_signals(proto.lower())}
-                    actual_signals = {s.name.lower() for s in iface.signals}
-                    missing = proto_signals - actual_signals
-                    if missing:
-                        warnings.warn(
-                            f"Interface '{iface.name}' claims protocol '{proto}' "
-                            f"but is missing signals: {', '.join(sorted(missing))}"
-                        )
-                except Exception:
-                    pass
+            for sig in iface.signals:
+                actual_sigs.add(sig.name.lower())
+
+        required = PROTOCOL_SIGNAL_ALIASES[proto]
+
+        # Check each required signal role has at least one matching alias in the spec
+        missing_roles = []
+        for role, aliases in required.items():
+            if not actual_sigs & aliases:
+                missing_roles.append(role)
+
+        if missing_roles:
+            errors.append(
+                f"Protocol '{proto}' declared but interface signals don't match. "
+                f"Missing signal role(s): {', '.join(missing_roles)}. "
+                f"Expected aliases for protocol '{proto}': "
+                + ", ".join(f"{role}={', '.join(sorted(aliases))}" for role, aliases in required.items())
+            )
+
+        # Also check for bus-widening: if protocol is APB but signals look like Wishbone
+        for other_proto, other_aliases in PROTOCOL_SIGNAL_ALIASES.items():
+            if other_proto == proto:
+                continue
+            other_matched = sum(1 for aliases in other_aliases.values() if actual_sigs & aliases)
+            this_matched = sum(1 for aliases in required.values() if actual_sigs & aliases)
+            # If another protocol matches more signal roles than the declared one, flag a warning
+            # But only if there are at least 3 matching roles to be meaningful
+            if other_matched >= 3 and other_matched > this_matched:
+                errors.append(
+                    f"Interface signals match '{other_proto}' protocol better than declared "
+                    f"'{proto}' ({other_matched}/{len(other_aliases)} roles vs "
+                    f"{this_matched}/{len(required)} roles). "
+                    f"If '{other_proto}' was intended, change spec.protocol to '{other_proto}'."
+                )
+
         return errors
 
     @staticmethod

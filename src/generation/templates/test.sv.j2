@@ -134,16 +134,22 @@ endclass
 {% if p == "uart" %}
 
 {% set seqs = spec.sequences if spec.sequences else [] %}
+{% set cov = spec.coverage if spec.coverage else None %}
+{% set cov_cps = cov.coverpoints if cov and cov.coverpoints else {} %}
+{% set cov_bauds = cov_cps.get("baud_rate", [9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000]) %}
+{% set cov_data_bits = cov_cps.get("data_bits", [5, 6, 7, 8]) %}
+{% set cov_stop_bits = cov_cps.get("stop_bits", [1, 2]) %}
+{% set cov_parity = cov_cps.get("parity_mode", ["none", "even", "odd", "mark", "space"]) %}
 
 // =========================================================================
 // Auto-generated per-sequence tests from YAML
 // =========================================================================
 {% set seq_to_class = {
-  "{{ spec.design_name }}_smoke": "{{ spec.design_name }}_config_seq",
-  "{{ spec.design_name }}_reg_access": spec.design_name + "_all_regs_seq",
-  "{{ spec.design_name }}_loopback": "{{ spec.design_name }}_loopback_seq",
-  "{{ spec.design_name }}_random": spec.design_name + "_random_regs_seq",
-  "{{ spec.design_name }}_error_injection": "{{ spec.design_name }}_error_injection_seq"
+  spec.design_name ~ "_smoke": spec.design_name ~ "_config_seq",
+  spec.design_name ~ "_reg_access": spec.design_name ~ "_all_regs_seq",
+  spec.design_name ~ "_loopback": spec.design_name ~ "_loopback_seq",
+  spec.design_name ~ "_random": spec.design_name ~ "_random_regs_seq",
+  spec.design_name ~ "_error_injection": spec.design_name ~ "_error_injection_seq"
 } %}
 
 {% for seq in seqs %}
@@ -160,12 +166,12 @@ class {{ seq.name }}_test extends {{ spec.design_name }}_base_test;
     seq = {{ sv_class }}::type_id::create("seq");
     if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
-{% if seq.name == "{{ spec.design_name }}_loopback" %}
+{% if seq.name == spec.design_name ~ "_loopback" %}
     seq.test_data = '{8'h55, 8'hAA, 8'h33, 8'hCC};
-{% elif seq.name == "{{ spec.design_name }}_error_injection" %}
+{% elif seq.name == spec.design_name ~ "_error_injection" %}
     seq.inj_type = {{ spec.design_name }}_error_injection_seq::INJ_PARITY;
     seq.num_injections = 5;
-{% elif seq.name == "{{ spec.design_name }}_random" %}
+{% elif seq.name == spec.design_name ~ "_random" %}
     if (!seq.randomize()) `uvm_fatal("RAND", "Randomization failed")
 {% endif %}
     `uvm_info("TEST_{{ seq.name|upper }}", $sformatf("Starting test: {{ seq.description }}"), UVM_LOW)
@@ -214,7 +220,9 @@ endclass
 class {{ spec.design_name }}_baud_rate_test extends {{ spec.design_name }}_base_test;
   `uvm_component_utils({{ spec.design_name }}_baud_rate_test)
 
-  int test_bauds[] = '{9600, 19200, 38400, 57600, 115200, 1000000};
+  int test_bauds[] = '{
+{% for b in cov_bauds %}    {{ b }}{{ ',' if not loop.last }}
+{% endfor %}  };
 
   function new(string n, uvm_component p);
     super.new(n, p);
@@ -224,7 +232,7 @@ class {{ spec.design_name }}_baud_rate_test extends {{ spec.design_name }}_base_
     {{ spec.design_name }}_config_seq cfg_seq;
 
     foreach (test_bauds[i]) begin
-      `uvm_info("TEST_BAUD", $sformatf("Testing baud rate: %0d", test_bauds[i]), UVM_LOW)
+      `uvm_info("TEST_BAUD", $sformatf("Testing baud rate: %0d (%0d/%0d)", test_bauds[i], i+1, test_bauds.size()), UVM_LOW)
 
       cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_seq_%0d", i));
       if (cfg_seq == null) `uvm_fatal("SEQ", "Failed to create cfg_seq")
@@ -235,7 +243,7 @@ class {{ spec.design_name }}_baud_rate_test extends {{ spec.design_name }}_base_
       run_sequence_with_timeout(cfg_seq, 10ms);
     end
 
-    `uvm_info("TEST_BAUD", "Baud rate test completed", UVM_LOW)
+    `uvm_info("TEST_BAUD", $sformatf("Baud rate test completed: %0d rates tested", test_bauds.size()), UVM_LOW)
   endtask
 endclass
 
@@ -248,8 +256,12 @@ class {{ spec.design_name }}_format_test extends {{ spec.design_name }}_base_tes
 
   task run_top_sequence();
     {{ spec.design_name }}_config_seq cfg_seq;
-    int data_bits[] = '{5, 6, 7, 8};
-    int stop_bits[] = '{1, 2};
+    int data_bits[] = '{
+{% for d in cov_data_bits %}      {{ d }}{{ ',' if not loop.last }}
+{% endfor %}    };
+    int stop_bits[] = '{
+{% for s in cov_stop_bits %}      {{ s }}{{ ',' if not loop.last }}
+{% endfor %}    };
     int parity_en[] = '{0, 1};
 
     foreach (data_bits[db]) begin
@@ -421,6 +433,31 @@ class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base
     `uvm_info("TEST_REGRESS", "Regression completed", UVM_LOW)
   endtask
 endclass
+
+{% set ro_regs = spec.registers|selectattr('access', 'equalto', 'ro')|list %}
+{% if ro_regs %}
+// =========================================================================
+// RO Register Write-Protection Test
+// =========================================================================
+class {{ spec.design_name }}_ro_write_protect_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_ro_write_protect_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_ro_write_protect_seq ro_seq;
+
+    `uvm_info("TEST_RO_PROTECT", "Starting RO write-protection test", UVM_LOW)
+    ro_seq = {{ spec.design_name }}_ro_write_protect_seq::type_id::create("ro_seq");
+    if (ro_seq == null) `uvm_fatal("SEQ", "Failed to create ro_seq")
+    ro_seq.reg_model = reg_model;
+    run_sequence_with_timeout(ro_seq, 10ms);
+    `uvm_info("TEST_RO_PROTECT", "RO write-protection test completed", UVM_LOW)
+  endtask
+endclass
+{% endif %}
 
 {% elif p == "apb" %}
 

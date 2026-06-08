@@ -173,3 +173,10 @@ sequences:
   - name: uart_error_injection
     type: error_injection
     description: Parity, framing, and break error injection
+
+coverage:
+  coverpoints:
+    baud_rate: [9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000]
+    data_bits: [5, 6, 7, 8]
+    stop_bits: [1, 2]
+    parity_mode: ["none", "even", "odd", "mark", "space"]

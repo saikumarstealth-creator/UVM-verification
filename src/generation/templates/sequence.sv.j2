@@ -15,6 +15,15 @@
 {% set sorted_regs = regs|sort(attribute='address') %}
 {% set reg_addresses = addr_ints|sort %}
 {% set reg_upper = regs|map(attribute='name')|map('upper')|list %}
+{% set _all_signal_names = [] %}
+{% for _iface in spec.interfaces %}{% for _sig in _iface.signals %}{% set _tmp = _all_signal_names.append(_sig.name.lower()) %}{% endfor %}{% endfor %}
+{% set _pready_aliases = ['pready', 'ready', 'ack', 'wb_ack'] %}
+{% set _has_pready = _all_signal_names|select('in', _pready_aliases)|list|length > 0 %}
+{% set _pslverr_aliases = ['pslverr', 'slverr', 'err', 'wb_err'] %}
+{% set _has_pslverr = _all_signal_names|select('in', _pslverr_aliases)|list|length > 0 %}
+{% set _wb_aliases = ['wb_cyc', 'cyc', 'wb_stb', 'stb', 'wb_we', 'we', 'wb_ack', 'ack'] %}
+{% set _wb_count = _all_signal_names|select('in', _wb_aliases)|list|length %}
+{% set _is_wb = _wb_count >= 3 %}
 
 // Register address constants (generated from spec — only if register exists)
 {% set seen_addrs = [] %}
@@ -83,13 +92,13 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   // ---------------------------------------------------------------
   // Helper: Write to a register by address
   // ---------------------------------------------------------------
-  protected task write_reg(logic [2:0] addr, logic [7:0] data);
+  protected task write_reg(logic [{{ addr_bits-1 }}:0] addr, logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
       uvm_reg rg;
 {% if p == "uart" %}
       // DLAB resolution: if addr {0,1} AND a register at 0x3 (LCR) exists with DLAB bit
-      if (addr inside {3'h0, 3'h1}) begin
+      if (addr inside { {{ addr_bits }}'h0, {{ addr_bits }}'h1 }) begin
         logic [7:0] lcr_val;
         string      rg_name;
         uvm_reg lcr_rg = reg_model.get_reg_by_offset('h03);
@@ -102,7 +111,7 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
           return;
         end
         lcr_rg.read(st, lcr_val, .parent(this));
-        if (addr == 3'h0)
+        if (addr == {{ addr_bits }}'h0)
           rg_name = lcr_val[7] ? "dll" : "thr";
         else
           rg_name = lcr_val[7] ? "dlh" : "ier";
@@ -135,13 +144,13 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
   // ---------------------------------------------------------------
   // Helper: Read from a register by address
   // ---------------------------------------------------------------
-  protected task read_reg(logic [2:0] addr, output logic [7:0] data);
+  protected task read_reg(logic [{{ addr_bits-1 }}:0] addr, output logic [7:0] data);
     if (reg_model) begin
       uvm_status_e st;
       uvm_reg rg;
 {% if p == "uart" %}
       // DLAB resolution: if addr {0,1} AND a register at 0x3 (LCR) exists with DLAB bit
-      if (addr inside {3'h0, 3'h1}) begin
+      if (addr inside { {{ addr_bits }}'h0, {{ addr_bits }}'h1 }) begin
         logic [7:0] lcr_val;
         string      rg_name;
         uvm_reg lcr_rg = reg_model.get_reg_by_offset('h03);
@@ -154,7 +163,7 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
           return;
         end
         lcr_rg.read(st, lcr_val, .parent(this));
-        if (addr == 3'h0)
+        if (addr == {{ addr_bits }}'h0)
           rg_name = lcr_val[7] ? "dll" : "rbr";
         else
           rg_name = lcr_val[7] ? "dlh" : "ier";
@@ -803,7 +812,7 @@ class {{ spec.design_name }}_error_injection_seq extends {{ spec.design_name }}_
         INJ_PARITY: begin
           if (!inj_req.randomize() with {
             we == 1;
-            addr == 3'h0;
+            addr == {{ addr_bits }}'h0;
             data == 8'hA5;
             delay == 0;
             corrupt_parity == 1;
@@ -814,7 +823,7 @@ class {{ spec.design_name }}_error_injection_seq extends {{ spec.design_name }}_
         INJ_FRAMING: begin
           if (!inj_req.randomize() with {
             we == 1;
-            addr == 3'h0;
+            addr == {{ addr_bits }}'h0;
             data == 8'h5A;
             delay == 0;
             corrupt_parity == 0;
@@ -825,7 +834,7 @@ class {{ spec.design_name }}_error_injection_seq extends {{ spec.design_name }}_
         INJ_BREAK: begin
           if (!inj_req.randomize() with {
             we == 1;
-            addr == 3'h0;
+            addr == {{ addr_bits }}'h0;
             data == 8'h00;
             delay == 0;
             corrupt_parity == 0;
@@ -836,17 +845,17 @@ class {{ spec.design_name }}_error_injection_seq extends {{ spec.design_name }}_
         INJ_ALL: begin
           if (i % 3 == 0)
             if (!inj_req.randomize() with {
-              we == 1; addr == 3'h0; data == 8'hA5; delay == 0;
+              we == 1; addr == {{ addr_bits }}'h0; data == 8'hA5; delay == 0;
               corrupt_parity == 1; corrupt_stop_bit == 0; force_break == 0;
             }) `uvm_fatal("RAND", "All-injection parity req failed")
           if (i % 3 == 1)
             if (!inj_req.randomize() with {
-              we == 1; addr == 3'h0; data == 8'h5A; delay == 0;
+              we == 1; addr == {{ addr_bits }}'h0; data == 8'h5A; delay == 0;
               corrupt_parity == 0; corrupt_stop_bit == 1; force_break == 0;
             }) `uvm_fatal("RAND", "All-injection framing req failed")
           if (i % 3 == 2)
             if (!inj_req.randomize() with {
-              we == 1; addr == 3'h0; data == 8'h00; delay == 0;
+              we == 1; addr == {{ addr_bits }}'h0; data == 8'h00; delay == 0;
               corrupt_parity == 0; corrupt_stop_bit == 0; force_break == 1;
             }) `uvm_fatal("RAND", "All-injection break req failed")
         end
@@ -903,6 +912,56 @@ class {{ spec.design_name }}_error_injection_seq extends {{ spec.design_name }}_
   endtask
 endclass
 {% endif %}  {# /THR+LSR check for {{ spec.design_name }}_error_injection_seq #}
+
+// -------------------------------------------------------------------------
+// RO Register Write-Protection Test — verifies writes to read-only registers
+// are rejected by the DUT. Reads each RO register, attempts write, reads back
+// and confirms value unchanged.
+// -------------------------------------------------------------------------
+{% set ro_list = regs|selectattr('access', 'equalto', 'ro')|list %}
+{% if ro_list %}
+class {{ spec.design_name }}_ro_write_protect_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_ro_write_protect_seq)
+
+  rand int num_ro_regs;
+  int violations;
+
+  function new(string n = "{{ spec.design_name }}_ro_write_protect_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] val_before;
+    logic [7:0] val_after;
+    logic [7:0] wr_data;
+    violations = 0;
+
+    `uvm_info("RO_PROTECT", $sformatf("=== RO Write Protection Test (%0d RO registers) ===", {% for r in ro_list %} 1 {% if not loop.last %} + {% endif %}{% endfor %}), UVM_LOW)
+
+{% for r in ro_list %}
+    begin
+      read_reg({{ addr_bits }}'h{{ r.address[2:] }}, val_before);
+      wr_data = ~val_before;
+      write_reg({{ addr_bits }}'h{{ r.address[2:] }}, wr_data);
+      read_reg({{ addr_bits }}'h{{ r.address[2:] }}, val_after);
+      if (val_after == val_before) begin
+        `uvm_info("RO_PROTECT", $sformatf("  %-10s @ 0x%0h: write-protected OK (val=0x%02h)",
+                  "{{ r.name }}", {{ addr_bits }}'h{{ r.address[2:] }}, val_after), UVM_LOW)
+      end else begin
+        `uvm_error("RO_PROTECT", $sformatf("  %-10s @ 0x%0h: RO violation! Before=0x%02h, After write 0x%02h=0x%02h",
+                   "{{ r.name }}", {{ addr_bits }}'h{{ r.address[2:] }}, val_before, wr_data, val_after))
+        violations++;
+      end
+    end
+{% endfor %}
+
+    if (violations == 0)
+      `uvm_info("RO_PROTECT", "*** All RO registers properly write-protected ***", UVM_LOW)
+    else
+      `uvm_error("RO_PROTECT", $sformatf("*** %0d RO register(s) NOT write-protected! ***", violations))
+  endtask
+endclass
+{% endif %}
 
 // -------------------------------------------------------------------------
 // UART Random Traffic Sequence — randomizes baud, parity, word length, data
@@ -1773,6 +1832,7 @@ class {{ spec.design_name }}_apb_virtual_seq extends uvm_sequence #({{ spec.desi
   endtask
 endclass
 
+{% if _has_pready %}
 // -------------------------------------------------------------------------
 // APB Wait State Sequence — register access with varying delays
 // -------------------------------------------------------------------------
@@ -1807,7 +1867,9 @@ class {{ spec.design_name }}_apb_wait_state_seq extends {{ spec.design_name }}_b
     `uvm_info("APB_WS", "Wait state test completed", UVM_LOW)
   endtask
 endclass
+{% endif %}
 
+{% if _has_pslverr %}
 // -------------------------------------------------------------------------
 // APB PSLVERR Sequence — exhaustive slave error response testing
 // -------------------------------------------------------------------------
@@ -1866,6 +1928,7 @@ class {{ spec.design_name }}_apb_pslverr_seq extends {{ spec.design_name }}_base
       num_injections, errors_seen, recoveries ? "YES" : "NO"), UVM_LOW)
   endtask
 endclass
+{% endif %}
 
 // -------------------------------------------------------------------------
 // APB Illegal Access Sequence — out-of-bounds addresses, invalid transfers
@@ -1919,9 +1982,9 @@ class {{ spec.design_name }}_apb_seq_lib extends uvm_sequence_library #({{ spec.
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_write_read_seq::get_type());
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_error_seq::get_type());
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_back2back_seq::get_type());
-    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_wait_state_seq::get_type());
-    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_pslverr_seq::get_type());
-    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_illegal_access_seq::get_type());
+{% if _has_pready %}    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_wait_state_seq::get_type());
+{% endif %}{% if _has_pslverr %}    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_pslverr_seq::get_type());
+{% endif %}    {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_illegal_access_seq::get_type());
     {{ spec.design_name }}_apb_seq_lib::add_sequence({{ spec.design_name }}_apb_virtual_seq::get_type());
   endfunction
 
@@ -2683,7 +2746,10 @@ class {{ spec.design_name }}_axi_illegal_addr_seq extends {{ spec.design_name }}
   `uvm_object_utils({{ spec.design_name }}_axi_illegal_addr_seq)
 
   int illegal_ops;
-  logic [7:0] illegal_addrs[$] = '{8'hFF, 8'hFE, 8'h80};
+  logic [{{ addr_bits-1 }}:0] illegal_addrs[$];
+  logic [{{ addr_bits-1 }}:0] used_addrs[$] = '{
+{% for a in addr_ints %}      {{ addr_bits }}'h{{ '%0x' % a }}{{ ',' if not loop.last }}
+{% endfor %}    };
 
   function new(string n = "{{ spec.design_name }}_axi_illegal_addr_seq");
     super.new(n);
@@ -2693,6 +2759,17 @@ class {{ spec.design_name }}_axi_illegal_addr_seq extends {{ spec.design_name }}
     logic [7:0] val;
 
     `uvm_info("AXI_ILL", "Starting illegal address test", UVM_LOW)
+
+    // Dynamically compute illegal addresses (outside valid register range)
+    for (int a = 0; a < (1 << {{ addr_bits }}); a++) begin
+      if (!(a inside {used_addrs}))
+        illegal_addrs.push_back({{ addr_bits }}'(a));
+    end
+    // Also try out-of-range addresses if addr_bits < 8
+    if ({{ addr_bits }} < 8) begin
+      illegal_addrs.push_back({{ addr_bits }}'(1 << {{ addr_bits }}));
+      illegal_addrs.push_back({{ addr_bits }}'((1 << {{ addr_bits }}) + 1));
+    end
 
     foreach (illegal_addrs[i]) begin
       write_reg(illegal_addrs[i], 8'hA5);
