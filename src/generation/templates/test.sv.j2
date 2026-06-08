@@ -167,7 +167,8 @@ class {{ seq.name }}_test extends {{ spec.design_name }}_base_test;
     if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
 {% if seq.name == spec.design_name ~ "_loopback" %}
-    seq.test_data = '{8'h55, 8'hAA, 8'h33, 8'hCC};
+    if (!seq.randomize() with { test_data.size() inside {[4:16]}; })
+      `uvm_fatal("RAND", "Loopback seq randomization failed")
 {% elif seq.name == spec.design_name ~ "_error_injection" %}
     seq.inj_type = {{ spec.design_name }}_error_injection_seq::INJ_PARITY;
     seq.num_injections = 5;

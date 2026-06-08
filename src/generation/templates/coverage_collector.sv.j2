@@ -48,21 +48,30 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     option.per_instance = 1;
     option.cross_auto_bin_max = 256;
     cp_baud: coverpoint baud_rate {
-      bins standard[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000};
-    }
+{% if spec.coverage and spec.coverage.coverpoints and spec.coverage.coverpoints.get('baud_rate') %}      bins standard[] = { {% for b in spec.coverage.coverpoints.baud_rate %}{{ b }}{% if not loop.last %}, {% endif %}{% endfor %} };
+{% else %}      bins standard[] = {9600, 19200, 38400, 57600, 115200, 230400, 460800, 1000000};
+{% endif %}    }
     cp_frame: coverpoint {data_bits, stop_bits} {
-      bins combos[] = { {5,1}, {5,2}, {6,1}, {6,2}, {7,1}, {7,2}, {8,1}, {8,2} };
-    }
+{%- if spec.coverage and spec.coverage.coverpoints and spec.coverage.coverpoints.get('data_bits') and spec.coverage.coverpoints.get('stop_bits') %}
+{%- set dbs = spec.coverage.coverpoints.data_bits %}
+{%- set sbs = spec.coverage.coverpoints.stop_bits %}
+{%- set combos = [] %}
+{%- for d in dbs %}{% for s in sbs %}{% set _ = combos.append({d: s}) %}{% endfor %}{% endfor %}
+      bins combos[] = { {% for c in combos %}{% for d, s in c.items() %}{ {{ d }}, {{ s }} }{% endfor %}{% if not loop.last %}, {% endif %}{% endfor %} };
+{% else %}      bins combos[] = { {5,1}, {5,2}, {6,1}, {6,2}, {7,1}, {7,2}, {8,1}, {8,2} };
+{% endif %}    }
     cp_data_bits: coverpoint data_bits {
-      bins d5 = {5};
+{% if spec.coverage and spec.coverage.coverpoints and spec.coverage.coverpoints.get('data_bits') %}{% for d in spec.coverage.coverpoints.data_bits %}      bins d{{ d }} = { {{ d }} };
+{% endfor %}{% else %}      bins d5 = {5};
       bins d6 = {6};
       bins d7 = {7};
       bins d8 = {8};
-    }
+{% endif %}    }
     cp_stop_bits: coverpoint stop_bits {
-      bins s1 = {1};
+{% if spec.coverage and spec.coverage.coverpoints and spec.coverage.coverpoints.get('stop_bits') %}{% for s in spec.coverage.coverpoints.stop_bits %}      bins s{{ s }} = { {{ s }} };
+{% endfor %}{% else %}      bins s1 = {1};
       bins s2 = {2};
-    }
+{% endif %}    }
     cp_parity: coverpoint parity_mode {
       bins none  = {PARITY_NONE};
       bins odd   = {PARITY_ODD};
