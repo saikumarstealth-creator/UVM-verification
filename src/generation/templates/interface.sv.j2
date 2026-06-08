@@ -129,4 +129,91 @@ interface {{ spec.design_name }}_intf (input logic clk, input logic rst_n);
     ,.wb_stb(wb_stb), .wb_ack(wb_ack), .wb_we(wb_we), .wb_data_o(wb_data_o)
     {% endif %}
   );
+
+  // -------------------------------------------------------------------------
+  // SVA Protocol Assertions (compile-time formal-like checks)
+  // -------------------------------------------------------------------------
+{% if p == "uart" %}
+  // UART: STB must be accompanied by CYC
+  assert_stb_with_cyc: assert property (@(posedge clk) disable iff (!rst_n)
+    wb_stb |-> wb_cyc);
+
+  // UART: ACK must be followed by deassertion of STB next cycle
+  assert_ack_deassert_stb: assert property (@(posedge clk) disable iff (!rst_n)
+    wb_ack |=> !wb_stb);
+
+  // UART: Data bus must not be X/Z during valid cycles
+  assert_data_valid_when_ack: assert property (@(posedge clk) disable iff (!rst_n)
+    wb_ack |-> !$isunknown(wb_data_i));
+
+  // UART: TX start bit must complete to stop bit within frame time
+  assert_tx_frame_complete: assert property (@(posedge clk) disable iff (!rst_n)
+    $fell(uart_tx) |=> ##10 (uart_tx == 1'b1));
+
+  // UART: RX should not toggle during reset
+  assert_rx_stable_in_reset: assert property (@(posedge clk) disable iff (rst_n)
+    !$stable(uart_rx) |-> 0);
+
+{% elif p == "apb" %}
+  // APB: PSEL must be asserted at least one cycle before PENABLE
+  assert_psel_before_penable: assert property (@(posedge clk) disable iff (!rst_n)
+    $rose(penable) |-> $past(psel));
+
+  // APB: PREADY must complete within timeout
+  assert_pready_timeout: assert property (@(posedge clk) disable iff (!rst_n)
+    psel && penable && !pready |=> ##[1:1000] pready);
+
+  // APB: No X/Z on control signals
+  assert_no_x_on_control: assert property (@(posedge clk) disable iff (!rst_n)
+    !$isunknown({psel, penable, pwrite}));
+
+{% elif p == "wishbone" %}
+  // Wishbone: STB must be accompanied by CYC
+  assert_wb_stb_with_cyc: assert property (@(posedge clk) disable iff (!rst_n)
+    wb_stb |-> wb_cyc);
+
+  // Wishbone: ACK must be followed by deassertion of STB
+  assert_wb_ack_deassert_stb: assert property (@(posedge clk) disable iff (!rst_n)
+    wb_ack |=> !wb_stb);
+
+  // Wishbone: No X/Z on data during write
+  assert_wb_data_valid: assert property (@(posedge clk) disable iff (!rst_n)
+    wb_stb && wb_we |-> !$isunknown(wb_data_o));
+
+{% elif p == "spi" %}
+  // SPI: CS must be low during entire transaction
+  assert_spi_cs_low_during_txn: assert property (@(posedge clk) disable iff (!rst_n)
+    $fell(ss_n) |=> $stable(ss_n) until $rose(ss_n));
+
+  // SPI: SCLK must toggle during transaction
+  assert_spi_sclk_toggles: assert property (@(posedge clk) disable iff (!rst_n)
+    !ss_n |-> ##[1:100] !$stable(sclk));
+
+{% elif p == "i2c" %}
+  // I2C: Start condition: SDA falls while SCL high
+  assert_i2c_start: assert property (@(posedge clk) disable iff (!rst_n)
+    scl && $fell(sda) |=> scl && !sda);
+
+  // I2C: Stop condition: SDA rises while SCL high
+  assert_i2c_stop: assert property (@(posedge clk) disable iff (!rst_n)
+    scl && $rose(sda) |=> scl && sda);
+
+{% elif p == "axi4lite" %}
+  // AXI4-Lite: AWVALID must stay high until AWREADY
+  assert_axi_aw_handshake: assert property (@(posedge clk) disable iff (!rst_n)
+    awvalid && !awready |=> awvalid);
+
+  // AXI4-Lite: ARVALID must stay high until ARREADY
+  assert_axi_ar_handshake: assert property (@(posedge clk) disable iff (!rst_n)
+    arvalid && !arready |=> arvalid);
+
+  // AXI4-Lite: WVALID must stay high until WREADY
+  assert_axi_w_handshake: assert property (@(posedge clk) disable iff (!rst_n)
+    wvalid && !wready |=> wvalid);
+
+  // AXI4-Lite: No X/Z on handshake signals
+  assert_axi_no_x: assert property (@(posedge clk) disable iff (!rst_n)
+    !$isunknown({awvalid, arvalid, wvalid, rvalid, bvalid}));
+{% endif %}
+
 endinterface

@@ -82,11 +82,13 @@ def compute_quality_score(
     test_mapping_score = extra_metrics.get("test_mapping_score", 0.85) if extra_metrics else 0.85
 
     weights = {
-        "syntax": 0.20,
-        "completeness": 0.20,
-        "ral": 0.15,
-        "coverage": 0.15,
+        "syntax": 0.15,
+        "completeness": 0.15,
+        "ral": 0.10,
+        "coverage": 0.10,
         "protocol": 0.20,
+        "sequence": 0.10,
+        "reg_coverage": 0.10,
         "test_mapping": 0.10,
     }
 
@@ -96,6 +98,8 @@ def compute_quality_score(
         + weights["ral"] * ral_readiness
         + weights["coverage"] * coverage_readiness
         + weights["protocol"] * protocol_correctness
+        + weights["sequence"] * sequence_score
+        + weights["reg_coverage"] * reg_cov
         + weights["test_mapping"] * test_mapping_score
     )
     overall = max(0.0, raw - hallucination_penalty)
