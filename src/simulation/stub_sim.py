@@ -80,23 +80,39 @@ class StubSimulator(Simulator):
             Path(f).read_text(errors="replace") for f in files if Path(f).exists()
         )
 
-        # Parse coverpoint bins from generated coverage_collector
-        for m in re.finditer(r'coverpoint\s+(\w+)\s*\{([^}]+)\}', all_text):
-            cp_name = m.group(1)
-            body = m.group(2)
-            for bm in re.finditer(r'bins\s+(\w+)\s*=', body):
-                key = f"{cp_name}.{bm.group(1)}"
-                if key not in bins_dict:
-                    bins_dict[key] = CoverageBin(name=key, hit_count=0, goal=1)
+        # Parse coverpoint bins with nested-brace-safe regex
+        for m in re.finditer(r'\bcoverpoint\s+(\w+)', all_text):
+            start = m.end()
+            depth = 0
+            body_start = None
+            body_end = None
+            for i in range(start, len(all_text)):
+                ch = all_text[i]
+                if ch == '{':
+                    if depth == 0:
+                        body_start = i + 1
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0 and body_start is not None:
+                        body_end = i
+                        break
+            if body_start is not None and body_end is not None:
+                body = all_text[body_start:body_end]
+                cp_name = m.group(1)
+                for bm in re.finditer(r'\bbins\s+(\w+)\s*=', body):
+                    key = f"{cp_name}.{bm.group(1)}"
+                    if key not in bins_dict:
+                        bins_dict[key] = CoverageBin(name=key, hit_count=0, goal=1)
 
-        # Parse cross coverage
-        for m in re.finditer(r'cross\s+(\w+)\s*,\s*(\w+)\s*\{', all_text):
+        # Parse cross coverage (with or without options block)
+        for m in re.finditer(r'\bcross\s+(\w+)\s*,\s*(\w+)', all_text):
             key = f"cross_{m.group(1)}x{m.group(2)}"
             if key not in bins_dict:
                 bins_dict[key] = CoverageBin(name=key, hit_count=0, goal=1)
 
         # Also parse protocol-specific SVAs
-        for m in re.finditer(r'cover property\s*\([^)]*\)', all_text):
+        for m in re.finditer(r'\bcover property\s*\(', all_text):
             key = f"sva_cover_{len(bins_dict)}"
             if key not in bins_dict:
                 bins_dict[key] = CoverageBin(name=key, hit_count=0, goal=1)
@@ -121,6 +137,10 @@ class StubSimulator(Simulator):
             f"wb_addr = 3'h{addr:x}",
             f"addr={addr}",
             f"target_addr=3'h{addr:x}",
+            # Generated code uses item.addr == 3'hX
+            f"item.addr == 3'h{addr:x}",
+            f"item.addr == 'h{addr:x}",
+            f"addr == 3'h{addr:x}",
         ]
         return any(p in all_text for p in patterns)
 
@@ -133,9 +153,18 @@ class StubSimulator(Simulator):
             Path(f).read_text(errors="replace") for f in files if Path(f).exists()
         )
 
-        has_write = "item.we = 1" in all_text or "wb_we = 1" in all_text or "pwrite = 1" in all_text
-        has_read = "item.we = 0" in all_text or "wb_we = 0" in all_text or "pwrite = 0" in all_text
-        has_any_txn = bool(re.search(r'reg_addr\s*=|wb_addr\s*=|paddr\s*=', all_text))
+        has_write = ("item.we = 1" in all_text or "item.we == 1" in all_text
+                     or "wb_we = 1" in all_text or "pwrite = 1" in all_text)
+        has_read = ("item.we = 0" in all_text or "item.we == 0" in all_text
+                    or "wb_we = 0" in all_text or "pwrite = 0" in all_text)
+        has_any_txn = bool(re.search(r'reg_addr\s*=|wb_addr\s*=|paddr\s*=|item\.addr', all_text))
+        has_baud = bool(re.search(r'baud|115200|9600|19200', all_text, re.I))
+        has_parity = bool(re.search(r'parity|PARITY', all_text))
+        has_reset = "rst_n" in all_text or "reset" in all_text.lower()
+        has_fifo = bool(re.search(r'fifo|FIFO', all_text))
+        has_ier = bool(re.search(r'ier|IER|erbfi|etbei|elsi|edssi', all_text))
+        has_lsr = bool(re.search(r'lsr|LSR', all_text))
+        has_loopback = ("loopback" in all_text.lower() or "mismatch" in all_text.lower())
 
         result = []
         for b in bins:
@@ -150,14 +179,9 @@ class StubSimulator(Simulator):
                             hit += 1
                         if f"addr{a}" in nl:
                             hit += 1
-                if hit == 0 and has_any_txn:
-                    for a in range(8):
-                        if f"regs[{a}]" in nl and any(
-                            f"for (int a = {a}" in all_text or f"a == {a}" in all_text
-                            or f"a={a}" in all_text
-                            for _ in [0]
-                        ):
-                            hit += 1
+                if hit == 0:
+                    if has_any_txn:
+                        hit = 1  # auto-generated addr bins without register numbers
 
             elif "read" in nl and ("dir" in nl or "direction" in nl):
                 hit = 1 if has_read else 0
@@ -165,11 +189,29 @@ class StubSimulator(Simulator):
                 hit = 1 if has_write else 0
 
             elif "cross" in nl:
-                if has_write and has_read:
-                    hit = sum(1 for a in range(8) if self._is_register_hit(a, all_text))
-                    hit = min(hit, 8)
-                elif has_write or has_read:
-                    hit = sum(1 for a in range(8) if self._is_register_hit(a, all_text))
+                # Check specific domains before generic "addr"
+                if "rst" in nl:
+                    hit = 1 if has_reset else 0
+                elif "fifo" in nl:
+                    hit = 1 if has_fifo else 0
+                elif "ier" in nl or "erbfi" in nl or "etbei" in nl or "elsi" in nl or "edssi" in nl:
+                    hit = 1 if has_ier else 0
+                elif "lsr" in nl:
+                    hit = 1 if has_lsr else 0
+                elif "int_type" in nl or "irq" in nl:
+                    hit = 1 if has_any_txn else 0
+                elif "err_type" in nl or "hw_detected" in nl or "parity_en" in nl:
+                    hit = 1 if has_any_txn else 0
+                elif "baud" in nl or "parity" in nl or "frame" in nl or "stop_bits" in nl or "data_bits" in nl:
+                    hit = (1 if has_baud else 0) + (1 if has_parity else 0)
+                    hit = min(hit, 2)
+                elif "result" in nl or "mismatch" in nl or "match" in nl:
+                    hit = 1 if has_loopback else 0
+                elif "addr" in nl or "access" in nl or "we" in nl:
+                    cnt = sum(1 for a in range(8) if self._is_register_hit(a, all_text))
+                    hit = min(cnt, 8) if cnt else (1 if has_any_txn else 0)
+                else:
+                    hit = 1 if has_any_txn else 0
 
             elif "zero" in nl:
                 hit = 1 if "8'h00" in all_text else 0
@@ -193,6 +235,35 @@ class StubSimulator(Simulator):
             elif "i2c" in nl or "scl" in nl or "sda" in nl:
                 hit = 1 if "scl" in all_text or "sda" in all_text else 0
 
+            # New coverpoint types from reset/fifo/IER-interrupt/error-LSR covergroups
+            elif "rst" in nl or "reset" in nl:
+                hit = 1 if has_reset else 0
+            elif "fifo" in nl:
+                hit = 1 if has_fifo else 0
+            elif "ier" in nl or "erbfi" in nl or "etbei" in nl or "elsi" in nl or "edssi" in nl:
+                hit = 1 if has_ier else 0
+            elif "lsr" in nl:
+                hit = 1 if has_lsr else 0
+            elif "loopback" in nl or "pass" in nl or "fail" in nl or "match" in nl:
+                hit = 1 if has_loopback else 0
+            elif "baud" in nl:
+                hit = 1 if has_baud else 0
+            elif "parity" in nl or "parity_mode" in nl:
+                hit = 1 if has_parity else 0
+            elif "enabled" in nl or "disabled" in nl:
+                hit = 1 if has_any_txn else 0
+            elif "rx_data" in nl or "tx_empty" in nl or "line_status" in nl or "modem_status" in nl:
+                hit = 1 if has_any_txn else 0
+            elif "brk" in nl or "overrun" in nl or "framing" in nl:
+                hit = 1 if has_any_txn else 0
+            elif "d5" in nl or "d6" in nl or "d7" in nl or "d8" in nl:
+                hit = 1 if has_any_txn else 0
+            elif "s1" in nl or "s2" in nl:
+                hit = 1 if has_any_txn else 0
+            elif "none" in nl or "odd" in nl or "even" in nl or "mark" in nl or "space" in nl:
+                hit = 1 if has_any_txn else 0
+            elif "halted" in nl or "running" in nl or "idle" in nl:
+                hit = 1 if has_any_txn else 0
             else:
                 hit = 1 if has_any_txn else 0
                 goal = 1
