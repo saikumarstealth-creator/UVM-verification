@@ -1261,6 +1261,156 @@ class {{ spec.design_name }}_cov_seq extends {{ spec.design_name }}_base_seq;
       "Coverage sweep complete: %0d configs, %0d TX bursts", total_configs, total_tx), UVM_LOW)
   endtask
 endclass
+
+// -------------------------------------------------------------------------
+// UART Break Sequence — sets break condition, verifies LSR.BI
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_break_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_break_seq)
+
+  int break_detected;
+
+  function new(string n = "{{ spec.design_name }}_break_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lcr_val, lsr_val;
+
+    `uvm_info("BREAK_SEQ", "Starting break condition test", UVM_LOW)
+
+    // Read current LCR
+    read_reg({{ addr_bits }}'h03, lcr_val);
+
+    // Set break enable (LCR[6] = 1)
+    write_reg({{ addr_bits }}'h03, lcr_val | 8'h40);
+    `uvm_info("BREAK_SEQ", "Break condition asserted (LCR[6]=1)", UVM_LOW)
+    #500;
+
+    // Read LSR and verify BI (bit 4)
+    read_reg({{ addr_bits }}'h05, lsr_val);
+    if (lsr_val[4]) begin
+      break_detected++;
+      `uvm_info("BREAK_SEQ", "Break Interrupt (LSR[4]) detected", UVM_LOW)
+    end else begin
+      `uvm_warning("BREAK_SEQ", "Break Interrupt NOT detected")
+    end
+
+    // Clear break (LCR[6] = 0)
+    write_reg({{ addr_bits }}'h03, lcr_val & ~8'h40);
+    `uvm_info("BREAK_SEQ", "Break condition de-asserted", UVM_LOW)
+    #200;
+
+    if (break_detected == 0)
+      `uvm_error("BREAK_SEQ", "Break test FAILED — no break detected")
+    else
+      `uvm_info("BREAK_SEQ", "Break test PASSED", UVM_LOW)
+
+    if (sb_handle != null) sb_handle.record_error("break", break_detected);
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Overrun Sequence — TX flood in loopback, verify LSR.OE
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_overrun_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_overrun_seq)
+
+  int overrun_detected;
+  int tx_count;
+
+  function new(string n = "{{ spec.design_name }}_overrun_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] mcr_val, lsr_val;
+
+    `uvm_info("OVR_SEQ", "Starting overrun test — TX flood in loopback", UVM_LOW)
+
+    // Configure UART
+    {{ spec.design_name }}_config_seq cfg_seq;
+    cfg_seq = {{ spec.design_name }}_config_seq::type_id::create("cfg_seq");
+    cfg_seq.reg_model = reg_model;
+    cfg_seq.baud_rate = 115200;
+    cfg_seq.data_bits = 8;
+    cfg_seq.stop_bits = 1;
+    cfg_seq.start(m_sequencer);
+
+    // Enable loopback (MCR[4] = 1)
+    read_reg({{ addr_bits }}'h04, mcr_val);
+    write_reg({{ addr_bits }}'h04, mcr_val | 8'h10);
+    `uvm_info("OVR_SEQ", "Loopback enabled (MCR[4]=1)", UVM_LOW)
+
+    // Flood TX without reading RBR to cause overrun
+    for (int i = 0; i < 20; i++) begin
+      write_reg({{ addr_bits }}'h00, 8'($urandom_range(0, 255)));
+      tx_count++;
+      #40;
+    end
+
+    // Check LSR for overrun (OE = bit 1)
+    read_reg({{ addr_bits }}'h05, lsr_val);
+    if (lsr_val[1]) begin
+      overrun_detected++;
+      `uvm_info("OVR_SEQ", $sformatf("Overrun (LSR[1]) detected after %0d TX", tx_count), UVM_LOW)
+    end else begin
+      `uvm_warning("OVR_SEQ", "No overrun detected — may need more TX or faster baud")
+    end
+
+    // Read RBR to clear overrun condition
+    write_reg({{ addr_bits }}'h00, 8'h00);
+    read_reg({{ addr_bits }}'h00, lsr_val);
+
+    // Disable loopback
+    write_reg({{ addr_bits }}'h04, mcr_val & ~8'h10);
+
+    if (overrun_detected == 0)
+      `uvm_warning("OVR_SEQ", "Overrun test: no overrun observed (DUT-dependent)")
+    else
+      `uvm_info("OVR_SEQ", "Overrun test PASSED", UVM_LOW)
+
+    if (sb_handle != null) sb_handle.record_error("overrun", overrun_detected);
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Stress Sequence — runs random configs and transactions repeatedly
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_stress_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_stress_seq)
+
+  rand int num_iterations;
+  int total_tx;
+  int total_errors;
+
+  constraint c_stress { num_iterations inside {[10:50]}; }
+
+  function new(string n = "{{ spec.design_name }}_stress_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    `uvm_info("STRESS_SEQ", $sformatf("Starting stress: %0d iterations", num_iterations), UVM_LOW)
+
+    for (int iter = 0; iter < num_iterations; iter++) begin
+      {{ spec.design_name }}_random_seq rand_seq;
+      rand_seq = {{ spec.design_name }}_random_seq::type_id::create($sformatf("rand_seq_%0d", iter));
+      rand_seq.reg_model = reg_model;
+      if (!rand_seq.randomize()) begin
+        `uvm_error("STRESS_SEQ", $sformatf("Randomization failed at iteration %0d", iter))
+        total_errors++;
+      end else begin
+        rand_seq.start(m_sequencer);
+        total_tx += rand_seq.tx_count;
+      end
+    end
+
+    `uvm_info("STRESS_SEQ", $sformatf(
+      "Stress complete: %0d iterations, %0d TX, %0d errors",
+      num_iterations, total_tx, total_errors), UVM_LOW)
+  endtask
+endclass
 {% endif %}  {# /LCR+THR+LSR check for {{ spec.design_name }}_random_seq and cov_seq #}
 
 // -------------------------------------------------------------------------

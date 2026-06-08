@@ -428,6 +428,60 @@ class {{ spec.design_name }}_coverage_test extends {{ spec.design_name }}_base_t
   endtask
 endclass
 
+class {{ spec.design_name }}_break_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_break_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_break_seq brk_seq;
+    `uvm_info("TEST_BRK", "Starting break condition test", UVM_LOW)
+    brk_seq = {{ spec.design_name }}_break_seq::type_id::create("brk_seq");
+    if (brk_seq == null) `uvm_fatal("SEQ", "Failed to create brk_seq")
+    brk_seq.reg_model = reg_model;
+    run_sequence_with_timeout(brk_seq, 10ms);
+    `uvm_info("TEST_BRK", "Break test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_overrun_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_overrun_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_overrun_seq ovr_seq;
+    `uvm_info("TEST_OVR", "Starting overrun test", UVM_LOW)
+    ovr_seq = {{ spec.design_name }}_overrun_seq::type_id::create("ovr_seq");
+    if (ovr_seq == null) `uvm_fatal("SEQ", "Failed to create ovr_seq")
+    ovr_seq.reg_model = reg_model;
+    run_sequence_with_timeout(ovr_seq, 10ms);
+    `uvm_info("TEST_OVR", "Overrun test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_stress_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_stress_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_stress_seq str_seq;
+    `uvm_info("TEST_STR", "Starting stress test", UVM_LOW)
+    str_seq = {{ spec.design_name }}_stress_seq::type_id::create("str_seq");
+    if (str_seq == null) `uvm_fatal("SEQ", "Failed to create str_seq")
+    str_seq.reg_model = reg_model;
+    run_sequence_with_timeout(str_seq, 100ms);
+    `uvm_info("TEST_STR", "Stress test completed", UVM_LOW)
+  endtask
+endclass
+
 class {{ spec.design_name }}_reset_test extends {{ spec.design_name }}_base_test;
   `uvm_component_utils({{ spec.design_name }}_reset_test)
 
