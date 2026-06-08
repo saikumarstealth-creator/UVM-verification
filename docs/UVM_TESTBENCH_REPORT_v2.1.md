@@ -1,7 +1,7 @@
 # UVM Testbench Generator - Production Report v2.1
 **Date:** May 26, 2026  
 
-### **Author: Sai Kumar Taraka**
+<big><big>**Author: Sai Kumar Taraka**</big></big>
 
 **Version:** 2.1.0  
 
