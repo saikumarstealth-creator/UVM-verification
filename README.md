@@ -126,6 +126,8 @@ python regression/run_regression.py \
 pytest tests/ -v
 ```
 
+## <big><big>Developer: Sai Kumar Taraka</big></big>
+
 ## License
 
 MIT
