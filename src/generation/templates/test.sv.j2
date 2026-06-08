@@ -110,18 +110,19 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   protected task write_reg(bit [{{ addr_bits-1 }}:0] addr, bit [7:0] data);
     uvm_reg_addr_t addrs[$];
     uvm_reg regs[$];
+    uvm_status_e status;
+    uvm_reg_data_t val;
     reg_model.get_registers(regs);
+    val = data;
     foreach (regs[i]) begin
       addrs = regs[i].get_addresses();
       if (addrs.size() > 0 && addrs[0] == addr) begin
-        uvm_reg_data_t val = data;
-        reg_model.default_map.write(this, regs[i].get_address(), val);
+        reg_model.default_map.write(status, regs[i].get_address(), val);
         return;
       end
     end
     `uvm_warning("WR_REG", $sformatf("No register at address 0x%0h — using raw write", addr))
-    uvm_reg_data_t raw = data;
-    reg_model.default_map.write(this, addr, raw);
+    reg_model.default_map.write(status, addr, val);
   endtask
 
   // Helper: register read via RAL
@@ -129,16 +130,17 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     uvm_reg_addr_t addrs[$];
     uvm_reg regs[$];
     uvm_reg_data_t val;
+    uvm_status_e status;
     reg_model.get_registers(regs);
     foreach (regs[i]) begin
       addrs = regs[i].get_addresses();
       if (addrs.size() > 0 && addrs[0] == addr) begin
-        reg_model.default_map.read(this, regs[i].get_address(), val);
+        reg_model.default_map.read(status, regs[i].get_address(), val);
         data = val[7:0];
         return;
       end
     end
-    reg_model.default_map.read(this, addr, val);
+    reg_model.default_map.read(status, addr, val);
     data = val[7:0];
   endtask
 
