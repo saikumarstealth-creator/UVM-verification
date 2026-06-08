@@ -106,7 +106,7 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     run_sequence_with_timeout(seq, 10ms);
   endtask
 
-  // Helper: register write via RAL
+  // Helper: register write via RAL (uses reg-level API for callbacks, prediction, coverage)
   protected task write_reg(bit [{{ addr_bits-1 }}:0] addr, bit [7:0] data);
     uvm_reg_addr_t addrs[$];
     uvm_reg regs[$];
@@ -117,11 +117,11 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     foreach (regs[i]) begin
       addrs = regs[i].get_addresses();
       if (addrs.size() > 0 && addrs[0] == addr) begin
-        reg_model.default_map.write(status, regs[i].get_address(), val);
+        regs[i].write(status, val);
         return;
       end
     end
-    `uvm_warning("WR_REG", $sformatf("No register at address 0x%0h — using raw write", addr))
+    `uvm_warning("WR_REG", $sformatf("No register at address 0x%0h — using raw map write", addr))
     reg_model.default_map.write(status, addr, val);
   endtask
 
@@ -135,7 +135,7 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     foreach (regs[i]) begin
       addrs = regs[i].get_addresses();
       if (addrs.size() > 0 && addrs[0] == addr) begin
-        reg_model.default_map.read(status, regs[i].get_address(), val);
+        regs[i].read(status, val);
         data = val[7:0];
         return;
       end
@@ -389,13 +389,24 @@ class {{ spec.design_name }}_interrupt_test extends {{ spec.design_name }}_base_
 
   task run_top_sequence();
     {{ spec.design_name }}_interrupt_seq int_seq;
-    `uvm_info("TEST_INT", "Starting interrupt test — THR empty", UVM_LOW)
-    int_seq = {{ spec.design_name }}_interrupt_seq::type_id::create("int_seq");
-    if (int_seq == null) `uvm_fatal("SEQ", "Failed to create int_seq")
-    int_seq.reg_model = reg_model;
-    int_seq.int_type = {{ spec.design_name }}_interrupt_seq::INT_TX_EMPTY;
-    run_sequence_with_timeout(int_seq, 10ms);
-    `uvm_info("TEST_INT", "Interrupt test completed", UVM_LOW)
+    {{ spec.design_name }}_interrupt_seq::int_type_t types[4] = '{
+      {{ spec.design_name }}_interrupt_seq::INT_TX_EMPTY,
+      {{ spec.design_name }}_interrupt_seq::INT_RX_DATA,
+      {{ spec.design_name }}_interrupt_seq::INT_LINE_STATUS,
+      {{ spec.design_name }}_interrupt_seq::INT_MODEM_STATUS
+    };
+    string type_names[4] = '{"TX_EMPTY", "RX_DATA", "LINE_STATUS", "MODEM_STATUS"};
+
+    `uvm_info("TEST_INT", "Starting interrupt stress test — all 4 types", UVM_LOW)
+    for (int t = 0; t < 4; t++) begin
+      `uvm_info("TEST_INT", $sformatf("Testing interrupt: %s", type_names[t]), UVM_LOW)
+      int_seq = {{ spec.design_name }}_interrupt_seq::type_id::create($sformatf("int_seq_%s", type_names[t]));
+      if (int_seq == null) `uvm_fatal("SEQ", "Failed to create int_seq")
+      int_seq.reg_model = reg_model;
+      int_seq.int_type = types[t];
+      run_sequence_with_timeout(int_seq, 10ms);
+    end
+    `uvm_info("TEST_INT", "All interrupt types verified", UVM_LOW)
   endtask
 endclass
 
