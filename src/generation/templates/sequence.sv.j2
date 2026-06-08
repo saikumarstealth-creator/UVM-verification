@@ -1198,7 +1198,70 @@ class {{ spec.design_name }}_random_seq extends {{ spec.design_name }}_base_seq;
     ), UVM_LOW)
   endtask
 endclass
-{% endif %}  {# /LCR+THR+LSR check for {{ spec.design_name }}_random_seq #}
+
+// -------------------------------------------------------------------------
+// UART Coverage Sweep Sequence — exercises config coverage groups
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_cov_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_cov_seq)
+
+  rand int baud_vals[$];
+  rand int dbits_vals[$];
+  rand int sbits_vals[$];
+
+  int total_configs;
+  int total_tx;
+
+  constraint c_cov_vals {
+    baud_vals.size() inside {[1:8]};
+    dbits_vals.size() inside {[1:4]};
+    sbits_vals.size() inside {[1:2]};
+{% if spec.coverage and spec.coverage.coverpoints %}
+{% if spec.coverage.coverpoints.get('baud_rate') %}    foreach (baud_vals[i]) baud_vals[i] inside { {% for b in spec.coverage.coverpoints.baud_rate %}{{ b }}{% if not loop.last %}, {% endif %}{% endfor %} };
+{% endif %}
+{% if spec.coverage.coverpoints.get('data_bits') %}    foreach (dbits_vals[i]) dbits_vals[i] inside { {% for d in spec.coverage.coverpoints.data_bits %}{{ d }}{% if not loop.last %}, {% endif %}{% endfor %} };
+{% endif %}
+{% if spec.coverage.coverpoints.get('stop_bits') %}    foreach (sbits_vals[i]) sbits_vals[i] inside { {% for s in spec.coverage.coverpoints.stop_bits %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %} };
+{% endif %}
+{% endif %}  }
+
+  function new(string n = "{{ spec.design_name }}_cov_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    {{ spec.design_name }}_config_seq cfg_seq;
+    {{ spec.design_name }}_tx_seq     tx_seq;
+
+    `uvm_info("COV_SEQ", "Starting coverage sweep", UVM_LOW)
+
+    foreach (baud_vals[i]) begin
+      foreach (dbits_vals[j]) begin
+        foreach (sbits_vals[k]) begin
+          cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_seq_b%0d_d%0d_s%0d", i, j, k));
+          cfg_seq.reg_model = reg_model;
+          cfg_seq.baud_rate = baud_vals[i];
+          cfg_seq.data_bits = dbits_vals[j];
+          cfg_seq.stop_bits = sbits_vals[k];
+          cfg_seq.start(m_sequencer);
+          total_configs++;
+
+          #100;
+          tx_seq = {{ spec.design_name }}_tx_seq::type_id::create($sformatf("tx_seq_b%0d_d%0d_s%0d", i, j, k));
+          tx_seq.reg_model = reg_model;
+          tx_seq.num_bytes = 4;
+          if (!tx_seq.randomize()) `uvm_fatal("RAND", "TX seq randomization failed")
+          tx_seq.start(m_sequencer);
+          total_tx++;
+        end
+      end
+    end
+
+    `uvm_info("COV_SEQ", $sformatf(
+      "Coverage sweep complete: %0d configs, %0d TX bursts", total_configs, total_tx), UVM_LOW)
+  endtask
+endclass
+{% endif %}  {# /LCR+THR+LSR check for {{ spec.design_name }}_random_seq and cov_seq #}
 
 // -------------------------------------------------------------------------
 // UART Register HW Reset Sequence — validates reset values via RAL

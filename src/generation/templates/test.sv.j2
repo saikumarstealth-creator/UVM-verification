@@ -1,6 +1,12 @@
 // Enhanced UVM Tests for {{ spec.design_name }}
 // Includes: Base test, Register tests, protocol-specific tests
 {% set p = spec.protocol|default("wishbone") %}
+{% set addr_ints = [] %}
+{% for r in spec.registers %}
+{% set _ = addr_ints.append(r.address|int(base=16)) %}
+{% endfor %}
+{% set max_addr_val = addr_ints|max if addr_ints else 0 %}
+{% set addr_bits = [max_addr_val.bit_length(), 3]|max %}
 
 class {{ spec.design_name }}_base_test extends uvm_test;
   `uvm_component_utils({{ spec.design_name }}_base_test)
@@ -93,11 +99,47 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   endtask
 
   virtual task run_top_sequence();
-    {{ spec.design_name }}_all_regs_seq seq;
-    seq = {{ spec.design_name }}_all_regs_seq::type_id::create("seq");
+    uart_all_regs_seq seq;
+    seq = uart_all_regs_seq::type_id::create("seq");
     if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
     run_sequence_with_timeout(seq, 10ms);
+  endtask
+
+  // Helper: register write via RAL
+  protected task write_reg(bit [{{ addr_bits-1 }}:0] addr, bit [7:0] data);
+    uvm_reg_addr_t addrs[$];
+    uvm_reg regs[$];
+    reg_model.get_registers(regs);
+    foreach (regs[i]) begin
+      addrs = regs[i].get_addresses();
+      if (addrs.size() > 0 && addrs[0] == addr) begin
+        uvm_reg_data_t val = data;
+        reg_model.default_map.write(this, regs[i].get_address(), val);
+        return;
+      end
+    end
+    `uvm_warning("WR_REG", $sformatf("No register at address 0x%0h — using raw write", addr))
+    uvm_reg_data_t raw = data;
+    reg_model.default_map.write(this, addr, raw);
+  endtask
+
+  // Helper: register read via RAL
+  protected task read_reg(bit [{{ addr_bits-1 }}:0] addr, output bit [7:0] data);
+    uvm_reg_addr_t addrs[$];
+    uvm_reg regs[$];
+    uvm_reg_data_t val;
+    reg_model.get_registers(regs);
+    foreach (regs[i]) begin
+      addrs = regs[i].get_addresses();
+      if (addrs.size() > 0 && addrs[0] == addr) begin
+        reg_model.default_map.read(this, regs[i].get_address(), val);
+        data = val[7:0];
+        return;
+      end
+    end
+    reg_model.default_map.read(this, addr, val);
+    data = val[7:0];
   endtask
 
   protected task run_sequence_with_timeout(uvm_sequence_base seq, time timeout);
@@ -352,6 +394,24 @@ class {{ spec.design_name }}_interrupt_test extends {{ spec.design_name }}_base_
     int_seq.int_type = {{ spec.design_name }}_interrupt_seq::INT_TX_EMPTY;
     run_sequence_with_timeout(int_seq, 10ms);
     `uvm_info("TEST_INT", "Interrupt test completed", UVM_LOW)
+  endtask
+endclass
+
+class {{ spec.design_name }}_coverage_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_coverage_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_cov_seq cov_seq;
+    `uvm_info("TEST_COV", "Starting coverage sweep test", UVM_LOW)
+    cov_seq = {{ spec.design_name }}_cov_seq::type_id::create("cov_seq");
+    if (cov_seq == null) `uvm_fatal("SEQ", "Failed to create cov_seq")
+    cov_seq.reg_model = reg_model;
+    run_sequence_with_timeout(cov_seq, 50ms);
+    `uvm_info("TEST_COV", "Coverage sweep test completed", UVM_LOW)
   endtask
 endclass
 

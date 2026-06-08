@@ -66,7 +66,30 @@ registers:
     fields:
       - name: int_id
         bits: '3:0'
-        description: Interrupt ID
+        description: Interrupt ID (read-only)
+  - name: FCR
+    address: '0x02'
+    access: wo
+    description: FIFO Control Register (write-only, same addr as IIR)
+    fields:
+      - name: fifo_en
+        bits: '0'
+        description: FIFO enable
+      - name: rclr
+        bits: '1'
+        description: RCVR FIFO reset
+      - name: xclr
+        bits: '2'
+        description: XMIT FIFO reset
+      - name: dma
+        bits: '3'
+        description: DMA mode
+      - name: tig
+        bits: '6'
+        description: TX trigger (LSB)
+      - name: rtig
+        bits: '7'
+        description: RX trigger
   - name: LCR
     address: '0x03'
     access: rw
