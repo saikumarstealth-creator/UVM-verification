@@ -163,13 +163,12 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     {% set msb = parts[0]|int %}
     {% set lsb = parts[1]|int %}
     {% set f_width = msb - lsb + 1 %}
-  {% else %}
-    {% set f_width = f.bits|int %}
-    {% if f_width <= 0 %}{% set f_width = 1 %}{% endif %}
-    {% set msb = f_width - 1 %}
-    {% set lsb = 0 %}
-  {% endif %}
     {{ f.name|lower }}_cp: coverpoint data[{{ msb }}:{{ lsb }}] {
+  {% else %}
+    {% set bit_pos = f.bits|int %}
+    {% set f_width = 1 %}
+    {{ f.name|lower }}_cp: coverpoint data[{{ bit_pos }}] {
+  {% endif %}
       bins zero  = {0};
       bins max   = '1;
       bins others = default;
