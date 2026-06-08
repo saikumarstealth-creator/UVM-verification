@@ -145,6 +145,105 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   function void sample_loopback(int matches, int mismatches);
     {{ spec.design_name }}_loopback_cg.sample(matches, mismatches);
   endfunction
+
+  // -----------------------------------------------------------------------
+  // Reset coverage — sample register values after reset to confirm defaults
+  // -----------------------------------------------------------------------
+  covergroup reset_cg with function sample(bit [{{ addr_width-1 }}:0] addr, bit [{{ data_width-1 }}:0] data);
+    option.per_instance = 1;
+    cp_rst_addr: coverpoint addr;
+    cp_rst_data: coverpoint data {
+      bins zero    = {0};
+      bins nonzero = default;
+    }
+    cross_rst: cross cp_rst_addr, cp_rst_data;
+  endgroup
+
+  function void sample_reset(bit [{{ addr_width-1 }}:0] addr, bit [{{ data_width-1 }}:0] data);
+    reset_cg.sample(addr, data);
+  endfunction
+
+  // -----------------------------------------------------------------------
+  // FIFO depth coverage — occupancy bins: empty, half, full, overflow
+  // -----------------------------------------------------------------------
+  localparam FIFO_DEPTH = 16;
+
+  covergroup fifo_cg with function sample(int occupancy, bit fifo_en);
+    option.per_instance = 1;
+    cp_fifo_occupancy: coverpoint occupancy {
+      bins empty    = {0};
+      bins half     = {[1:FIFO_DEPTH/2]};
+      bins full     = {FIFO_DEPTH};
+      bins overflow = {[FIFO_DEPTH+1:$]};
+    }
+    cp_fifo_en: coverpoint fifo_en;
+    cross_fifo: cross cp_fifo_occupancy, cp_fifo_en;
+  endgroup
+
+  function void sample_fifo(int occupancy, bit fifo_en);
+    fifo_cg.sample(occupancy, fifo_en);
+  endfunction
+
+  // -----------------------------------------------------------------------
+  // IER × interrupt correlation — cross IER enable bits with IRQ type
+  // -----------------------------------------------------------------------
+  bit [{{ data_width-1 }}:0] captured_ier;
+
+  covergroup ier_interrupt_cg with function sample(
+    bit [{{ data_width-1 }}:0] ier_data, int int_type, bit irq_asserted
+  );
+    option.per_instance = 1;
+    cp_ier_erbfi: coverpoint ier_data[0];
+    cp_ier_etbei: coverpoint ier_data[1];
+    cp_ier_elsi:  coverpoint ier_data[2];
+    cp_ier_edssi: coverpoint ier_data[3];
+    cp_int_type: coverpoint int_type {
+      bins rx_data      = {0};
+      bins tx_empty     = {1};
+      bins line_status  = {2};
+      bins modem_status = {3};
+    }
+    cp_irq: coverpoint irq_asserted;
+    cross_erbfi_int: cross cp_ier_erbfi, cp_int_type, cp_irq;
+    cross_etbei_int: cross cp_ier_etbei, cp_int_type, cp_irq;
+    cross_elsi_int:  cross cp_ier_elsi,  cp_int_type, cp_irq;
+    cross_edssi_int: cross cp_ier_edssi, cp_int_type, cp_irq;
+  endgroup
+
+  function void sample_ier_interrupt(int int_type, bit irq_asserted);
+    ier_interrupt_cg.sample(captured_ier, int_type, irq_asserted);
+  endfunction
+
+  // -----------------------------------------------------------------------
+  // Error × LSR correlation — cross injected error type with LSR status flags
+  // -----------------------------------------------------------------------
+  bit [{{ data_width-1 }}:0] captured_lsr;
+
+  covergroup error_lsr_cg with function sample(
+    int err_type, bit hw_detected, bit lsr_pe, bit lsr_fe, bit lsr_oe
+  );
+    option.per_instance = 1;
+    cp_err_type: coverpoint err_type {
+      bins parity  = {0};
+      bins framing = {1};
+      bins brk     = {2};
+      bins overrun = {3};
+    }
+    cp_hw_detected: coverpoint hw_detected;
+    cp_lsr_pe: coverpoint lsr_pe;
+    cp_lsr_fe: coverpoint lsr_fe;
+    cp_lsr_oe: coverpoint lsr_oe;
+    cross_err_pe: cross cp_err_type, cp_hw_detected, cp_lsr_pe;
+    cross_err_fe: cross cp_err_type, cp_hw_detected, cp_lsr_fe;
+    cross_err_oe: cross cp_err_type, cp_hw_detected, cp_lsr_oe;
+  endgroup
+
+  function void sample_error_lsr(int err_type, bit hw_detected);
+    error_lsr_cg.sample(err_type, hw_detected,
+      captured_lsr[2],  // pe is bit 2 of LSR
+      captured_lsr[3],  // fe is bit 3 of LSR
+      captured_lsr[1]); // oe is bit 1 of LSR
+  endfunction
 {% endif %}
 
 {% if regs %}
@@ -196,6 +295,12 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
     {{ spec.design_name }}_interrupt_cg = new();
     {{ spec.design_name }}_error_cg = new();
     {{ spec.design_name }}_loopback_cg = new();
+    reset_cg = new();
+    fifo_cg = new();
+    ier_interrupt_cg = new();
+    error_lsr_cg = new();
+    captured_ier = 0;
+    captured_lsr = 0;
 {% endif %}
 {% if regs %}
 {% for r in regs %}
@@ -214,6 +319,16 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
       reg_{{ r.name|lower }}_cg.sample(item.we, item.data);
     end
 {% endfor %}
+{% endif %}
+{% if p == "uart" %}
+    // Capture IER data for IER × interrupt cross-coverage
+    if (item.addr == {{ addr_width }}'h01) begin
+      captured_ier = item.data;
+    end
+    // Capture LSR data for error × LSR correlation
+    if (item.addr == {{ addr_width }}'h05) begin
+      captured_lsr = item.data;
+    end
 {% endif %}
   endfunction
 endclass
