@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from src.config import ConfigLoader, DesignSpec, PipelineConfig
 from src.data.collector import SpecCollector
@@ -20,6 +23,7 @@ from src.models.enhanced_ml_model_v2 import EnhancedMLGenerationModelV2
 from src.models.ml_generation_model import MLGenerationModel, MLModelConfig
 from src.models.registry import ModelRegistry
 from src.models.template_model import TemplateModel
+from src.models.coverage_predictor import SpecFeatures
 from src.simulation import Simulator
 from src.simulation.base import CoverageDB
 from src.simulation.icarus import IcarusSimulator
@@ -30,6 +34,8 @@ from src.evaluation.cross_file_validator import validate_generated_files
 from src.tracking.experiments import ExperimentTracker
 from src.tracking.logger import setup_logging
 from src.utils.decorators import timer
+
+logger = logging.getLogger("uvmgen.pipeline")
 
 
 def generate_coverage_html_report(path: str, spec: DesignSpec, qs: QualityScore,
@@ -579,6 +585,17 @@ class TBPipeline:
                     self.coverage_analysis = self.coverage_analyzer.analyze(sim_result)
                     self.logger.info("Coverage analysis: %s", self.coverage_analysis.summary())
 
+                    # 6d1. Feed real coverage data back to ML coverage predictor
+                    if sim_result and sim_result.coverage_pct is not None:
+                        try:
+                            cov_feat = SpecFeatures.from_spec(design_spec)
+                            actual_cov = sim_result.coverage_pct / 100.0
+                            if hasattr(self.model, '_coverage_predictor') and self.model._coverage_predictor:
+                                self.model._coverage_predictor.update_online(cov_feat.to_array(), actual_cov)
+                                self.logger.info("Coverage predictor updated with real data: %.1f%%", sim_result.coverage_pct)
+                        except Exception as e:
+                            self.logger.warning("Coverage predictor online update skipped: %s", e)
+
                     # Update metrics with simulation data
                     eval_metrics.update(self.metrics_calc.coverage_gap_metrics(self.coverage_analysis))
 
@@ -659,7 +676,16 @@ class TBPipeline:
                              all_versions[-2], all_versions[-1],
                              version_comparison.get("metric_deltas", {}))
 
-        # 8. Coverage trend
+        # 8. Model checkpoint save after training
+        if auto_train.enabled and hasattr(self.model, 'save'):
+            try:
+                checkpoint_path = os.path.join(self.cfg.generation.output_dir, "model_checkpoint.json")
+                self.model.save(checkpoint_path)
+                self.logger.info("Model checkpoint saved to %s", checkpoint_path)
+            except Exception as e:
+                self.logger.warning("Model checkpoint save failed: %s", e)
+
+        # 9. Coverage trend
         trend = self.registry.coverage_trend() if auto_train.enabled else []
 
         # Collect ML coverage prediction from model

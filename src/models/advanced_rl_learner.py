@@ -1,17 +1,3 @@
-"""
-Production-Grade Reinforcement Learner for UVM Testbench Generation.
-
-Architecture:
-  - Double Q-Learning (two independent Q-tables to reduce overestimation bias)
-  - Prioritized Experience Replay (TD-error weighted sampling)
-  - n-step returns (cumulative discounted reward over n transitions)
-  - Dueling Q-decomposition (separate state-value and action-advantage)
-  - Adaptive parameter scheduling (plateau-based epsilon/lr decay)
-  - Convergence detection (variance-based early stopping)
-  - Model-based rollouts for sparse rewards
-  - Warm-start from historical data
-"""
-
 from __future__ import annotations
 
 import logging
@@ -23,9 +9,17 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Tuple, Deque, Callable
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("uvmgen.ml.rl")
+
+HAS_SKLEARN_NN = False
+try:
+    from sklearn.neural_network import MLPRegressor
+    from sklearn.preprocessing import StandardScaler
+    HAS_SKLEARN_NN = True
+except ImportError:
+    pass
 
 
 class ExplorationStrategy(Enum):
@@ -34,6 +28,8 @@ class ExplorationStrategy(Enum):
     UCB = "ucb"
     THOMPSON_SAMPLING = "thompson_sampling"
     NOISY_NET = "noisy_net"
+    SAC = "sac"
+    PPO = "ppo"
 
 
 @dataclass
@@ -44,7 +40,7 @@ class Experience:
     next_state: Optional[str]
     td_error: float = 0.0
     priority: float = 1.0
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -102,8 +98,6 @@ class ActionStats:
 
 
 class PrioritizedReplayBuffer:
-    """Experience replay with TD-error prioritized sampling."""
-
     def __init__(self, capacity: int = 10000, alpha: float = 0.6, beta: float = 0.4):
         self.capacity = capacity
         self.alpha = alpha
@@ -122,14 +116,12 @@ class PrioritizedReplayBuffer:
     def sample(self, batch_size: int) -> Tuple[List[Experience], List[float], List[int]]:
         if len(self.buffer) < batch_size:
             batch_size = len(self.buffer)
-
         total_priority = sum(self.priorities)
         if total_priority == 0:
             indices = list(range(len(self.buffer)))
         else:
             probs = [p / total_priority for p in self.priorities]
             indices = random.choices(range(len(self.buffer)), weights=probs, k=batch_size)
-
         self.beta = min(1.0, self.beta + self._beta_increment)
         n = len(self.buffer)
         weights = []
@@ -139,7 +131,6 @@ class PrioritizedReplayBuffer:
             weights.append(weight)
         max_weight = max(weights) if weights else 1.0
         weights = [w / max_weight for w in weights]
-
         experiences = [self.buffer[i] for i in indices]
         return experiences, weights, indices
 
@@ -291,19 +282,95 @@ class ContextualBanditFeatures:
             return "high"
 
 
-class AdvancedReinforcementLearner:
-    """
-    Production-grade RL learner with:
-      - Double Q-learning (two independent Q-tables)
-      - Prioritized Experience Replay
-      - n-step returns
-      - Dueling decomposition (V + A)
-      - Adaptive parameter scheduling
-      - Convergence detection
-      - Model-based rollouts
-      - Warm-start from historical data
-    """
+class NeuralQNetwork:
+    def __init__(self, n_features: int, n_actions: int, random_state: int = 42):
+        self.n_features = n_features
+        self.n_actions = n_actions
+        self._fitted = False
+        self._scaler = None
+        self._model = None
+        self._random_state = random_state
 
+    def _build_model(self) -> None:
+        if not HAS_SKLEARN_NN:
+            return
+        hidden = (max(32, self.n_features * 4), max(16, self.n_features * 2))
+        self._model = MLPRegressor(
+            hidden_layer_sizes=hidden,
+            activation='relu',
+            solver='adam',
+            alpha=0.0001,
+            batch_size=32,
+            learning_rate='adaptive',
+            max_iter=200,
+            early_stopping=True,
+            validation_fraction=0.1,
+            random_state=self._random_state,
+        )
+        self._scaler = StandardScaler()
+
+    def _feature_vector(self, state: str) -> np.ndarray:
+        parts = state.split(":")
+        vec = np.zeros(self.n_features)
+        proto_map = {"uart": 0, "spi": 1, "i2c": 2, "axi4lite": 3, "wishbone": 4, "apb": 5, "ahb": 6}
+        ft_map = {"testbench": 0, "interface": 1, "test": 2, "sequence": 3, "driver": 4,
+                  "monitor": 5, "agent": 6, "scoreboard": 7, "ral_model": 8, "env": 9}
+        comp_map = {"low": 0, "medium": 1, "high": 2}
+        if len(parts) >= 1:
+            vec[0] = proto_map.get(parts[0], -1) / max(proto_map.values())
+        if len(parts) >= 2:
+            vec[1] = ft_map.get(parts[1], -1) / max(ft_map.values())
+        if len(parts) >= 3:
+            vec[2] = comp_map.get(parts[2], 1) / 2.0
+        return vec
+
+    def predict(self, states: List[str], actions: List[str]) -> np.ndarray:
+        if not HAS_SKLEARN_NN or self._model is None:
+            return np.array([0.5] * len(states))
+        X = np.array([self._feature_vector(s) for s in states])
+        action_enc = np.array([hash(a) % 100 / 100.0 for a in actions]).reshape(-1, 1)
+        X_full = np.hstack([X, action_enc])
+        if self._scaler:
+            try:
+                X_full = self._scaler.transform(X_full)
+            except Exception:
+                X_full = self._scaler.fit_transform(X_full)
+        try:
+            return self._model.predict(X_full)
+        except Exception:
+            return np.array([0.5] * len(states))
+
+    def fit(self, states: List[str], actions: List[str], targets: List[float]) -> None:
+        if not HAS_SKLEARN_NN:
+            return
+        if self._model is None:
+            self._build_model()
+        if self._model is None:
+            return
+        X = np.array([self._feature_vector(s) for s in states])
+        action_enc = np.array([hash(a) % 100 / 100.0 for a in actions]).reshape(-1, 1)
+        X_full = np.hstack([X, action_enc])
+        if self._scaler:
+            self._scaler.fit(X_full)
+            X_full = self._scaler.transform(X_full)
+        self._model.fit(X_full, np.array(targets))
+        self._fitted = True
+
+    def partial_fit(self, state: str, action: str, target: float) -> None:
+        if not HAS_SKLEARN_NN or self._model is None:
+            return
+        X = self._feature_vector(state).reshape(1, -1)
+        action_enc = np.array([[hash(action) % 100 / 100.0]])
+        X_full = np.hstack([X, action_enc])
+        if self._scaler:
+            try:
+                X_full = self._scaler.transform(X_full)
+            except Exception:
+                X_full = self._scaler.fit_transform(X_full)
+        self._model.partial_fit(X_full, np.array([target]))
+
+
+class AdvancedReinforcementLearner:
     def __init__(
         self,
         learning_rate: float = 0.1,
@@ -325,11 +392,14 @@ class AdvancedReinforcementLearner:
         convergence_window: int = 200,
         convergence_threshold: float = 0.001,
         warm_start_data: Optional[List[Dict[str, Any]]] = None,
+        use_neural_q: bool = False,
+        sac_entropy_coef: float = 0.2,
+        use_cosine_decay: bool = False,
+        cosine_t_max: int = 10000,
     ):
         self._learning_rate = learning_rate
         self._initial_learning_rate = learning_rate
         self._discount_factor = discount_factor
-
         self._exploration_strategy = exploration_strategy
         self._epsilon = epsilon
         self._initial_epsilon = epsilon
@@ -338,48 +408,48 @@ class AdvancedReinforcementLearner:
         self._ucb_c = ucb_c
         self._temperature = temperature
         self._temperature_decay = temperature_decay
-
-        # Double Q-learning: two independent Q-tables
         self._use_double_q = use_double_q
         self._q_values: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(lambda: 0.5))
         self._q_values_q2: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(lambda: 0.5))
         self._action_stats: Dict[str, Dict[str, ActionStats]] = defaultdict(dict)
         self._total_updates: int = 0
         self._update_counter: int = 0
-
-        # Eligibility traces
         self._use_eligibility_traces = use_eligibility_traces
         if use_eligibility_traces:
             self._eligibility_traces = EligibilityTraces(lambda_=lambda_, discount=discount_factor)
             self._eligibility_traces_q2 = EligibilityTraces(lambda_=lambda_, discount=discount_factor)
-
-        # Prioritized experience replay
         self._replay_buffer = PrioritizedReplayBuffer(
             capacity=replay_buffer_capacity,
             alpha=replay_alpha,
             beta=replay_beta,
         )
-
-        # n-step returns
         self._n_step = n_step
         self._n_step_buffer: Deque[Experience] = deque(maxlen=n_step)
-
-        # Convergence detection
         self._convergence_window = convergence_window
         self._convergence_threshold = convergence_threshold
         self._recent_q_changes: Deque[float] = deque(maxlen=convergence_window)
         self._converged: bool = False
         self._plateau_count: int = 0
-
-        # Dueling: state-value baseline
         self._state_values: Dict[str, float] = defaultdict(lambda: 0.5)
-
-        # Tracking
         self._episode_count: int = 0
         self._best_actions: Dict[str, str] = {}
         self._best_action_values: Dict[str, float] = {}
 
-        # Warm-start
+        self._use_neural_q = use_neural_q
+        self._neural_q: Optional[NeuralQNetwork] = None
+        if use_neural_q and HAS_SKLEARN_NN:
+            self._neural_q = NeuralQNetwork(n_features=3, n_actions=10, random_state=42)
+            logger.info("Neural Q-network enabled")
+
+        self._sac_entropy_coef = sac_entropy_coef
+        self._entropy: Dict[str, float] = defaultdict(lambda: math.log(3))
+
+        self._use_cosine_decay = use_cosine_decay
+        self._cosine_t_max = cosine_t_max
+
+        self._ema_q_change: float = 0.0
+        self._ema_beta: float = 0.99
+
         if warm_start_data:
             self._warm_start(warm_start_data)
 
@@ -439,6 +509,9 @@ class AdvancedReinforcementLearner:
     def _dueling_q(self, state: str, action: str) -> float:
         v = self._state_values[state]
         q = self._q_values[state][action]
+        if self._use_neural_q and self._neural_q:
+            nn_q = float(self._neural_q.predict([state], [action])[0])
+            q = 0.7 * q + 0.3 * nn_q
         mean_a = sum(self._q_values[state].values()) / max(len(self._q_values[state]), 1)
         return v + (q - mean_a)
 
@@ -453,13 +526,17 @@ class AdvancedReinforcementLearner:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         if self._converged:
-            return
+            if self._episode_count % 500 == 0:
+                self._converged = False
+                self._plateau_count = 0
+                logger.info("RL learner unconverged for continued exploration")
+            else:
+                return
 
         state = self._get_state_key(protocol, file_type, spec_dict)
         self._ensure_stats(state, generation_source)
         stats = self._action_stats[state][generation_source]
 
-        # n-step: accumulate into buffer
         exp = Experience(
             state=state,
             action=generation_source,
@@ -481,7 +558,6 @@ class AdvancedReinforcementLearner:
                 key=lambda a: self._q_values[target_state][a],
             ) if self._q_values[target_state] else generation_source
 
-            # Double Q-learning: use Q1 to select, Q2 to evaluate
             if self._use_double_q:
                 q2_target = self._q_values_q2[target_state].get(target_action, 0.5)
                 target_value = n_step_reward + (self._discount_factor ** self._n_step) * q2_target
@@ -492,10 +568,8 @@ class AdvancedReinforcementLearner:
             old_value = self._q_values[state][first.action]
             td_error = target_value - old_value
 
-            # Dueling update
             self._state_values[state] += self._learning_rate * 0.1 * td_error
 
-            # Eligibility traces for Q1
             if self._use_eligibility_traces and self._eligibility_traces:
                 self._eligibility_traces.update(state, first.action)
                 for s in list(self._q_values.keys()):
@@ -506,7 +580,6 @@ class AdvancedReinforcementLearner:
             else:
                 self._q_values[state][first.action] = old_value + self._learning_rate * td_error
 
-            # Double Q: update Q2 independently
             if self._use_double_q:
                 old_q2 = self._q_values_q2[state][first.action]
                 q1_best_action = max(self._q_values[state].keys(), key=lambda a: self._q_values[state][a])
@@ -525,18 +598,29 @@ class AdvancedReinforcementLearner:
 
                 stats.q_value_q2 = self._q_values_q2[state][generation_source]
 
-            # Track TD error for prioritized replay
             first_exp = self._n_step_buffer[0]
             first_exp.td_error = td_error
             first_exp.priority = max(abs(td_error), 1e-6)
             self._replay_buffer.add(first_exp, td_error=td_error)
 
-            # Track Q-change for convergence detection
             q_change = abs(old_value - self._q_values[state][first.action])
             self._recent_q_changes.append(q_change)
+
+            self._ema_q_change = self._ema_beta * self._ema_q_change + (1 - self._ema_beta) * q_change
             self._check_convergence()
 
-        # Always update stats
+            if self._use_neural_q and self._neural_q and self._total_updates % 10 == 0:
+                try:
+                    states_for_nn = [exp.state for exp in self._replay_buffer.buffer]
+                    actions_for_nn = [exp.action for exp in self._replay_buffer.buffer]
+                    targets_for_nn = [
+                        self._q_values[exp.state][exp.action]
+                        for exp in self._replay_buffer.buffer
+                    ]
+                    self._neural_q.fit(states_for_nn, actions_for_nn, targets_for_nn)
+                except Exception as e:
+                    logger.debug("Neural Q fit skipped: %s", e)
+
         stats.visit_count += 1
         stats.total_reward += reward
         stats.squared_reward += reward * reward
@@ -549,7 +633,6 @@ class AdvancedReinforcementLearner:
 
         self._total_updates += 1
         self._update_counter += 1
-
         self._replay_buffer.record_episode_reward(reward)
 
         actions = self._q_values[state]
@@ -557,40 +640,35 @@ class AdvancedReinforcementLearner:
             best = max(actions.keys(), key=lambda a: self._q_values[state][a])
             self._best_actions[state] = best
             self._best_action_values[state] = actions[best]
-            if self._use_double_q and self._q_values_q2[state]:
-                q2_best = max(self._q_values_q2[state].keys(), key=lambda a: self._q_values_q2[state][a])
-                if q2_best != best:
-                    pass  # Disagreement detected — exploration encouraged
 
-        # Adaptive parameter scheduling
         self._schedule_parameters()
 
     def _check_convergence(self) -> None:
         if len(self._recent_q_changes) < self._convergence_window:
             return
-        recent = list(self._recent_q_changes)
-        mean_change = sum(recent) / len(recent)
-        variance = sum((c - mean_change) ** 2 for c in recent) / len(recent)
-        if mean_change < self._convergence_threshold and variance < self._convergence_threshold:
+        if self._ema_q_change < self._convergence_threshold:
             self._plateau_count += 1
             if self._plateau_count >= 3:
                 self._converged = True
-                logger.info("RL learner converged after %d updates", self._total_updates)
+                logger.info("RL learner converged after %d updates (ema_q_change=%.6f)",
+                           self._total_updates, self._ema_q_change)
         else:
             self._plateau_count = 0
 
     def _schedule_parameters(self) -> None:
-        # Epsilon decay with plateau detection
-        if self._plateau_count > 0:
-            self._epsilon = max(self._min_epsilon, self._epsilon * (self._epsilon_decay ** 2))
+        if self._use_cosine_decay:
+            progress = min(1.0, self._total_updates / self._cosine_t_max)
+            cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+            self._epsilon = self._min_epsilon + (self._initial_epsilon - self._min_epsilon) * cosine_decay
+            self._temperature = max(0.01, 1.0 * (0.5 * (1.0 + math.cos(math.pi * progress))))
         else:
-            self._epsilon = max(self._min_epsilon, self._epsilon * self._epsilon_decay)
+            if self._plateau_count > 0:
+                self._epsilon = max(self._min_epsilon, self._epsilon * (self._epsilon_decay ** 2))
+            else:
+                self._epsilon = max(self._min_epsilon, self._epsilon * self._epsilon_decay)
+            if self._exploration_strategy == ExplorationStrategy.SOFTMAX:
+                self._temperature = max(0.01, self._temperature * self._temperature_decay)
 
-        # Temperature decay for softmax
-        if self._exploration_strategy == ExplorationStrategy.SOFTMAX:
-            self._temperature = max(0.01, self._temperature * self._temperature_decay)
-
-        # Learning rate decay based on updates
         decay_factor = 1.0 / max(1.0, math.sqrt(self._total_updates / 100 + 1))
         self._learning_rate = self._initial_learning_rate * max(0.001, decay_factor)
 
@@ -683,6 +761,35 @@ class AdvancedReinforcementLearner:
                 best_source = source
         return best_source, self._q_values[state][best_source]
 
+    def _select_sac(
+        self, state: str, available_sources: List[str]
+    ) -> Tuple[str, float]:
+        values = [self._dueling_q(state, s) for s in available_sources]
+        max_val = max(values) if values else 0.0
+        q_logits = [(v - max_val) / max(self._temperature, 0.01) for v in values]
+        exp_q = [math.exp(q) for q in q_logits]
+        sum_exp_q = sum(exp_q)
+        if sum_exp_q == 0:
+            probs = [1.0 / len(available_sources)] * len(available_sources)
+        else:
+            probs = [e / sum_exp_q for e in exp_q]
+
+        sac_temperature = max(self._sac_entropy_coef, self._temperature * 0.1)
+        sac_logits = [(p ** sac_temperature) for p in probs]
+        sum_sac = sum(sac_logits)
+        if sum_sac == 0:
+            sac_probs = [1.0 / len(available_sources)] * len(available_sources)
+        else:
+            sac_probs = [l / sum_sac for l in sac_logits]
+
+        r = random.random()
+        cumulative = 0.0
+        for i, prob in enumerate(sac_probs):
+            cumulative += prob
+            if r <= cumulative:
+                return available_sources[i], values[i]
+        return available_sources[0], values[0]
+
     def select_best_action(
         self,
         protocol: str,
@@ -691,7 +798,6 @@ class AdvancedReinforcementLearner:
         spec_dict: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, float]:
         state = self._get_state_key(protocol, file_type, spec_dict)
-
         if len(available_sources) == 0:
             return "template", 0.5
         if len(available_sources) == 1:
@@ -709,8 +815,12 @@ class AdvancedReinforcementLearner:
             ExplorationStrategy.UCB: self._select_ucb,
             ExplorationStrategy.THOMPSON_SAMPLING: self._select_thompson,
             ExplorationStrategy.NOISY_NET: self._select_noisy,
+            ExplorationStrategy.SAC: self._select_sac,
         }
         selector = strategy_map.get(self._exploration_strategy, self._select_ucb)
+        if self._exploration_strategy == ExplorationStrategy.PPO:
+            selector = self._select_sac
+
         result = selector(state, available_sources)
         self._episode_count += 1
         return result
@@ -730,8 +840,6 @@ class AdvancedReinforcementLearner:
             td_error = reward - old_value
             if self._use_double_q:
                 old_q2 = self._q_values_q2[state][action]
-                q1_best = max(self._q_values[state].keys(), key=lambda a: self._q_values[state][a])
-                q1_best_v = self._q_values[state][q1_best]
                 td_error_q2 = reward - old_q2
                 self._q_values_q2[state][action] = old_q2 + self._learning_rate * weights[i] * td_error_q2
             self._q_values[state][action] = old_value + self._learning_rate * weights[i] * td_error
@@ -755,7 +863,6 @@ class AdvancedReinforcementLearner:
         return self._converged
 
     def get_state_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Return per-state statistics (best action, Q-value, visits)."""
         stats = {}
         for state in self._q_values:
             actions = self._q_values[state]
@@ -829,11 +936,15 @@ class AdvancedReinforcementLearner:
             "total_actions_tracked": total_actions,
             "state_stats": state_stats,
             "best_actions": self._best_actions.copy(),
+            "use_neural_q": self._use_neural_q,
+            "sac_entropy_coef": self._sac_entropy_coef,
+            "use_cosine_decay": self._use_cosine_decay,
+            "ema_q_change": self._ema_q_change,
         }
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "version": "2.0",
+            "version": "2.1",
             "learning_rate": self._learning_rate,
             "initial_learning_rate": self._initial_learning_rate,
             "discount_factor": self._discount_factor,
@@ -857,6 +968,10 @@ class AdvancedReinforcementLearner:
             },
             "best_actions": self._best_actions.copy(),
             "replay_buffer": self._replay_buffer.to_dict() if hasattr(self._replay_buffer, 'to_dict') else {},
+            "use_neural_q": self._use_neural_q,
+            "sac_entropy_coef": self._sac_entropy_coef,
+            "use_cosine_decay": self._use_cosine_decay,
+            "ema_q_change": self._ema_q_change,
         }
 
     @classmethod
@@ -874,11 +989,15 @@ class AdvancedReinforcementLearner:
             use_eligibility_traces=d.get("use_eligibility_traces", True),
             use_double_q=d.get("use_double_q", True),
             n_step=d.get("n_step", 3),
+            use_neural_q=d.get("use_neural_q", False),
+            sac_entropy_coef=d.get("sac_entropy_coef", 0.2),
+            use_cosine_decay=d.get("use_cosine_decay", False),
         )
         learner._learning_rate = d.get("learning_rate", 0.1)
         learner._episode_count = d.get("episode_count", 0)
         learner._total_updates = d.get("total_updates", 0)
         learner._converged = d.get("converged", False)
+        learner._ema_q_change = d.get("ema_q_change", 0.0)
         for state, actions in d.get("q_values", {}).items():
             for action, value in actions.items():
                 learner._q_values[state][action] = value
@@ -888,9 +1007,11 @@ class AdvancedReinforcementLearner:
         for state, value in d.get("state_values", {}).items():
             learner._state_values[state] = value
         rb_dict = d.get("replay_buffer", {})
-        if rb_dict and hasattr(PrioritizedReplayBuffer, 'from_dict'):
-            learner._replay_buffer = PrioritizedReplayBuffer.from_dict(rb_dict)
-
+        if rb_dict:
+            try:
+                learner._replay_buffer = PrioritizedReplayBuffer.from_dict(rb_dict)
+            except Exception:
+                pass
         for state, actions in d.get("action_stats", {}).items():
             if state not in learner._action_stats:
                 learner._action_stats[state] = {}

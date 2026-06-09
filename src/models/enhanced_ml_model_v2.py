@@ -20,18 +20,28 @@ import math
 import os
 import time
 import pickle
+import itertools
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
+
+import numpy as np
 
 from src.models.base_model import GenerationModel
 from src.models.template_model import TemplateModel
 from src.models.coverage_predictor import CoveragePredictor, SpecFeatures
 from src.config import PipelineConfig, DesignSpec
+
+HAS_OPTUNA = False
+try:
+    import optuna
+    HAS_OPTUNA = True
+except ImportError:
+    pass
 
 
 def _retry_with_backoff(
@@ -152,11 +162,32 @@ class StrategyWeights:
             ensemble_weight=self.ensemble_weight / total,
         )
 
+    def to_dict(self) -> Dict[str, float]:
+        return {
+            "retrieval": self.retrieval_weight,
+            "llm": self.llm_weight,
+            "template": self.template_weight,
+            "ensemble": self.ensemble_weight,
+        }
+
+    def adapt(self, strategy_performance: Dict[str, float], lr: float = 0.05) -> None:
+        if not strategy_performance:
+            return
+        for key, attr in [("retrieval", "retrieval_weight"), ("llm", "llm_weight"),
+                          ("template", "template_weight"), ("ensemble", "ensemble_weight")]:
+            if key in strategy_performance:
+                current = getattr(self, attr)
+                delta = lr * (strategy_performance[key] - 0.5)
+                setattr(self, attr, max(0.05, min(0.8, current + delta)))
+        norm = self.normalize()
+        self.retrieval_weight = norm.retrieval_weight
+        self.llm_weight = norm.llm_weight
+        self.template_weight = norm.template_weight
+        self.ensemble_weight = norm.ensemble_weight
+
 
 class MetricsTracker:
-    """Tracks generation metrics over time."""
-
-    def __init__(self, max_history: int = 1000):
+    def __init__(self, max_history: int = 2000):
         self._history: List[Dict[str, Any]] = []
         self._max_history = max_history
         self._strategy_stats: Dict[str, Dict[str, float]] = defaultdict(lambda: {
@@ -175,6 +206,13 @@ class MetricsTracker:
         s["avg_score"] = (s["avg_score"] * (s["runs"] - 1) + entry.get("score", 0.0)) / s["runs"]
         s["avg_latency"] = (s["avg_latency"] * (s["runs"] - 1) + entry.get("latency_ms", 0.0)) / s["runs"]
 
+    def get_strategy_performance(self) -> Dict[str, float]:
+        return {
+            name: stats["avg_score"]
+            for name, stats in self._strategy_stats.items()
+            if stats["runs"] > 0
+        }
+
     def get_summary(self, n_recent: int = 50) -> Dict[str, Any]:
         recent = self._history[-n_recent:] if self._history else []
         passed = sum(1 for h in recent if h.get("passed", False))
@@ -184,6 +222,7 @@ class MetricsTracker:
             "recent_pass_rate": passed / len(recent) if recent else 0.0,
             "recent_avg_score": sum(h.get("score", 0.0) for h in recent) / len(recent) if recent else 0.0,
             "strategy_stats": dict(self._strategy_stats),
+            "strategy_performance": self.get_strategy_performance(),
         }
 
 
@@ -277,8 +316,12 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         quality_threshold: float = 0.6,
         enable_caching: bool = True,
         cache_ttl: int = 86400,
+        enable_adaptive_weights: bool = True,
+        enable_auto_tune: bool = False,
+        use_neural_rl: bool = False,
+        sac_entropy_coef: float = 0.2,
+        use_cosine_decay: bool = True,
     ):
-        # Accept PipelineConfig as first positional arg (test compatibility)
         if isinstance(name, PipelineConfig):
             cfg = name
             name_str = "enhanced_ml_model_v2"
@@ -306,6 +349,8 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self._max_concurrent = max_concurrent_strategies
         self._quality_threshold = quality_threshold
         self._enable_caching = enable_caching
+        self._enable_adaptive_weights = enable_adaptive_weights
+        self._enable_auto_tune = enable_auto_tune
 
         self._template_model = TemplateModel(templates_dir=templates_dir)
         self._index: Optional[SimilarityIndex] = None
@@ -324,20 +369,22 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self.last_coverage_prediction: Optional[Dict[str, Any]] = None
         self._generation_history: List[Dict[str, Any]] = []
         self._model_version: int = 1
+        self._changelog: List[str] = []
 
         strategy_map = {
             "epsilon_greedy": ExplorationStrategy.EPSILON_GREEDY,
             "softmax": ExplorationStrategy.SOFTMAX,
             "ucb": ExplorationStrategy.UCB,
             "thompson": ExplorationStrategy.THOMPSON_SAMPLING,
+            "sac": ExplorationStrategy.SAC,
         }
         self._exploration_strategy = strategy_map.get(
             exploration_strategy.lower(), ExplorationStrategy.UCB
         )
         self._strategy_weights = StrategyWeights()
-        self._initialize_components()
+        self._initialize_components(use_neural_rl=use_neural_rl, sac_entropy_coef=sac_entropy_coef, use_cosine_decay=use_cosine_decay)
 
-    def _initialize_components(self) -> None:
+    def _initialize_components(self, use_neural_rl: bool = False, sac_entropy_coef: float = 0.2, use_cosine_decay: bool = True) -> None:
         if HAS_ADVANCED:
             self._extractor = RichSpecFeatureExtractor()
             self._index = SimilarityIndex()
@@ -345,16 +392,21 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             self._vectorizer = HybridVectorizer()
             if self._use_learning:
                 self._pattern_learner = AdvancedPatternLearner()
-                self._rl_learner = AdvancedReinforcementLearner(
-                    exploration_strategy=self._exploration_strategy,
-                    use_eligibility_traces=True,
-                    replay_buffer_capacity=100000,
-                )
+                rl_kwargs = {
+                    "exploration_strategy": self._exploration_strategy,
+                    "use_eligibility_traces": True,
+                    "replay_buffer_capacity": 100000,
+                    "use_neural_q": use_neural_rl,
+                    "sac_entropy_coef": sac_entropy_coef,
+                    "use_cosine_decay": use_cosine_decay,
+                }
+                self._rl_learner = AdvancedReinforcementLearner(**rl_kwargs)
             if self._learning_storage_path and os.path.exists(self._learning_storage_path):
                 self._load_learning_state()
             logger.info(
-                "EnhancedMLGenerationModelV2 v%d initialized (strategy=%s, ensemble=%d strategies)",
+                "EnhancedMLGenerationModelV2 v%d initialized (strategy=%s, ensemble=%d strats, neural_rl=%s, adaptive_weights=%s, auto_tune=%s)",
                 self._model_version, self._exploration_strategy.value, self._max_concurrent,
+                use_neural_rl, self._enable_adaptive_weights, self._enable_auto_tune,
             )
         else:
             logger.warning("Advanced components not available, using template fallback only")
@@ -380,6 +432,63 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             self._vectorizer.fit(all_features)
         logger.info("Trained on %d specs (index=%d)", len(specs), len(self._index))
         return {"index_size": len(self._index), "model_name": self.name}
+
+    def train_on_real_data(
+        self,
+        features: List[np.ndarray],
+        coverage_targets: List[float],
+        auto_tune: bool = False,
+    ) -> Dict[str, Any]:
+        result = self._coverage_predictor.train_real(features, coverage_targets, auto_tune=auto_tune)
+        self._model_version += 1
+        self._changelog.append(f"v{self._model_version}: trained on {len(features)} real samples (auto_tune={auto_tune})")
+        logger.info("Real-data training: v%d, %d samples", self._model_version, len(features))
+        return {
+            "model_version": self._model_version,
+            "samples": len(features),
+            "models": list(self._coverage_predictor._models.keys()),
+            "best_score": self._coverage_predictor._best_score,
+        }
+
+    def auto_tune_hyperparams(self, specs: List[DesignSpec]) -> Dict[str, Any]:
+        if not HAS_OPTUNA or not HAS_ADVANCED:
+            return {"error": "optuna not available"}
+        if not specs:
+            return {"error": "no specs provided"}
+
+        self._extractor = RichSpecFeatureExtractor()
+
+        def objective(trial):
+            n_estimators = trial.suggest_int("n_estimators", 50, 300)
+            max_depth = trial.suggest_int("max_depth", 3, 15)
+            min_samples_leaf = trial.suggest_int("min_samples_leaf", 2, 8)
+            similarity_threshold = trial.suggest_float("similarity_threshold", 0.3, 0.9)
+            top_k = trial.suggest_int("top_k", 2, 7)
+            quality_threshold = trial.suggest_float("quality_threshold", 0.4, 0.8)
+
+            from src.models.ml_utils import HybridVectorizer
+            local_vectorizer = HybridVectorizer()
+            texts = []
+            for spec in specs:
+                fv = self._extractor.extract(spec)
+                texts.append(fv.to_text_repr())
+            if texts:
+                local_vectorizer.fit(texts)
+            score = 0.0
+            for spec in specs:
+                fv = self._extractor.extract(spec)
+                if self._index and len(self._index) > 0:
+                    results = self._index.search(fv, top_k=top_k, min_similarity=similarity_threshold)
+                    score += len(results) / max(1, top_k) * 0.3
+            return score / max(1, len(specs))
+
+        study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=42))
+        study.optimize(objective, n_trials=15, timeout=60)
+        best = study.best_params
+        self._quality_threshold = best.get("quality_threshold", self._quality_threshold)
+        self._changelog.append(f"v{self._model_version}: auto-tuned params {best}")
+        logger.info("Auto-tune complete: %s (score=%.4f)", best, study.best_value)
+        return {"best_params": best, "best_score": study.best_value, "trials": len(study.trials)}
 
     def predict(
         self,
@@ -549,8 +658,8 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if cfg is None:
             from src.config import GenerationConfig, MLConfig
             strategy_name = self._exploration_strategy.value if hasattr(self._exploration_strategy, 'value') else "ucb"
-            # Reverse-map enum value to MLConfig-accepted string
-            rev = {"epsilon_greedy": "epsilon_greedy", "softmax": "softmax", "ucb": "ucb", "thompson_sampling": "thompson"}
+            rev = {"epsilon_greedy": "epsilon_greedy", "softmax": "softmax", "ucb": "ucb",
+                   "thompson_sampling": "thompson", "sac": "sac"}
             strategy_name = rev.get(strategy_name, "ucb")
             cfg = PipelineConfig(
                 generation=GenerationConfig(templates_dir=self._templates_dir),
@@ -967,17 +1076,26 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             cov_pct = self.last_coverage_prediction.get("coverage", {}).get("expected", 50)
             cov_bonus = 0.3 if cov_pct >= 80 else (0.1 if cov_pct >= 60 else (-0.2 if cov_pct < 40 else 0.0))
 
-        reward = (1.0 if passed else -0.5) + cov_bonus
+        latency_bonus = 0.0
+        if final_result.latency_ms > 0:
+            if final_result.latency_ms < 1000:
+                latency_bonus = 0.05
+            elif final_result.latency_ms > 10000:
+                latency_bonus = -0.1
+
+        reward = (1.0 if passed else -0.5) + cov_bonus + latency_bonus
         reward = max(-1.0, min(1.0, reward))
 
         used_source = final_result.source.value if final_result.source != selected_source else selected_source.value
 
+        file_type_rewards = {}
         if final_result.validation_report:
             for file_result in final_result.validation_report.files:
+                file_type_rewards[file_result.file_type] = 1.0 if file_result.passed else -0.3
                 if self._rl_learner:
                     self._rl_learner.update(
                         protocol=protocol, file_type=file_result.file_type,
-                        generation_source=used_source, reward=1.0 if file_result.passed else -0.3,
+                        generation_source=used_source, reward=file_type_rewards[file_result.file_type],
                         spec_dict=spec_dict, metadata={"design_name": design_name, "score": file_result.score, "error_count": file_result.error_count},
                     )
                 if self._pattern_learner:
@@ -989,7 +1107,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                                 self._pattern_learner.record_error(error_msg=issue.message, file_type=file_result.file_type, line_num=issue.line_number)
 
         history_entry = {
-            "timestamp": datetime.now().isoformat(), "design_name": design_name, "protocol": protocol,
+            "timestamp": datetime.now(timezone.utc).isoformat(), "design_name": design_name, "protocol": protocol,
             "selected_source": selected_source.value, "actual_source": final_result.source.value,
             "strategy_used": final_result.strategy_used, "score": score, "latency_ms": final_result.latency_ms,
             "passed": passed, "reward": reward,
@@ -998,6 +1116,11 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self._generation_history.append(history_entry)
         if len(self._generation_history) > 2000:
             self._generation_history = self._generation_history[-2000:]
+
+        if self._enable_adaptive_weights and final_result.validation_report:
+            strategy_perf = self._metrics.get_strategy_performance()
+            self._strategy_weights.adapt(strategy_perf)
+
         if self._rl_learner and len(self._generation_history) % 10 == 0:
             self._rl_learner.replay_experiences(batch_size=128)
         if self._learning_storage_path:
@@ -1010,15 +1133,15 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             os.makedirs(os.path.dirname(self._learning_storage_path), exist_ok=True)
             state = {
                 "version": self._model_version,
-                "saved_at": datetime.now().isoformat(),
+                "saved_at": datetime.now(timezone.utc).isoformat(),
                 "generation_history": self._generation_history[-500:],
                 "metrics": self._metrics.get_summary(),
-                "strategy_weights": {
-                    "retrieval": self._strategy_weights.retrieval_weight,
-                    "llm": self._strategy_weights.llm_weight,
-                    "template": self._strategy_weights.template_weight,
-                    "ensemble": self._strategy_weights.ensemble_weight,
-                },
+                "strategy_weights": self._strategy_weights.to_dict(),
+                "changelog": self._changelog[-100:],
+                "enable_adaptive_weights": self._enable_adaptive_weights,
+                "enable_auto_tune": self._enable_auto_tune,
+                "quality_threshold": self._quality_threshold,
+                "strict_validation": self._strict_validation,
             }
             if self._rl_learner:
                 state["rl_learner"] = self._rl_learner.to_dict()
@@ -1038,6 +1161,11 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                 state = json.load(f)
             self._generation_history = state.get("generation_history", [])
             self._model_version = state.get("version", 1)
+            self._changelog = state.get("changelog", [])
+            self._enable_adaptive_weights = state.get("enable_adaptive_weights", self._enable_adaptive_weights)
+            self._enable_auto_tune = state.get("enable_auto_tune", self._enable_auto_tune)
+            self._quality_threshold = state.get("quality_threshold", self._quality_threshold)
+            self._strict_validation = state.get("strict_validation", self._strict_validation)
             weights = state.get("strategy_weights", {})
             if weights:
                 self._strategy_weights = StrategyWeights(
@@ -1050,7 +1178,8 @@ class EnhancedMLGenerationModelV2(GenerationModel):
                 self._rl_learner = AdvancedReinforcementLearner.from_dict(state["rl_learner"])
             if "pattern_learner" in state and self._pattern_learner:
                 self._pattern_learner = AdvancedPatternLearner.from_dict(state["pattern_learner"])
-            logger.info("Learning state loaded (v%d, %d history entries)", self._model_version, len(self._generation_history))
+            logger.info("Learning state loaded (v%d, %d history entries, %d changelog entries)",
+                       self._model_version, len(self._generation_history), len(self._changelog))
         except Exception as e:
             logger.warning("Could not load learning state: %s", e)
 
@@ -1059,12 +1188,11 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "total_generations": len(self._generation_history),
             "model_version": self._model_version,
             "metrics": self._metrics.get_summary(),
-            "strategy_weights": {
-                "retrieval": self._strategy_weights.retrieval_weight,
-                "llm": self._strategy_weights.llm_weight,
-                "template": self._strategy_weights.template_weight,
-                "ensemble": self._strategy_weights.ensemble_weight,
-            },
+            "strategy_weights": self._strategy_weights.to_dict(),
+            "adaptive_weights_enabled": self._enable_adaptive_weights,
+            "auto_tune_enabled": self._enable_auto_tune,
+            "changelog": self._changelog[-20:],
+            "coverage_predictor_version": self._coverage_predictor._version,
         }
         if self._generation_history:
             recent = self._generation_history[-50:]
@@ -1081,10 +1209,17 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             stats["rl_learner"] = self._rl_learner.get_performance_stats()
         if self._pattern_learner:
             stats["pattern_learner"] = self._pattern_learner.get_suggestions(file_type="any", protocol="any")
+        cp_summary = self._coverage_predictor.get_model_summary()
+        stats["coverage_predictor"] = {
+            "version": cp_summary["version"],
+            "models": cp_summary["models"],
+            "training_data_size": cp_summary["training_data_size"],
+            "best_score": cp_summary["best_score"],
+            "conformal_calibrated": cp_summary["conformal_calibrated"],
+        }
         return stats
 
     def get_health_status(self) -> Dict[str, Any]:
-        """Return health status for production monitoring / readiness probes."""
         components = {
             "template_model": self._template_model is not None,
             "similarity_index": self._index is not None and len(self._index) > 0,
@@ -1096,6 +1231,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "coverage_predictor": self._coverage_predictor is not None,
         }
         all_ok = all(components.values())
+        cov_pred_models = list(self._coverage_predictor._models.keys()) if self._coverage_predictor._models else []
         return {
             "status": "healthy" if all_ok else "degraded",
             "version": self._model_version,
@@ -1109,6 +1245,12 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "rl_converged": self._rl_learner.is_converged() if self._rl_learner else None,
             "quality_threshold": self._quality_threshold,
             "max_concurrent_strategies": self._max_concurrent,
+            "enable_adaptive_weights": self._enable_adaptive_weights,
+            "enable_auto_tune": self._enable_auto_tune,
+            "coverage_predictor_models": cov_pred_models,
+            "coverage_predictor_version": self._coverage_predictor._version,
+            "coverage_predictor_fitted": self._coverage_predictor._fitted,
+            "changelog_count": len(self._changelog),
         }
 
     def invalidate_cache(self, spec: Optional[DesignSpec] = None) -> None:
@@ -1154,15 +1296,15 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "model_version": self._model_version,
             "name": self.name,
             "class": self.__class__.__name__,
-            "saved_at": datetime.now().isoformat(),
+            "saved_at": datetime.now(timezone.utc).isoformat(),
             "generation_history": self._generation_history,
             "metrics": self._metrics.get_summary(),
-            "strategy_weights": {
-                "retrieval": self._strategy_weights.retrieval_weight,
-                "llm": self._strategy_weights.llm_weight,
-                "template": self._strategy_weights.template_weight,
-                "ensemble": self._strategy_weights.ensemble_weight,
-            },
+            "strategy_weights": self._strategy_weights.to_dict(),
+            "changelog": self._changelog[-200:],
+            "enable_adaptive_weights": self._enable_adaptive_weights,
+            "enable_auto_tune": self._enable_auto_tune,
+            "quality_threshold": self._quality_threshold,
+            "strict_validation": self._strict_validation,
         }
         if self._rl_learner:
             full_state["rl_learner"] = self._rl_learner.to_dict()
@@ -1174,10 +1316,36 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         logger.info("Saved EnhancedMLGenerationModelV2 v%d to %s", self._model_version, path)
 
     @classmethod
-    def load(cls, path: str) -> EnhancedMLGenerationModelV2:
-        model = cls(name="enhanced_ml_model_v2", use_learning=True)
-        model._load_learning_state()
-        logger.info("Loaded EnhancedMLGenerationModelV2 from %s", path)
+    def load(cls, path: str, **kwargs: Any) -> EnhancedMLGenerationModelV2:
+        model = cls(name="enhanced_ml_model_v2", use_learning=True, **kwargs)
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    state = json.load(f)
+                model._model_version = state.get("model_version", 1)
+                model._generation_history = state.get("generation_history", [])
+                model._changelog = state.get("changelog", [])
+                model._enable_adaptive_weights = state.get("enable_adaptive_weights", model._enable_adaptive_weights)
+                model._enable_auto_tune = state.get("enable_auto_tune", model._enable_auto_tune)
+                model._quality_threshold = state.get("quality_threshold", model._quality_threshold)
+                model._strict_validation = state.get("strict_validation", model._strict_validation)
+                weights = state.get("strategy_weights", {})
+                if weights:
+                    model._strategy_weights = StrategyWeights(
+                        retrieval_weight=weights.get("retrieval", 0.4),
+                        llm_weight=weights.get("llm", 0.3),
+                        template_weight=weights.get("template", 0.3),
+                        ensemble_weight=weights.get("ensemble", 0.2),
+                    )
+                if "rl_learner" in state and model._rl_learner:
+                    model._rl_learner = AdvancedReinforcementLearner.from_dict(state["rl_learner"])
+                if "pattern_learner" in state and model._pattern_learner:
+                    model._pattern_learner = AdvancedPatternLearner.from_dict(state["pattern_learner"])
+                logger.info("Loaded EnhancedMLGenerationModelV2 v%d from %s", model._model_version, path)
+            except Exception as e:
+                logger.warning("Could not load full state from %s: %s", path, e)
+        else:
+            logger.warning("Model file not found at %s, using fresh instance", path)
         return model
 
     @property

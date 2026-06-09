@@ -1,0 +1,50 @@
+name: Sync Model Registry to HF Space
+
+on:
+  push:
+    branches: [main]
+    paths: ["model_registry/**", "scripts/train_production_model.py", "src/models/**"]
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage to promote"
+        required: true
+        default: "production"
+        type: choice
+        options: [development, staging, production]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install HF Hub deps
+        run: |
+          pip install huggingface-hub pyyaml
+
+      - name: Sync model registry to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python scripts/sync_to_hf_space.py \
+            --registry-dir model_registry \
+            --space-id skumar889/semiconductor-pipeline \
+            --hf-token "$HF_TOKEN"
+
+      - name: Trigger Space rebuild
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.restart_space(repo_id='skumar889/semiconductor-pipeline', token='$HF_TOKEN')
+          print('HF Space rebuild triggered')
+          "
