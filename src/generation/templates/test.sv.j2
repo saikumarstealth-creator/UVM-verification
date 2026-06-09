@@ -14,12 +14,15 @@ class {{ spec.design_name }}_base_test extends uvm_test;
   {{ spec.design_name }}_env env;
   {{ spec.design_name }}_reg_block reg_model;
   virtual {{ spec.design_name }}_intf vif;
+  time default_timeout = 100ms;
 
   function new(string n, uvm_component p);
     super.new(n, p);
   endfunction
 
   function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+
     env = {{ spec.design_name }}_env::type_id::create("env", this);
 
     if (!uvm_config_db#(virtual {{ spec.design_name }}_intf)::get(this, "", "vif", vif)) begin
@@ -30,7 +33,10 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     reg_model.build();
     reg_model.lock_model();
     uvm_config_db#({{ spec.design_name }}_reg_block)::set(this, "*", "reg_model", reg_model);
+  endfunction
 
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
     reg_model.default_map.set_sequencer(env.agent.sequencer, env.reg_adapter);
     reg_model.default_map.set_auto_predict(1);
   endfunction
@@ -103,7 +109,7 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     seq = uart_all_regs_seq::type_id::create("seq");
     if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
-    run_sequence_with_timeout(seq, 10ms);
+    run_sequence_with_timeout(seq);
   endtask
 
   // Helper: register write via RAL (uses reg-level API for callbacks, prediction, coverage)
@@ -144,19 +150,38 @@ class {{ spec.design_name }}_base_test extends uvm_test;
     data = val[7:0];
   endtask
 
-  protected task run_sequence_with_timeout(uvm_sequence_base seq, time timeout);
+  protected task run_sequence_with_timeout(uvm_sequence_base seq, time timeout = 0);
     bit timeout_hit;
+    time effective_timeout = (timeout > 0) ? timeout : default_timeout;
     fork
       seq.start(env.agent.sequencer);
       begin
-        #(timeout);
+        #(effective_timeout);
         timeout_hit = 1'b1;
       end
     join_any
     disable fork;
     if (timeout_hit)
-      `uvm_fatal("TIMEOUT", $sformatf("Sequence %s timed out after %0t", seq.get_type_name(), timeout))
+      `uvm_fatal("TIMEOUT", $sformatf("Sequence %s timed out after %0t", seq.get_type_name(), effective_timeout))
   endtask
+
+  // Compute a baud-rate-aware timeout for UART transactions.
+  // Each byte takes ~10 bit-times at the given baud rate;
+  // margin multiplies for safety across variable DUT response times.
+  protected function time compute_timeout(int baud_rate, int num_bytes = 1, real margin = 20.0);
+    real bit_time_ns;
+    real total_time_ns;
+    bit_time_ns = 1_000_000_000.0 / baud_rate;
+    total_time_ns = bit_time_ns * 10.0 * num_bytes * margin;
+    return total_time_ns * 1ns;
+  endfunction
+
+  function void extract_phase(uvm_phase phase);
+    super.extract_phase(phase);
+    if (env.sb != null && !env.sb.check_data_integrity()) begin
+      `uvm_error("SCOREBOARD", "Scoreboard data integrity check FAILED")
+    end
+  endfunction
 
   function void report_phase(uvm_phase phase);
     uvm_report_server svr;
@@ -248,7 +273,7 @@ class {{ spec.design_name }}_tx_test extends {{ spec.design_name }}_base_test;
     cfg_seq.baud_rate = 115200;
     cfg_seq.data_bits = 8;
     cfg_seq.stop_bits = 1;
-    run_sequence_with_timeout(cfg_seq, 10ms);
+    run_sequence_with_timeout(cfg_seq, compute_timeout(115200));
 
     `uvm_info("TEST_TX", "Starting TX sequence", UVM_LOW)
     tx_seq = {{ spec.design_name }}_tx_seq::type_id::create("tx_seq");
@@ -256,7 +281,7 @@ class {{ spec.design_name }}_tx_test extends {{ spec.design_name }}_base_test;
     tx_seq.reg_model = reg_model;
     tx_seq.tx_data = {8'h01, 8'h23, 8'h45, 8'h67, 8'h89, 8'hAB, 8'hCD, 8'hEF};
     tx_seq.num_bytes = 8;
-    run_sequence_with_timeout(tx_seq, 10ms);
+    run_sequence_with_timeout(tx_seq, compute_timeout(115200, 8));
 
     `uvm_info("TEST_TX", "TX test completed", UVM_LOW)
   endtask
@@ -285,7 +310,7 @@ class {{ spec.design_name }}_baud_rate_test extends {{ spec.design_name }}_base_
       cfg_seq.baud_rate = test_bauds[i];
       cfg_seq.data_bits = 8;
       cfg_seq.stop_bits = 1;
-      run_sequence_with_timeout(cfg_seq, 10ms);
+      run_sequence_with_timeout(cfg_seq, compute_timeout(test_bauds[i]));
     end
 
     `uvm_info("TEST_BAUD", $sformatf("Baud rate test completed: %0d rates tested", test_bauds.size()), UVM_LOW)
@@ -323,7 +348,7 @@ class {{ spec.design_name }}_format_test extends {{ spec.design_name }}_base_tes
           cfg_seq.stop_bits = stop_bits[sb];
           cfg_seq.parity_en = parity_en[pe];
           cfg_seq.even_parity = 1;
-          run_sequence_with_timeout(cfg_seq, 10ms);
+          run_sequence_with_timeout(cfg_seq, compute_timeout(115200));
         end
       end
     end
@@ -351,7 +376,7 @@ class {{ spec.design_name }}_fifo_test extends {{ spec.design_name }}_base_test;
     cfg_seq.baud_rate = 115200;
     cfg_seq.data_bits = 8;
     cfg_seq.stop_bits = 1;
-    run_sequence_with_timeout(cfg_seq, 10ms);
+    run_sequence_with_timeout(cfg_seq, compute_timeout(115200));
 
     // Enable FIFO: RCVR FIFO reset + XMIT FIFO reset + enable
     write_reg(3'h02, 8'h07);
@@ -365,7 +390,7 @@ class {{ spec.design_name }}_fifo_test extends {{ spec.design_name }}_base_test;
     tx_seq.reg_model = reg_model;
     tx_seq.tx_data = '{16{8'hA5}};
     tx_seq.num_bytes = 16;
-    run_sequence_with_timeout(tx_seq, 10ms);
+    run_sequence_with_timeout(tx_seq, compute_timeout(115200, 16));
 
     // Read LSR to check FIFO status bits (poll with timeout)
     `uvm_info("TEST_FIFO", "Polling LSR for THRE (bit5) and TEMT (bit6)", UVM_LOW)
@@ -374,8 +399,8 @@ class {{ spec.design_name }}_fifo_test extends {{ spec.design_name }}_base_test;
       do begin
         read_reg(3'h05, rd_data);
         poll_count++;
-        #1000;
-        if (poll_count > 100) begin
+        @(posedge vif.clk);
+        if (poll_count > 5000) begin
           `uvm_warning("TEST_FIFO", $sformatf("Timeout polling THRE — last LSR=0x%0h", rd_data))
           break;
         end
@@ -419,7 +444,7 @@ class {{ spec.design_name }}_interrupt_test extends {{ spec.design_name }}_base_
       if (int_seq == null) `uvm_fatal("SEQ", "Failed to create int_seq")
       int_seq.reg_model = reg_model;
       int_seq.int_type = types[t];
-      run_sequence_with_timeout(int_seq, 10ms);
+      run_sequence_with_timeout(int_seq, compute_timeout(115200, 4));
     end
     `uvm_info("TEST_INT", "All interrupt types verified", UVM_LOW)
   endtask
@@ -438,7 +463,7 @@ class {{ spec.design_name }}_coverage_test extends {{ spec.design_name }}_base_t
     cov_seq = {{ spec.design_name }}_cov_seq::type_id::create("cov_seq");
     if (cov_seq == null) `uvm_fatal("SEQ", "Failed to create cov_seq")
     cov_seq.reg_model = reg_model;
-    run_sequence_with_timeout(cov_seq, 50ms);
+    run_sequence_with_timeout(cov_seq, compute_timeout(9600, 32));
     `uvm_info("TEST_COV", "Coverage sweep test completed", UVM_LOW)
   endtask
 endclass
@@ -456,7 +481,7 @@ class {{ spec.design_name }}_break_test extends {{ spec.design_name }}_base_test
     brk_seq = {{ spec.design_name }}_break_seq::type_id::create("brk_seq");
     if (brk_seq == null) `uvm_fatal("SEQ", "Failed to create brk_seq")
     brk_seq.reg_model = reg_model;
-    run_sequence_with_timeout(brk_seq, 10ms);
+    run_sequence_with_timeout(brk_seq, compute_timeout(115200, 4));
     `uvm_info("TEST_BRK", "Break test completed", UVM_LOW)
   endtask
 endclass
@@ -474,7 +499,7 @@ class {{ spec.design_name }}_overrun_test extends {{ spec.design_name }}_base_te
     ovr_seq = {{ spec.design_name }}_overrun_seq::type_id::create("ovr_seq");
     if (ovr_seq == null) `uvm_fatal("SEQ", "Failed to create ovr_seq")
     ovr_seq.reg_model = reg_model;
-    run_sequence_with_timeout(ovr_seq, 10ms);
+    run_sequence_with_timeout(ovr_seq, compute_timeout(115200, 32));
     `uvm_info("TEST_OVR", "Overrun test completed", UVM_LOW)
   endtask
 endclass
@@ -492,7 +517,7 @@ class {{ spec.design_name }}_stress_test extends {{ spec.design_name }}_base_tes
     str_seq = {{ spec.design_name }}_stress_seq::type_id::create("str_seq");
     if (str_seq == null) `uvm_fatal("SEQ", "Failed to create str_seq")
     str_seq.reg_model = reg_model;
-    run_sequence_with_timeout(str_seq, 100ms);
+    run_sequence_with_timeout(str_seq, compute_timeout(9600, 256));
     `uvm_info("TEST_STR", "Stress test completed", UVM_LOW)
   endtask
 endclass
@@ -517,7 +542,7 @@ class {{ spec.design_name }}_reset_test extends {{ spec.design_name }}_base_test
       fork
         hw_rst_seq.start(env.agent.sequencer);
         begin
-          #(10ms);
+          #(default_timeout);
           rst_timeout = 1'b1;
         end
       join_any
@@ -530,7 +555,7 @@ class {{ spec.design_name }}_reset_test extends {{ spec.design_name }}_base_test
     sw_rst_seq = {{ spec.design_name }}_reset_test_seq::type_id::create("sw_rst_seq");
     if (sw_rst_seq == null) `uvm_fatal("SEQ", "Failed to create sw_rst_seq")
     sw_rst_seq.reg_model = reg_model;
-    run_sequence_with_timeout(sw_rst_seq, 10ms);
+    run_sequence_with_timeout(sw_rst_seq);
 
     `uvm_info("TEST_RST", "Reset verification completed", UVM_LOW)
   endtask
@@ -550,7 +575,7 @@ class {{ spec.design_name }}_virtual_test extends {{ spec.design_name }}_base_te
     if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;
-    run_sequence_with_timeout(vseq, 10ms);
+    run_sequence_with_timeout(vseq, compute_timeout(115200, 64));
     `uvm_info("TEST_VSEQ", "Virtual sequence test completed", UVM_LOW)
   endtask
 endclass
@@ -571,7 +596,7 @@ class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base
     if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;
-    run_sequence_with_timeout(vseq, 100ms);
+    run_sequence_with_timeout(vseq, compute_timeout(9600, 256));
 
     `uvm_info("TEST_REGRESS", "Regression completed", UVM_LOW)
   endtask
@@ -596,7 +621,7 @@ class {{ spec.design_name }}_ro_write_protect_test extends {{ spec.design_name }
     ro_seq = {{ spec.design_name }}_ro_write_protect_seq::type_id::create("ro_seq");
     if (ro_seq == null) `uvm_fatal("SEQ", "Failed to create ro_seq")
     ro_seq.reg_model = reg_model;
-    run_sequence_with_timeout(ro_seq, 10ms);
+    run_sequence_with_timeout(ro_seq);
     `uvm_info("TEST_RO_PROTECT", "RO write-protection test completed", UVM_LOW)
   endtask
 endclass
@@ -619,7 +644,7 @@ class {{ spec.design_name }}_lsr_status_test extends {{ spec.design_name }}_base
     lsr_seq = {{ spec.design_name }}_lsr_status_seq::type_id::create("lsr_seq");
     if (lsr_seq == null) `uvm_fatal("SEQ", "Failed to create lsr_seq")
     lsr_seq.reg_model = reg_model;
-    run_sequence_with_timeout(lsr_seq, 10ms);
+    run_sequence_with_timeout(lsr_seq, compute_timeout(115200, 4));
     `uvm_info("TEST_LSR", "LSR status test completed", UVM_LOW)
   endtask
 endclass
@@ -641,8 +666,117 @@ class {{ spec.design_name }}_parity_inject_test extends {{ spec.design_name }}_b
     par_seq = {{ spec.design_name }}_parity_inject_seq::type_id::create("par_seq");
     if (par_seq == null) `uvm_fatal("SEQ", "Failed to create par_seq")
     par_seq.reg_model = reg_model;
-    run_sequence_with_timeout(par_seq, 10ms);
+    run_sequence_with_timeout(par_seq, compute_timeout(115200, 8));
     `uvm_info("TEST_PAR", "Parity injection test completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+// UART Framing Error Test — injects stop-bit corruptions, verifies LSR.FE
+// =========================================================================
+class {{ spec.design_name }}_framing_error_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_framing_error_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_framing_error_seq fe_seq;
+    `uvm_info("TEST_FE", "Starting framing error injection test", UVM_LOW)
+    fe_seq = {{ spec.design_name }}_framing_error_seq::type_id::create("fe_seq");
+    if (fe_seq == null) `uvm_fatal("SEQ", "Failed to create fe_seq")
+    fe_seq.reg_model = reg_model;
+    run_sequence_with_timeout(fe_seq, compute_timeout(115200, 8));
+    `uvm_info("TEST_FE", "Framing error test completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+// UART FIFO Trigger Level Test — verifies RX FIFO trigger thresholds
+// at 1, 4, 8, and 14 bytes via loopback interrupt monitoring
+// =========================================================================
+class {{ spec.design_name }}_fifo_trigger_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_fifo_trigger_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_fifo_trigger_seq trig_seq;
+    `uvm_info("TEST_FIFO_TRIG", "Starting FIFO trigger level test", UVM_LOW)
+    trig_seq = {{ spec.design_name }}_fifo_trigger_seq::type_id::create("trig_seq");
+    if (trig_seq == null) `uvm_fatal("SEQ", "Failed to create trig_seq")
+    trig_seq.reg_model = reg_model;
+    run_sequence_with_timeout(trig_seq, compute_timeout(115200, 64));
+    `uvm_info("TEST_FIFO_TRIG", "FIFO trigger level test completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+// UART Flow Control Test — verifies RTS/CTS and DTR/DSR handshake
+// via modem status loopback
+// =========================================================================
+class {{ spec.design_name }}_flow_control_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_flow_control_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_flow_control_seq fc_seq;
+    `uvm_info("TEST_FC", "Starting flow control (RTS/CTS) test", UVM_LOW)
+    fc_seq = {{ spec.design_name }}_flow_control_seq::type_id::create("fc_seq");
+    if (fc_seq == null) `uvm_fatal("SEQ", "Failed to create fc_seq")
+    fc_seq.reg_model = reg_model;
+    run_sequence_with_timeout(fc_seq, compute_timeout(115200, 8));
+    `uvm_info("TEST_FC", "Flow control test completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+// UART Full Duplex Test — simultaneous TX and RX via loopback,
+// verifies all transmitted bytes are received correctly
+// =========================================================================
+class {{ spec.design_name }}_full_duplex_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_full_duplex_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_full_duplex_seq fd_seq;
+    `uvm_info("TEST_FD", "Starting full duplex test", UVM_LOW)
+    fd_seq = {{ spec.design_name }}_full_duplex_seq::type_id::create("fd_seq");
+    if (fd_seq == null) `uvm_fatal("SEQ", "Failed to create fd_seq")
+    fd_seq.reg_model = reg_model;
+    run_sequence_with_timeout(fd_seq, compute_timeout(115200, 64));
+    `uvm_info("TEST_FD", "Full duplex test completed", UVM_LOW)
+  endtask
+endclass
+
+// =========================================================================
+// UART Long Regression Test — extended soak with random configs,
+// loopback bursts, and error injection across many iterations
+// =========================================================================
+class {{ spec.design_name }}_long_regression_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_long_regression_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_long_regression_seq lr_seq;
+    `uvm_info("TEST_LR", "Starting long regression test", UVM_LOW)
+    lr_seq = {{ spec.design_name }}_long_regression_seq::type_id::create("lr_seq");
+    if (lr_seq == null) `uvm_fatal("SEQ", "Failed to create lr_seq")
+    lr_seq.reg_model = reg_model;
+    run_sequence_with_timeout(lr_seq, compute_timeout(9600, 512));
+    `uvm_info("TEST_LR", "Long regression test completed", UVM_LOW)
   endtask
 endclass
 
@@ -668,7 +802,7 @@ class {{ spec.design_name }}_apb_config_test extends {{ spec.design_name }}_base
     cfg_seq.reg_model = reg_model;
     cfg_seq.wait_states = 2;
     cfg_seq.inject_slave_err = 0;
-    run_sequence_with_timeout(cfg_seq, 10ms);
+    run_sequence_with_timeout(cfg_seq);
 
     `uvm_info("APB_CFG_TEST", "Config test completed", UVM_LOW)
   endtask
@@ -690,13 +824,13 @@ class {{ spec.design_name }}_apb_write_read_test extends {{ spec.design_name }}_
     wr_seq.reg_model = reg_model;
     wr_seq.target_reg = 0;
     wr_seq.write_data = 8'hA5;
-    run_sequence_with_timeout(wr_seq, 10ms);
+    run_sequence_with_timeout(wr_seq);
 
     wr_seq = {{ spec.design_name }}_apb_write_read_seq::type_id::create("wr_seq_2");
     wr_seq.reg_model = reg_model;
     wr_seq.target_reg = 1;
     wr_seq.write_data = 8'h5A;
-    run_sequence_with_timeout(wr_seq, 10ms);
+    run_sequence_with_timeout(wr_seq);
 
     `uvm_info("APB_WR_TEST", "Write-read test completed", UVM_LOW)
   endtask
@@ -717,7 +851,7 @@ class {{ spec.design_name }}_apb_error_test extends {{ spec.design_name }}_base_
     if (err_seq == null) `uvm_fatal("SEQ", "Failed to create err_seq")
     err_seq.reg_model = reg_model;
     err_seq.num_errors = 5;
-    run_sequence_with_timeout(err_seq, 10ms);
+    run_sequence_with_timeout(err_seq);
 
     `uvm_info("APB_ERR_TEST", "Error test completed", UVM_LOW)
   endtask
@@ -738,7 +872,7 @@ class {{ spec.design_name }}_apb_back2back_test extends {{ spec.design_name }}_b
     if (b2b_seq == null) `uvm_fatal("SEQ", "Failed to create b2b_seq")
     b2b_seq.reg_model = reg_model;
     b2b_seq.burst_count = 32;
-    run_sequence_with_timeout(b2b_seq, 10ms);
+    run_sequence_with_timeout(b2b_seq);
 
     `uvm_info("APB_B2B_TEST", "Back-to-back test completed", UVM_LOW)
   endtask
@@ -759,7 +893,7 @@ class {{ spec.design_name }}_apb_virtual_test extends {{ spec.design_name }}_bas
     if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;
-    run_sequence_with_timeout(vseq, 10ms);
+    run_sequence_with_timeout(vseq);
 
     `uvm_info("APB_VSEQ_TEST", "APB virtual sequence test completed", UVM_LOW)
   endtask
@@ -780,7 +914,7 @@ class {{ spec.design_name }}_apb_regression_test extends {{ spec.design_name }}_
     if (vseq == null) `uvm_fatal("SEQ", "Failed to create vseq")
     vseq.reg_model = reg_model;
     if (env.sb != null) vseq.sb_handle = env.sb;
-    run_sequence_with_timeout(vseq, 100ms);
+    run_sequence_with_timeout(vseq);
 
     `uvm_info("APB_REGRESS", "APB regression completed", UVM_LOW)
   endtask
@@ -800,7 +934,7 @@ class {{ spec.design_name }}_regression_test extends {{ spec.design_name }}_base
     seq = {{ spec.design_name }}_all_regs_seq::type_id::create("seq");
     if (seq == null) `uvm_fatal("SEQ", "Failed to create sequence")
     seq.reg_model = reg_model;
-    run_sequence_with_timeout(seq, 10ms);
+    run_sequence_with_timeout(seq);
   endtask
 endclass
 

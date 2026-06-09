@@ -368,7 +368,7 @@ class {{ spec.design_name }}_smoke_seq extends {{ spec.design_name }}_base_seq;
 
     // 3. Write a test byte to THR and read back (loopback not required for basic sanity)
     write_reg({{ addr_bits }}'h00, 8'hA5);
-    #100;
+    repeat(100) @(posedge vif.clk);
     read_reg({{ addr_bits }}'h05, lsr_val);
     `uvm_info("SMOKE", $sformatf("After TX: LSR=0x%02h (THRE=%0d, TEMT=%0d)",
               lsr_val, lsr_val[5], lsr_val[6]), UVM_LOW)
@@ -1045,7 +1045,7 @@ class {{ spec.design_name }}_lsr_status_seq extends {{ spec.design_name }}_base_
 {% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) %}
     // 2. Write to THR (0x00) — THRE should clear momentarily
     write_reg({{ addr_bits }}'h00, 8'hA5);
-    #100;
+    repeat(100) @(posedge vif.clk);
     read_reg({{ addr_bits }}'h05, lsr_val);
     `uvm_info("LSR_STAT", $sformatf("After THR write: LSR=0x%02h (THRE=%0d, TEMT=%0d)",
               lsr_val, lsr_val[5], lsr_val[6]), UVM_LOW)
@@ -1107,7 +1107,7 @@ class {{ spec.design_name }}_parity_inject_seq extends {{ spec.design_name }}_ba
       }) `uvm_fatal("RAND", "Parity injection randomization failed")
       finish_item(inj_req);
 
-      #500;
+      repeat(500) @(posedge vif.clk);
 
       // Read LSR to check parity error flag
       read_reg({{ addr_bits }}'h05, lsr_val);
@@ -1246,7 +1246,7 @@ class {{ spec.design_name }}_cov_seq extends {{ spec.design_name }}_base_seq;
           cfg_seq.start(m_sequencer);
           total_configs++;
 
-          #100;
+          repeat(100) @(posedge vif.clk);
           tx_seq = {{ spec.design_name }}_tx_seq::type_id::create($sformatf("tx_seq_b%0d_d%0d_s%0d", i, j, k));
           tx_seq.reg_model = reg_model;
           tx_seq.num_bytes = 4;
@@ -1354,7 +1354,7 @@ class {{ spec.design_name }}_overrun_seq extends {{ spec.design_name }}_base_seq
     for (int i = 0; i < 20; i++) begin
       write_reg({{ addr_bits }}'h00, 8'($urandom_range(0, 255)));
       tx_count++;
-      #1000;
+      @(posedge vif.clk);
     end
 
     // Wait for loopback data to arrive at RX (at 115200: ~87us/byte, 16 bytes ~1.4ms)
@@ -1995,6 +1995,466 @@ class {{ spec.design_name }}_long_run_seq extends {{ spec.design_name }}_base_se
   endtask
 endclass
 
+// =========================================================================
+// UART Framing Error Sequence — dedicated framing error injection via
+// driver-level stop-bit corruption; verifies LSR.FE (bit 3).
+// Requires: THR (0x00), LCR (0x03), LSR (0x05)
+// =========================================================================
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_framing_error_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_framing_error_seq)
+
+  rand int num_injections;
+  int fe_detected;
+  int fe_missed;
+
+  constraint c_framing_count { num_injections inside {[1:8]}; }
+
+  function new(string n = "{{ spec.design_name }}_framing_error_seq");
+    super.new(n);
+    num_injections = 3;
+  endfunction
+
+  task body;
+    logic [7:0] lcr_val;
+    logic [7:0] lsr_val;
+
+    `uvm_info("FE_INJ", $sformatf("=== Framing Error Injection Test (%0d injections) ===", num_injections), UVM_LOW)
+
+    // Configure 8N1
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[1:0] = 2'b11;
+    lcr_val[2] = 1'b0;
+    lcr_val[3] = 1'b0;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+    `uvm_info("FE_INJ", $sformatf("LCR configured for 8N1: 0x%02h", lcr_val), UVM_LOW)
+
+    for (int i = 0; i < num_injections; i++) begin
+      {{ spec.design_name }}_seq_item inj_req;
+      logic [7:0] tx_byte;
+      tx_byte = $urandom_range(0, 255);
+
+      inj_req = {{ spec.design_name }}_seq_item::type_id::create($sformatf("fe_inj_%0d", i));
+      start_item(inj_req);
+      if (!inj_req.randomize() with {
+        we == 1;
+        addr == {{ addr_bits }}'h0;
+        data == tx_byte;
+        delay == 0;
+        corrupt_parity == 0;
+        corrupt_stop_bit == 1;
+        force_break == 0;
+      }) `uvm_fatal("RAND", "Framing injection randomization failed")
+      finish_item(inj_req);
+
+      repeat(500) @(posedge vif.clk);
+
+      read_reg({{ addr_bits }}'h05, lsr_val);
+      if (lsr_val[3]) begin
+        fe_detected++;
+        `uvm_info("FE_INJ", $sformatf("Inj %0d: framing error DETECTED LSR[3]=1 (data=0x%02h)", i, tx_byte), UVM_LOW)
+      end else begin
+        fe_missed++;
+        `uvm_error("FE_INJ", $sformatf("Inj %0d: framing error NOT detected LSR[3]=0 (data=0x%02h)", i, tx_byte))
+      end
+      read_reg({{ addr_bits }}'h05, lsr_val);
+    end
+
+    `uvm_info("FE_INJ", $sformatf(
+      "=== Framing Test Report: %0d/%0d detected, %0d missed ===",
+      fe_detected, num_injections, fe_missed), UVM_LOW)
+
+    if (fe_missed > 0)
+      `uvm_error("FE_INJ", $sformatf("Framing error detection FAILED: %0d/%0d missed", fe_missed, num_injections))
+    else
+      `uvm_info("FE_INJ", "Framing error detection PASSED", UVM_LOW)
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART FIFO Trigger Level Sequence — verifies RX trigger interrupts at
+// all four 16550-compatible levels (1, 4, 8, 14 bytes).
+// Uses loopback mode to feed RX; monitors IIR for trigger match.
+// Requires: FCR (0x02), IER (0x01), IIR (0x02), MCR (0x04), THR (0x00)
+// =========================================================================
+{% if ('0x02' in _reg_addr_set or '0x2' in _reg_addr_set) and ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) and ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) %}
+class {{ spec.design_name }}_fifo_trigger_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_fifo_trigger_seq)
+
+  int trigger_levels[4] = '{1, 4, 8, 14};
+  int trigger_bits[4] = '{2'b00, 2'b01, 2'b10, 2'b11};
+  int passed_levels;
+  int failed_levels;
+
+  function new(string n = "{{ spec.design_name }}_fifo_trigger_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] fcr_val;
+    logic [7:0] ier_val;
+    logic [7:0] iir_val;
+    logic [7:0] mcr_val;
+
+    `uvm_info("FIFO_TRIG", "=== FIFO Trigger Level Test ===", UVM_LOW)
+
+    // Enable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    // Enable RX data interrupt
+    write_reg({{ spec.design_name|upper }}_IER_ADDR, 8'h01);
+
+    for (int t = 0; t < 4; t++) begin
+      int bytes_sent;
+      bit trigger_verified;
+
+      // Set FIFO trigger level: FCR[7:6] = trigger_bits[t]; also enable FIFO + reset
+      fcr_val = {trigger_bits[t], 2'b00, 1'b0, 2'b11};
+      write_reg({{ spec.design_name|upper }}_FCR_ADDR, fcr_val);
+      repeat(10) @(posedge vif.clk);
+
+      `uvm_info("FIFO_TRIG", $sformatf("Trigger level %0d bytes (FCR[7:6]=%b)",
+                trigger_levels[t], trigger_bits[t]), UVM_MEDIUM)
+
+      // Send bytes via loopback (one more than trigger level to guarantee trigger)
+      for (int b = 0; b < trigger_levels[t] + 1; b++) begin
+        write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'hA0 + b);
+        bytes_sent++;
+        repeat(100) @(posedge vif.clk);
+      end
+
+      // Check IIR for RX data pending (IIR[3:1]=010 for RX data available)
+      read_reg({{ spec.design_name|upper }}_IIR_ADDR, iir_val);
+      `uvm_info("FIFO_TRIG", $sformatf("After %0d TX bytes: IIR=0x%02h (pending=%b, cause=%b)",
+                bytes_sent, iir_val, !iir_val[0], iir_val[3:1]), UVM_MEDIUM)
+
+      if (!iir_val[0] && iir_val[3:1] == 3'b010) begin
+        passed_levels++;
+        trigger_verified = 1;
+        `uvm_info("FIFO_TRIG", $sformatf("Level %0d: RX trigger PASS", trigger_levels[t]), UVM_LOW)
+      end else begin
+        failed_levels++;
+        `uvm_error("FIFO_TRIG", $sformatf("Level %0d: RX trigger FAIL (IIR=0x%02h, exp cause=010 pending=0)",
+                   trigger_levels[t], iir_val))
+      end
+
+      // Drain RX FIFO by reading RBR
+      for (int b = 0; b < bytes_sent; b++) begin
+        logic [7:0] rbr_val;
+        read_reg({{ spec.design_name|upper }}_RBR_ADDR, rbr_val);
+      end
+      repeat(10) @(posedge vif.clk);
+    end
+
+    // Disable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    `uvm_info("FIFO_TRIG", $sformatf(
+      "=== FIFO Trigger Test: %0d passed, %0d failed ===",
+      passed_levels, failed_levels), UVM_LOW)
+
+    if (failed_levels > 0)
+      `uvm_error("FIFO_TRIG", $sformatf("%0d trigger level(s) failed", failed_levels))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Flow Control Sequence — verifies RTS/CTS flow control handshake
+// via modem loopback. Asserts RTS (MCR[1]), checks CTS (MSR[4]),
+// toggles and re-verifies.
+// Requires: MCR (0x04), MSR (0x06)
+// =========================================================================
+{% if ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x06' in _reg_addr_set or '0x6' in _reg_addr_set) %}
+class {{ spec.design_name }}_flow_control_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_flow_control_seq)
+
+  int checks_passed;
+  int checks_failed;
+
+  function new(string n = "{{ spec.design_name }}_flow_control_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] mcr_val;
+    logic [7:0] msr_val;
+
+    `uvm_info("FC_CTRL", "=== Flow Control (RTS/CTS) Test ===", UVM_LOW)
+
+    // Enable loopback so MCR signals loop to MSR
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+
+    // Test 1: Assert RTS (MCR[1]=1), expect CTS (MSR[4]=1) via loop
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[1] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (msr_val[4]) begin
+      checks_passed++;
+      `uvm_info("FC_CTRL", $sformatf("RTS=1 -> CTS=1 PASS (MSR=0x%02h)", msr_val), UVM_MEDIUM)
+    end else begin
+      checks_failed++;
+      `uvm_error("FC_CTRL", $sformatf("RTS=1 -> CTS=0 FAIL (MSR=0x%02h)", msr_val))
+    end
+
+    // Test 2: Deassert RTS (MCR[1]=0), expect CTS (MSR[4]=0)
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[1] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (!msr_val[4]) begin
+      checks_passed++;
+      `uvm_info("FC_CTRL", $sformatf("RTS=0 -> CTS=0 PASS (MSR=0x%02h)", msr_val), UVM_MEDIUM)
+    end else begin
+      checks_failed++;
+      `uvm_error("FC_CTRL", $sformatf("RTS=0 -> CTS=1 FAIL (MSR=0x%02h)", msr_val))
+    end
+
+    // Test 3: Toggle DTR (MCR[0]), verify DSR (MSR[5])
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[0] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (msr_val[5]) begin
+      checks_passed++;
+      `uvm_info("FC_CTRL", $sformatf("DTR=1 -> DSR=1 PASS (MSR=0x%02h)", msr_val), UVM_MEDIUM)
+    end else begin
+      checks_failed++;
+      `uvm_error("FC_CTRL", $sformatf("DTR=1 -> DSR=0 FAIL (MSR=0x%02h)", msr_val))
+    end
+
+    // Test 4: Delta-bit detection — MSR[0] (delta CTS) should be set after a change
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (msr_val[0]) begin
+      checks_passed++;
+      `uvm_info("FC_CTRL", "Delta CTS detected (MSR[0]=1) PASS", UVM_MEDIUM)
+    end else begin
+      `uvm_info("FC_CTRL", "Delta CTS not set (MSR[0]=0) — acceptable if no change", UVM_MEDIUM)
+    end
+
+    // Disable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    `uvm_info("FC_CTRL", $sformatf(
+      "=== Flow Control Test: %0d passed, %0d failed ===",
+      checks_passed, checks_failed), UVM_LOW)
+
+    if (checks_failed > 0)
+      `uvm_error("FC_CTRL", $sformatf("%0d flow control check(s) failed", checks_failed))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Full Duplex Sequence — simultaneous TX and RX via loopback;
+// sends and receives multiple bytes in parallel, verifies data integrity.
+// Requires: MCR (0x04), THR (0x00), RBR (0x00), LSR (0x05)
+// =========================================================================
+{% if ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_full_duplex_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_full_duplex_seq)
+
+  rand int num_bytes;
+  logic [7:0] tx_data[$];
+  logic [7:0] rx_data[$];
+  int matches;
+  int mismatches;
+
+  constraint c_full_dup { num_bytes inside {[4:64]}; }
+
+  function new(string n = "{{ spec.design_name }}_full_duplex_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] mcr_val;
+
+    `uvm_info("FULL_DUP", $sformatf("=== Full Duplex Test (%0d bytes) ===", num_bytes), UVM_LOW)
+
+    // Enable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+
+    // Generate random TX data
+    for (int i = 0; i < num_bytes; i++) begin
+      tx_data.push_back($urandom_range(0, 255));
+    end
+
+    // Simultaneous TX and RX
+    fork
+      begin
+        for (int i = 0; i < num_bytes; i++) begin
+          write_reg({{ spec.design_name|upper }}_THR_ADDR, tx_data[i]);
+          if (sb_handle != null) sb_handle.record_tx({{ spec.design_name|upper }}_THR_ADDR, tx_data[i]);
+          `uvm_info("FULL_DUP", $sformatf("TX[%0d] = 0x%02h", i, tx_data[i]), UVM_MEDIUM)
+          repeat(200) @(posedge vif.clk);
+        end
+      end
+      begin
+        int rx_timeout;
+        while (rx_data.size() < num_bytes && rx_timeout < num_bytes * 500) begin
+          logic [7:0] lsr_val;
+          logic [7:0] rbr_val;
+          read_reg({{ spec.design_name|upper }}_LSR_ADDR, lsr_val);
+          if (lsr_val[0]) begin
+            read_reg({{ spec.design_name|upper }}_RBR_ADDR, rbr_val);
+            rx_data.push_back(rbr_val);
+            if (sb_handle != null) sb_handle.record_rx({{ spec.design_name|upper }}_RBR_ADDR, rbr_val);
+            `uvm_info("FULL_DUP", $sformatf("RX[%0d] = 0x%02h", rx_data.size()-1, rbr_val), UVM_MEDIUM)
+          end
+          @(posedge vif.clk);
+          rx_timeout++;
+        end
+      end
+    join
+
+    // Compare TX vs RX
+    for (int i = 0; i < tx_data.size(); i++) begin
+      if (i < rx_data.size()) begin
+        if (tx_data[i] === rx_data[i]) begin
+          matches++;
+          `uvm_info("FULL_DUP", $sformatf("MATCH[%0d]: TX=0x%02h RX=0x%02h", i, tx_data[i], rx_data[i]), UVM_HIGH)
+        end else begin
+          mismatches++;
+          `uvm_error("FULL_DUP", $sformatf("MISMATCH[%0d]: TX=0x%02h RX=0x%02h", i, tx_data[i], rx_data[i]))
+        end
+      end else begin
+        mismatches++;
+        `uvm_error("FULL_DUP", $sformatf("MISSING RX[%0d]: TX=0x%02h not received", i, tx_data[i]))
+      end
+    end
+
+    // Disable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    `uvm_info("FULL_DUP", $sformatf(
+      "=== Full Duplex: %0d TX, %0d RX, %0d match, %0d mismatch ===",
+      tx_data.size(), rx_data.size(), matches, mismatches), UVM_LOW)
+
+    if (mismatches > 0)
+      `uvm_error("FULL_DUP", $sformatf("%0d full duplex mismatch(es)", mismatches))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Long Regression Sequence — extended stress with random configs,
+// TX/RX loopback bursts, and error injection interleaved across many
+// iterations. Models a production soak test.
+// Requires: all standard UART registers (0x00-0x05)
+// =========================================================================
+{% if _need_lcr and _need_tx and ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) %}
+class {{ spec.design_name }}_long_regression_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_long_regression_seq)
+
+  rand int num_iterations;
+  rand int baud_rates[$];
+  rand int data_bits_vals[$];
+  int total_tx;
+  int total_rx;
+  int total_errors;
+  int total_configs;
+
+  constraint c_regression {
+    num_iterations inside {[10:100]};
+    baud_rates.size() inside {[1:5]};
+    data_bits_vals.size() inside {[1:4]};
+    foreach (baud_rates[i]) baud_rates[i] inside {9600, 19200, 38400, 57600, 115200, 1000000};
+    foreach (data_bits_vals[i]) data_bits_vals[i] inside {5, 6, 7, 8};
+  }
+
+  function new(string n = "{{ spec.design_name }}_long_regression_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    {{ spec.design_name }}_config_seq cfg_seq;
+
+    `uvm_info("LONG_REGR", $sformatf("=== Long Regression: %0d iterations ===", num_iterations), UVM_LOW)
+
+    for (int iter = 0; iter < num_iterations; iter++) begin
+      {{ spec.design_name }}_loopback_seq lb_seq;
+      int rand_baud;
+      int rand_dbits;
+      int rand_parity;
+      int rand_stop;
+
+      // Random config for this iteration
+      rand_baud = baud_rates[$urandom_range(0, baud_rates.size()-1)];
+      rand_dbits = data_bits_vals[$urandom_range(0, data_bits_vals.size()-1)];
+      rand_parity = $urandom_range(0, 1);
+      rand_stop = ($urandom_range(0, 1)) ? 2 : 1;
+
+      cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_iter_%0d", iter));
+      cfg_seq.reg_model = reg_model;
+      cfg_seq.baud_rate = rand_baud;
+      cfg_seq.data_bits = rand_dbits;
+      cfg_seq.stop_bits = rand_stop;
+      cfg_seq.parity_en = rand_parity;
+      cfg_seq.start(m_sequencer);
+      total_configs++;
+      repeat(50) @(posedge vif.clk);
+
+      // Loopback burst
+      lb_seq = {{ spec.design_name }}_loopback_seq::type_id::create($sformatf("lb_iter_%0d", iter));
+      lb_seq.reg_model = reg_model;
+      lb_seq.sb_handle = sb_handle;
+      if (!lb_seq.randomize() with { test_data.size() inside {[4:12]}; }) begin
+        `uvm_error("LONG_REGR", $sformatf("Iter %0d: loopback randomization failed", iter))
+      end else begin
+        lb_seq.start(m_sequencer);
+        total_tx += lb_seq.test_data.size();
+        total_errors += lb_seq.errors;
+        `uvm_info("LONG_REGR", $sformatf("Iter %0d: baud=%0d %0d%c%0d tx=%0d err=%0d",
+                  iter, rand_baud, rand_dbits, rand_stop == 2 ? "N" : "n", rand_parity,
+                  lb_seq.test_data.size(), lb_seq.errors), UVM_MEDIUM)
+      end
+
+      // Every 5 iterations, inject a parity error
+      if (iter % 5 == 0 && iter > 0) begin
+        {{ spec.design_name }}_error_injection_seq inj_seq;
+        inj_seq = {{ spec.design_name }}_error_injection_seq::type_id::create($sformatf("inj_iter_%0d", iter));
+        inj_seq.reg_model = reg_model;
+        inj_seq.inj_type = {{ spec.design_name }}_error_injection_seq::INJ_PARITY;
+        inj_seq.num_injections = 2;
+        inj_seq.start(m_sequencer);
+      end
+    end
+
+    `uvm_info("LONG_REGR", $sformatf(
+      "\n  === Long Regression Report ==="
+      "\n  Iterations:     %0d"
+      "\n  Configs Tried:  %0d"
+      "\n  TX Bytes:       %0d"
+      "\n  Errors:         %0d",
+      num_iterations, total_configs, total_tx, total_errors), UVM_LOW)
+
+    if (total_errors > 0)
+      `uvm_error("LONG_REGR", $sformatf("%0d errors during long regression", total_errors))
+    else
+      `uvm_info("LONG_REGR", "Long regression PASSED", UVM_LOW)
+  endtask
+endclass
+{% endif %}
+
 {% endif %}
 
 {% if p == "apb" %}
@@ -2054,7 +2514,7 @@ class {{ spec.design_name }}_apb_write_read_seq extends {{ spec.design_name }}_b
 
     `uvm_info("APB_WR", $sformatf("Writing 0x%02h to reg %0d", write_data, target_reg), UVM_LOW)
     write_reg(target_reg, write_data);
-    #10;
+    repeat(10) @(posedge vif.clk);
     read_reg(target_reg, readback);
     `uvm_info("APB_WR", $sformatf("Readback: 0x%02h (expected 0x%02h)", readback, write_data), UVM_LOW)
 
