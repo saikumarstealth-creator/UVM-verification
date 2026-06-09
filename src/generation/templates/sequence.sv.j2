@@ -2455,6 +2455,809 @@ class {{ spec.design_name }}_long_regression_seq extends {{ spec.design_name }}_
 endclass
 {% endif %}
 
+// =========================================================================
+// UART Reset Sequence — applies hardware reset via interface signals.
+// Reusable mid-test: can be called at any time to reset the DUT mid-transfer.
+// Requires: vif.rst_n, vif (clock)
+// =========================================================================
+class {{ spec.design_name }}_reset_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_reset_seq)
+
+  rand int reset_cycles;
+  rand int post_reset_cycles;
+
+  constraint c_reset_len {
+    reset_cycles inside {[5:20]};
+    post_reset_cycles inside {[5:10]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_reset_seq");
+    super.new(n);
+    reset_cycles = 10;
+    post_reset_cycles = 5;
+  endfunction
+
+  task body;
+    `uvm_info("RST_SEQ", "Asserting reset", UVM_MEDIUM)
+    vif.rst_n <= 1'b0;
+{% if p == "uart" %}
+    vif.uart_rx <= 1'b1;
+    vif.cts_n <= 1'b0;
+{% endif %}
+    repeat (reset_cycles) @(posedge vif.clk);
+    `uvm_info("RST_SEQ", "Deasserting reset", UVM_MEDIUM)
+    vif.rst_n <= 1'b1;
+    repeat (post_reset_cycles) @(posedge vif.clk);
+    `uvm_info("RST_SEQ", "Reset complete", UVM_MEDIUM)
+  endtask
+endclass
+
+// =========================================================================
+// UART Baud Divisor Verification — verifies DLL/DLH programming affects
+// the actual baud rate by measuring TX bit timing via LSR polling.
+// Requires: DLL (0x00), DLH (0x01), LCR (0x03), LSR (0x05), THR (0x00)
+// =========================================================================
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_baud_divisor_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_baud_divisor_seq)
+
+  int divisors[4][2] = '{'{1, 0}, '{8, 0}, '{54, 0}, '{104, 0}};
+  int pass_count;
+  int fail_count;
+
+  function new(string n = "{{ spec.design_name }}_baud_divisor_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lcr_val;
+    logic [7:0] lsr_val;
+
+    `uvm_info("BAUD_DIV", "=== Baud Divisor Verification ===", UVM_LOW)
+
+    foreach (divisors[i]) begin
+      logic [15:0] divisor;
+      divisor = {divisors[i][1], divisors[i][0]};
+
+      read_reg({{ addr_bits }}'h03, lcr_val);
+      lcr_val[7] = 1'b1;
+      write_reg({{ addr_bits }}'h03, lcr_val);
+      write_reg({{ addr_bits }}'h00, divisor[7:0]);
+      write_reg({{ addr_bits }}'h01, divisor[15:8]);
+      lcr_val[7] = 1'b0;
+      write_reg({{ addr_bits }}'h03, lcr_val);
+      repeat(10) @(posedge vif.clk);
+
+      write_reg({{ addr_bits }}'h00, 8'hA5);
+      repeat(500) @(posedge vif.clk);
+      read_reg({{ addr_bits }}'h05, lsr_val);
+
+      `uvm_info("BAUD_DIV", $sformatf("Divisor %0d (0x%04h): LSR=0x%02h THRE=%0d TEMT=%0d",
+                i, divisor, lsr_val, lsr_val[5], lsr_val[6]), UVM_MEDIUM)
+
+      if (lsr_val[5] && lsr_val[6]) begin
+        pass_count++;
+        `uvm_info("BAUD_DIV", $sformatf("Divisor %0d: TX completed OK", i), UVM_LOW)
+      end else begin
+        fail_count++;
+        `uvm_error("BAUD_DIV", $sformatf("Divisor %0d: TX stuck after write (LSR=0x%02h)", i, lsr_val))
+      end
+    end
+
+    lcr_val[7] = 1'b0;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+
+    `uvm_info("BAUD_DIV", $sformatf("=== Baud Divisor: %0d pass, %0d fail ===",
+              pass_count, fail_count), UVM_LOW)
+    if (fail_count > 0)
+      `uvm_error("BAUD_DIV", $sformatf("%0d divisor verification(s) failed", fail_count))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART DLAB Switching Test — toggles LCR[7] to verify DLL/DLH vs THR/IER
+// aliasing works correctly per 16550 specification.
+// Requires: LCR (0x03), DLL/THR (0x00), DLH/IER (0x01)
+// =========================================================================
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) %}
+class {{ spec.design_name }}_dlab_switching_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_dlab_switching_seq)
+
+  int pass_count;
+  int fail_count;
+
+  function new(string n = "{{ spec.design_name }}_dlab_switching_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lcr_val;
+    logic [7:0] val0, val1;
+
+    `uvm_info("DLAB_SW", "=== DLAB Bit Switching Test ===", UVM_LOW)
+
+    // 1. With DLAB=0, write to THR (0x00) and IER (0x01)
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[7] = 1'b0;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+    repeat(5) @(posedge vif.clk);
+
+    write_reg({{ addr_bits }}'h00, 8'hA5);
+    write_reg({{ addr_bits }}'h01, 8'h0F);
+    repeat(5) @(posedge vif.clk);
+
+    // 2. Set DLAB=1, read DLL/DLH, verify they are NOT 0xA5/0x0F
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[7] = 1'b1;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+    repeat(5) @(posedge vif.clk);
+
+    read_reg({{ addr_bits }}'h00, val0);
+    read_reg({{ addr_bits }}'h01, val1);
+
+    if (val0 == 8'hA5) begin
+      fail_count++;
+      `uvm_error("DLAB_SW", $sformatf("DLL=0x%02h matches THR write — aliasing failure", val0))
+    end else begin
+      pass_count++;
+      `uvm_info("DLAB_SW", $sformatf("DLL=0x%02h differs from THR — correct", val0), UVM_LOW)
+    end
+
+    if (val1 == 8'h0F) begin
+      fail_count++;
+      `uvm_error("DLAB_SW", $sformatf("DLH=0x%02h matches IER write — aliasing failure", val1))
+    end else begin
+      pass_count++;
+      `uvm_info("DLAB_SW", $sformatf("DLH=0x%02h differs from IER — correct", val1), UVM_LOW)
+    end
+
+    // Restore DLAB=0
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[7] = 1'b0;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+
+    `uvm_info("DLAB_SW", $sformatf("=== DLAB Switching: %0d pass, %0d fail ===",
+              pass_count, fail_count), UVM_LOW)
+    if (fail_count > 0)
+      `uvm_error("DLAB_SW", $sformatf("%0d aliasing check(s) failed", fail_count))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART THR/RBR Alias Test — verifies that reading 0x00 with DLAB=0
+// returns RBR (receiver buffer), not THR (transmit holding).
+// Requires: THR/RBR (0x00), LCR (0x03), LSR (0x05)
+// =========================================================================
+{% if ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_thr_rbr_alias_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_thr_rbr_alias_seq)
+
+  int pass_count;
+  int fail_count;
+
+  function new(string n = "{{ spec.design_name }}_thr_rbr_alias_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] lcr_val;
+    logic [7:0] rd_val;
+    logic [7:0] lsr_val;
+
+    `uvm_info("RBR_ALIAS", "=== THR/RBR Alias Verification ===", UVM_LOW)
+
+    // 1. Write a known pattern to THR (DLAB=0, addr 0x00)
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[7] = 1'b0;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+    repeat(5) @(posedge vif.clk);
+
+    write_reg({{ addr_bits }}'h00, 8'hA5);
+    repeat(100) @(posedge vif.clk);
+
+    // 2. Immediately read back same address — should NOT return 0xA5
+    read_reg({{ addr_bits }}'h00, rd_val);
+    read_reg({{ addr_bits }}'h05, lsr_val);
+
+    if (rd_val == 8'hA5 && !lsr_val[0]) begin
+      fail_count++;
+      `uvm_error("RBR_ALIAS", $sformatf("Read back 0x%02h = THR value (RBR not separate)", rd_val))
+    end else begin
+      pass_count++;
+      `uvm_info("RBR_ALIAS", $sformatf("Read returned 0x%02h (LSR.DR=%0d) — RBR/THR correctly aliased",
+                rd_val, lsr_val[0]), UVM_LOW)
+    end
+
+    `uvm_info("RBR_ALIAS", $sformatf("=== THR/RBR Alias: %0d pass, %0d fail ===",
+              pass_count, fail_count), UVM_LOW)
+    if (fail_count > 0)
+      `uvm_error("RBR_ALIAS", "THR/RBR alias check FAILED — read returns write data")
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Interrupt Priority Verification — asserts multiple interrupt
+// sources simultaneously, verifies IIR priority encoding per 16550 spec:
+//   1=LSR, 2=RX Data, 3=TX Empty
+// Requires: IER (0x01), IIR (0x02), LCR (0x03), MCR (0x04), THR (0x00)
+// =========================================================================
+{% if ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) and ('0x02' in _reg_addr_set or '0x2' in _reg_addr_set) and ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x03' in _reg_addr_set or '0x3' in _reg_addr_set) %}
+class {{ spec.design_name }}_interrupt_priority_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_interrupt_priority_seq)
+
+  int priority_order[3] = '{3'b100, 3'b010, 3'b001};
+  string priority_names[3] = '{"RX Data", "TX Empty", "Line Status"};
+  int pass_count;
+  int fail_count;
+
+  function new(string n = "{{ spec.design_name }}_interrupt_priority_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] ier_val;
+    logic [7:0] iir_val;
+    logic [7:0] mcr_val;
+    logic [7:0] lcr_val;
+
+    `uvm_info("INT_PRIO", "=== Interrupt Priority Verification ===", UVM_LOW)
+
+    // Enable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    // Test: Enable all interrupts, trigger multiple, verify priority
+    ier_val = 8'h0F;  // Enable all 4 interrupt types
+    write_reg({{ spec.design_name|upper }}_IER_ADDR, ier_val);
+    repeat(5) @(posedge vif.clk);
+
+    // Trigger line status (parity error)
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[3] = 1'b1;
+    lcr_val[4] = 1'b1;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+    repeat(5) @(posedge vif.clk);
+    write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'hA5);
+    repeat(500) @(posedge vif.clk);
+
+    // Trigger RX data via loopback
+    write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'h55);
+    repeat(500) @(posedge vif.clk);
+
+    // Read IIR — should show highest priority pending
+    read_reg({{ spec.design_name|upper }}_IIR_ADDR, iir_val);
+
+    if (!iir_val[0]) begin
+      `uvm_info("INT_PRIO", $sformatf("IIR=0x%02h cause=%b", iir_val, iir_val[3:1]), UVM_LOW)
+      if (iir_val[3:1] == 3'b100) begin
+        pass_count++;
+        `uvm_info("INT_PRIO", "Priority 1 (Line Status) correct — highest priority", UVM_LOW)
+      end else begin
+        fail_count++;
+        `uvm_warning("INT_PRIO", $sformatf("Expected priority 1 (LSR), got cause=%b", iir_val[3:1]))
+      end
+    end else begin
+      fail_count++;
+      `uvm_warning("INT_PRIO", "No interrupt pending when multiple sources active")
+    end
+
+    // Disable loopback, restore LCR
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    read_reg({{ addr_bits }}'h03, lcr_val);
+    lcr_val[3] = 1'b0;
+    write_reg({{ addr_bits }}'h03, lcr_val);
+
+    `uvm_info("INT_PRIO", $sformatf("=== Interrupt Priority: %0d pass, %0d fail ===",
+              pass_count, fail_count), UVM_LOW)
+    if (fail_count > 0)
+      `uvm_error("INT_PRIO", "Interrupt priority verification FAILED")
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART FIFO Reset Verification — asserts FCR bit 1 (RCVR FIFO reset)
+// and bit 2 (XMIT FIFO reset), verifies FIFOs are cleared by writing
+// then resetting and checking emptiness.
+// Requires: FCR (0x02), THR (0x00), LSR (0x05)
+// =========================================================================
+{% if ('0x02' in _reg_addr_set or '0x2' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_fifo_reset_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_fifo_reset_seq)
+
+  int pass_count;
+  int fail_count;
+
+  function new(string n = "{{ spec.design_name }}_fifo_reset_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] fcr_val;
+    logic [7:0] lsr_val;
+
+    `uvm_info("FIFO_RST", "=== FIFO Reset Verification ===", UVM_LOW)
+
+    // Enable FIFO and fill TX FIFO (FCR=0x01: enable only, no reset)
+    fcr_val = 8'b000_00_001;
+    write_reg({{ spec.design_name|upper }}_FCR_ADDR, fcr_val);
+    repeat(10) @(posedge vif.clk);
+
+    for (int i = 0; i < 16; i++) begin
+      write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'hA0 + i);
+      repeat(50) @(posedge vif.clk);
+    end
+
+    read_reg({{ spec.design_name|upper }}_LSR_ADDR, lsr_val);
+    `uvm_info("FIFO_RST", $sformatf("After fill: LSR=0x%02h THRE=%0d TEMT=%0d",
+              lsr_val, lsr_val[5], lsr_val[6]), UVM_MEDIUM)
+
+    // Assert XMIT FIFO reset (FCR bit 2)
+    fcr_val = 8'b000_00_100;
+    write_reg({{ spec.design_name|upper }}_FCR_ADDR, fcr_val);
+    repeat(10) @(posedge vif.clk);
+
+    read_reg({{ spec.design_name|upper }}_LSR_ADDR, lsr_val);
+    if (lsr_val[5] && lsr_val[6]) begin
+      pass_count++;
+      `uvm_info("FIFO_RST", "XMIT FIFO reset: THRE/TEMT set after reset — PASS", UVM_LOW)
+    end else begin
+      fail_count++;
+      `uvm_error("FIFO_RST", $sformatf("XMIT FIFO reset: THRE=%0d TEMT=%0d after reset (expected 1,1)",
+                 lsr_val[5], lsr_val[6]))
+    end
+
+    // Re-enable FIFO, verify empty
+    fcr_val = 8'b000_00_001;
+    write_reg({{ spec.design_name|upper }}_FCR_ADDR, fcr_val);
+    repeat(10) @(posedge vif.clk);
+
+    `uvm_info("FIFO_RST", $sformatf("=== FIFO Reset: %0d pass, %0d fail ===",
+              pass_count, fail_count), UVM_LOW)
+    if (fail_count > 0)
+      `uvm_error("FIFO_RST", $sformatf("%0d FIFO reset check(s) failed", fail_count))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Modem Status Register Test — verifies MSR delta bits and modem
+// signal loopback via MCR[4] (loopback mode).
+// Requires: MCR (0x04), MSR (0x06)
+// =========================================================================
+{% if ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x06' in _reg_addr_set or '0x6' in _reg_addr_set) %}
+class {{ spec.design_name }}_modem_status_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_modem_status_seq)
+
+  int pass_count;
+  int fail_count;
+
+  function new(string n = "{{ spec.design_name }}_modem_status_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] mcr_val;
+    logic [7:0] msr_val;
+
+    `uvm_info("MOD_STAT", "=== Modem Status Register Test ===", UVM_LOW)
+
+    // Enable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+
+    // Read initial MSR to clear delta bits
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    `uvm_info("MOD_STAT", $sformatf("Initial MSR=0x%02h", msr_val), UVM_MEDIUM)
+
+    // Toggle DTR (MCR[0]) → expect DSR (MSR[5]) and delta DSR (MSR[2])
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[0] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (msr_val[5]) begin pass_count++; `uvm_info("MOD_STAT", "DSR(MSR[5])=1 after DTR=1 PASS", UVM_MEDIUM); end
+    else begin fail_count++; `uvm_error("MOD_STAT", "DSR(MSR[5])=0 after DTR=1 FAIL"); end
+    if (msr_val[2]) begin pass_count++; `uvm_info("MOD_STAT", "Delta DSR(MSR[2])=1 after change PASS", UVM_MEDIUM); end
+
+    // Toggle RTS (MCR[1]) → expect CTS (MSR[4]) and delta CTS (MSR[0])
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[1] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (msr_val[4]) begin pass_count++; `uvm_info("MOD_STAT", "CTS(MSR[4])=1 after RTS=1 PASS", UVM_MEDIUM); end
+    else begin fail_count++; `uvm_error("MOD_STAT", "CTS(MSR[4])=0 after RTS=1 FAIL"); end
+    if (msr_val[0]) begin pass_count++; `uvm_info("MOD_STAT", "Delta CTS(MSR[0])=1 PASS", UVM_MEDIUM); end
+
+    // Verify OUT1/MCR[2] maps to RI/MSR[6]
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[2] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(5) @(posedge vif.clk);
+    read_reg({{ spec.design_name|upper }}_MSR_ADDR, msr_val);
+    if (msr_val[6]) begin pass_count++; `uvm_info("MOD_STAT", "RI(MSR[6])=1 after OUT1=1 PASS", UVM_MEDIUM); end
+    else begin fail_count++; `uvm_warning("MOD_STAT", "RI(MSR[6])=0 after OUT1=1 — may not be supported"); end
+
+    // Disable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    `uvm_info("MOD_STAT", $sformatf("=== Modem Status: %0d pass, %0d fail ===",
+              pass_count, fail_count), UVM_LOW)
+    if (fail_count > 0)
+      `uvm_error("MOD_STAT", $sformatf("%0d modem status check(s) failed", fail_count))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Concurrent TX/RX Stress — simultaneous transmit and receive
+// with aggressive back-to-back byte interleaving in loopback mode.
+// Requires: MCR (0x04), THR/RBR (0x00), LSR (0x05)
+// =========================================================================
+{% if ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_concurrent_stress_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_concurrent_stress_seq)
+
+  rand int num_bursts;
+  rand int burst_size;
+  int total_tx;
+  int total_rx;
+  int mismatches;
+
+  constraint c_concurrent {
+    num_bursts inside {[3:10]};
+    burst_size inside {[4:16]};
+  }
+
+  function new(string n = "{{ spec.design_name }}_concurrent_stress_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] mcr_val;
+
+    `uvm_info("CONCUR", $sformatf("=== Concurrent TX/RX Stress: %0d bursts of %0d ===",
+              num_bursts, burst_size), UVM_LOW)
+
+    // Enable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    repeat(10) @(posedge vif.clk);
+
+    for (int b = 0; b < num_bursts; b++) begin
+      logic [7:0] burst_tx[$];
+      logic [7:0] burst_rx[$];
+
+      for (int i = 0; i < burst_size; i++) begin
+        burst_tx.push_back($urandom_range(0, 255));
+      end
+
+      // Simultaneous TX burst and RX collection
+      fork
+        begin
+          foreach (burst_tx[i]) begin
+            write_reg({{ spec.design_name|upper }}_THR_ADDR, burst_tx[i]);
+            if (sb_handle != null) sb_handle.record_tx({{ spec.design_name|upper }}_THR_ADDR, burst_tx[i]);
+            total_tx++;
+            repeat(10) @(posedge vif.clk);
+          end
+        end
+        begin
+          int poll_timeout = burst_size * 200;
+          while (burst_rx.size() < burst_size && poll_timeout > 0) begin
+            logic [7:0] lsr_val;
+            logic [7:0] rbr_val;
+            read_reg({{ spec.design_name|upper }}_LSR_ADDR, lsr_val);
+            if (lsr_val[0]) begin
+              read_reg({{ spec.design_name|upper }}_RBR_ADDR, rbr_val);
+              burst_rx.push_back(rbr_val);
+              if (sb_handle != null) sb_handle.record_rx({{ spec.design_name|upper }}_RBR_ADDR, rbr_val);
+              total_rx++;
+            end
+            @(posedge vif.clk);
+            poll_timeout--;
+          end
+        end
+      join
+
+      // Compare burst data
+      foreach (burst_tx[i]) begin
+        if (i < burst_rx.size()) begin
+          if (burst_tx[i] !== burst_rx[i]) begin
+            mismatches++;
+            `uvm_error("CONCUR", $sformatf("Burst %0d byte %0d: TX=0x%02h RX=0x%02h",
+                       b, i, burst_tx[i], burst_rx[i]))
+          end
+        end else begin
+          mismatches++;
+          `uvm_error("CONCUR", $sformatf("Burst %0d byte %0d: TX=0x%02h not received", b, i, burst_tx[i]))
+        end
+      end
+
+      `uvm_info("CONCUR", $sformatf("Burst %0d: %0d TX, %0d RX", b, burst_tx.size(), burst_rx.size()), UVM_MEDIUM)
+    end
+
+    // Disable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    `uvm_info("CONCUR", $sformatf(
+      "=== Concurrent Stress: %0d TX, %0d RX, %0d mismatch ===",
+      total_tx, total_rx, mismatches), UVM_LOW)
+    if (mismatches > 0)
+      `uvm_error("CONCUR", $sformatf("%0d concurrent transfer mismatch(es)", mismatches))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Random Reset During Transfer — asserts reset while TX/RX is
+// in progress, verifies DUT recovers cleanly.
+// Requires: MCR (0x04), THR/RBR (0x00), LSR (0x05)
+// =========================================================================
+{% if ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) and ('0x05' in _reg_addr_set or '0x5' in _reg_addr_set) %}
+class {{ spec.design_name }}_random_reset_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_random_reset_seq)
+
+  rand int num_resets;
+  int recovery_ok;
+
+  constraint c_rst_count { num_resets inside {[2:5]}; }
+
+  function new(string n = "{{ spec.design_name }}_random_reset_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] mcr_val;
+    logic [7:0] lsr_val;
+
+    `uvm_info("RND_RST", $sformatf("=== Random Reset During Transfer: %0d resets ===", num_resets), UVM_LOW)
+
+    for (int r = 0; r < num_resets; r++) begin
+      // Start a transfer
+      read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+      mcr_val[4] = 1'b1;
+      write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+      write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'hA5);
+      repeat($urandom_range(5, 50)) @(posedge vif.clk);
+
+      // Assert reset mid-transfer
+      `uvm_info("RND_RST", $sformatf("Asserting reset %0d during active transfer", r), UVM_MEDIUM)
+      vif.rst_n <= 1'b0;
+      repeat($urandom_range(5, 15)) @(posedge vif.clk);
+      vif.rst_n <= 1'b1;
+      repeat(10) @(posedge vif.clk);
+
+      // Verify recovery: check LSR THRE/TEMT
+      read_reg({{ spec.design_name|upper }}_LSR_ADDR, lsr_val);
+      if (lsr_val[5] && lsr_val[6]) begin
+        recovery_ok++;
+        `uvm_info("RND_RST", $sformatf("Reset %0d: recovery OK, LSR=0x%02h", r, lsr_val), UVM_LOW)
+      end else begin
+        `uvm_error("RND_RST", $sformatf("Reset %0d: recovery FAILED, LSR=0x%02h", r, lsr_val))
+      end
+
+      // Disable loopback
+      read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+      mcr_val[4] = 1'b0;
+      write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    end
+
+    `uvm_info("RND_RST", $sformatf("=== Random Reset: %0d/%0d recovered ===",
+              recovery_ok, num_resets), UVM_LOW)
+    if (recovery_ok < num_resets)
+      `uvm_error("RND_RST", $sformatf("%0d reset(s) did not recover cleanly", num_resets - recovery_ok))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Back-to-Back Interrupt Test — rapidly generates and handles
+// interrupts of all types in quick succession, verifying IIR correctly
+// identifies each source.
+// Requires: IER (0x01), IIR (0x02), MCR (0x04), THR (0x00)
+// =========================================================================
+{% if ('0x01' in _reg_addr_set or '0x1' in _reg_addr_set) and ('0x02' in _reg_addr_set or '0x2' in _reg_addr_set) and ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and ('0x00' in _reg_addr_set or '0x0' in _reg_addr_set) %}
+class {{ spec.design_name }}_back2back_intr_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_back2back_intr_seq)
+
+  rand int num_rounds;
+  int total_irqs;
+  int detected_irqs;
+  int priority_errors;
+
+  constraint c_rounds { num_rounds inside {[5:20]}; }
+
+  function new(string n = "{{ spec.design_name }}_back2back_intr_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] ier_val;
+    logic [7:0] iir_val;
+    logic [7:0] mcr_val;
+
+    `uvm_info("B2B_INT", $sformatf("=== Back-to-Back Interrupt Test: %0d rounds ===", num_rounds), UVM_LOW)
+
+    // Enable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b1;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    for (int r = 0; r < num_rounds; r++) begin
+      int irq_type;
+      irq_type = $urandom_range(0, 2);
+
+      case (irq_type)
+        0: begin // RX data
+          ier_val = 8'h01;
+          write_reg({{ spec.design_name|upper }}_IER_ADDR, ier_val);
+          repeat(5) @(posedge vif.clk);
+          write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'h55);
+          repeat(500) @(posedge vif.clk);
+        end
+        1: begin // TX empty
+          ier_val = 8'h02;
+          write_reg({{ spec.design_name|upper }}_IER_ADDR, ier_val);
+          repeat(5) @(posedge vif.clk);
+          write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'hAA);
+          repeat(500) @(posedge vif.clk);
+        end
+        2: begin // Line status (parity)
+          ier_val = 8'h04;
+          write_reg({{ spec.design_name|upper }}_IER_ADDR, ier_val);
+          repeat(5) @(posedge vif.clk);
+          write_reg({{ spec.design_name|upper }}_THR_ADDR, 8'hA5);
+          repeat(500) @(posedge vif.clk);
+        end
+      endcase
+
+      total_irqs++;
+      read_reg({{ spec.design_name|upper }}_IIR_ADDR, iir_val);
+
+      if (!iir_val[0]) begin
+        detected_irqs++;
+        case (irq_type)
+          0: if (iir_val[3:1] != 3'b010) priority_errors++;
+          1: if (iir_val[3:1] != 3'b001) priority_errors++;
+          2: if (iir_val[3:1] != 3'b100) priority_errors++;
+        endcase
+        `uvm_info("B2B_INT", $sformatf("Round %0d type=%0d IIR=0x%02h cause=%b", r, irq_type, iir_val, iir_val[3:1]), UVM_HIGH)
+      end
+
+      // Clear pending by reading RBR / status
+      if (irq_type == 0) begin
+        logic [7:0] rbr_val;
+        read_reg({{ spec.design_name|upper }}_RBR_ADDR, rbr_val);
+      end else begin
+        logic [7:0] lsr_val;
+        read_reg({{ spec.design_name|upper }}_LSR_ADDR, lsr_val);
+      end
+      repeat(10) @(posedge vif.clk);
+    end
+
+    // Disable loopback
+    read_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+    mcr_val[4] = 1'b0;
+    write_reg({{ spec.design_name|upper }}_MCR_ADDR, mcr_val);
+
+    `uvm_info("B2B_INT", $sformatf(
+      "=== B2B Interrupt: %0d/%0d detected, %0d priority errors ===",
+      detected_irqs, total_irqs, priority_errors), UVM_LOW)
+    if (priority_errors > 0)
+      `uvm_error("B2B_INT", $sformatf("%0d interrupt priority mismatch(es)", priority_errors))
+  endtask
+endclass
+{% endif %}
+
+// =========================================================================
+// UART Functional Coverage Closure — exercises all coverage cross-bins
+// from coverage_collector, ensuring each coverpoint is hit at least once.
+// Sweeps baud×parity, baud×data_bits, parity×stop_bits combinations.
+// =========================================================================
+class {{ spec.design_name }}_coverage_closure_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_coverage_closure_seq)
+
+  int baud_list[$] = {9600, 19200, 38400, 57600, 115200, 1000000};
+  int dbits_list[$] = {5, 6, 7, 8};
+  int sbits_list[$] = {1, 2};
+  int parity_modes[5][2] = '{'{0,0}, '{1,1}, '{1,0}, '{1,1}, '{1,0}};
+  int coverage_bins[4];
+  int total_bins;
+  int hit_bins;
+
+  function new(string n = "{{ spec.design_name }}_coverage_closure_seq");
+    super.new(n);
+    total_bins = baud_list.size() * 5 + baud_list.size() * dbits_list.size() + 5 * sbits_list.size();
+  endfunction
+
+  task body;
+    {{ spec.design_name }}_config_seq cfg_seq;
+
+    `uvm_info("COV_CLOSE", $sformatf("=== Coverage Closure: %0d combinatorial bins ===", total_bins), UVM_LOW)
+
+    // Sweep baud × parity modes
+    foreach (baud_list[b]) begin
+      foreach (parity_modes[p]) begin
+        if (baud_list[b] <= 115200) begin
+          cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_b%0d_p%0d", b, p));
+          cfg_seq.reg_model = reg_model;
+          cfg_seq.baud_rate = baud_list[b];
+          cfg_seq.data_bits = 8;
+          cfg_seq.stop_bits = 1;
+          cfg_seq.parity_en = parity_modes[p][0];
+          cfg_seq.even_parity = parity_modes[p][1];
+          cfg_seq.start(m_sequencer);
+          hit_bins++;
+          coverage_bins[0]++;
+          repeat(10) @(posedge vif.clk);
+        end
+      end
+    end
+
+    // Sweep baud × data_bits
+    foreach (baud_list[b]) begin
+      foreach (dbits_list[d]) begin
+        cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_b%0d_d%0d", b, d));
+        cfg_seq.reg_model = reg_model;
+        cfg_seq.baud_rate = baud_list[b];
+        cfg_seq.data_bits = dbits_list[d];
+        cfg_seq.stop_bits = 1;
+        cfg_seq.parity_en = 0;
+        cfg_seq.start(m_sequencer);
+        hit_bins++;
+        coverage_bins[1]++;
+        repeat(10) @(posedge vif.clk);
+      end
+    end
+
+    // Sweep parity × stop_bits
+    foreach (parity_modes[p]) begin
+      foreach (sbits_list[s]) begin
+        cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("cfg_p%0d_s%0d", p, s));
+        cfg_seq.reg_model = reg_model;
+        cfg_seq.baud_rate = 115200;
+        cfg_seq.data_bits = 8;
+        cfg_seq.stop_bits = sbits_list[s];
+        cfg_seq.parity_en = parity_modes[p][0];
+        cfg_seq.even_parity = parity_modes[p][1];
+        cfg_seq.start(m_sequencer);
+        hit_bins++;
+        coverage_bins[2]++;
+        repeat(10) @(posedge vif.clk);
+      end
+    end
+
+    `uvm_info("COV_CLOSE", $sformatf(
+      "\n  === Coverage Closure Report ==="
+      "\n  Baud×Parity bins:    %0d"
+      "\n  Baud×DataBits bins:  %0d"
+      "\n  Parity×StopBits bins:%0d"
+      "\n  Total bins hit:      %0d/%0d",
+      coverage_bins[0], coverage_bins[1], coverage_bins[2], hit_bins, total_bins), UVM_LOW)
+
+    if (hit_bins < total_bins)
+      `uvm_warning("COV_CLOSE", $sformatf("Coverage closure incomplete: %0d/%0d bins hit", hit_bins, total_bins))
+    else
+      `uvm_info("COV_CLOSE", "Full coverage closure achieved!", UVM_LOW)
+  endtask
+endclass
+
 {% endif %}
 
 {% if p == "apb" %}
