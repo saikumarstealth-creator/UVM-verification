@@ -403,6 +403,9 @@ class {{ spec.design_name }}_config_seq extends {{ spec.design_name }}_base_seq;
     logic [7:0] lcr_val;
     logic [15:0] divisor;
 
+    // Allow config DB override of clock frequency
+    void'(uvm_config_db #(int)::get(null, get_full_name(), "clk_freq", clk_freq));
+
     divisor = get_divisor(baud_rate);
 
     lcr_val[1:0] = get_wls(data_bits);
@@ -841,6 +844,8 @@ class {{ spec.design_name }}_error_injection_seq extends {{ spec.design_name }}_
 
     if (sb_handle != null) begin
       sb_handle.configure_injection(inj_type.name(), num_injections);
+    end else begin
+      `uvm_warning("{{ spec.design_name|upper }}_INJ", "sb_handle null — configure_injection() not supported, scoreboard may not track injections")
     end
 
     for (int i = 0; i < num_injections; i++) begin
@@ -1456,7 +1461,11 @@ class {{ spec.design_name }}_reset_test_seq extends {{ spec.design_name }}_base_
   task body;
     uvm_status_e status;
     uvm_reg_data_t val;
-    string regs_to_check[$];
+    uvm_reg rglist[$];
+
+    if (reg_model == null) begin
+      `uvm_fatal("{{ spec.design_name|upper }}_RST", "reg_model not set in reset_test_seq")
+    end
 
     `uvm_info("{{ spec.design_name|upper }}_RST", "Starting register reset value verification", UVM_LOW)
 
@@ -1467,23 +1476,19 @@ class {{ spec.design_name }}_reset_test_seq extends {{ spec.design_name }}_base_
     vif.rst_n <= 1'b1;
     repeat (5) @(posedge vif.clk);
 
-    regs_to_check = {
-      {% for r in sorted_regs %}"{{ r.name|lower }}"{% if not loop.last %}, {% endif %}{% endfor %}
-    };
+    // Use get_registers() for spec-driven dynamic iteration — no hardcoded names
+    reg_model.get_registers(rglist);
 
-    foreach (regs_to_check[i]) begin
-      if (reg_model != null) begin
-        uvm_reg rg = reg_model.get_reg_by_name(regs_to_check[i]);
-        if (rg != null) begin
-          rg.read(status, val, .parent(this));
-          `uvm_info("{{ spec.design_name|upper }}_RST", $sformatf("Reg %s = 0x%0h (reset: 0x%0h)",
-                    regs_to_check[i], val, rg.get_reset()), UVM_MEDIUM)
-          if (val !== rg.get_reset()) begin
-            num_mismatches++;
-            `uvm_error("{{ spec.design_name|upper }}_RST", $sformatf("Reg %s mismatch: got 0x%0h, expected 0x%0h",
-                      regs_to_check[i], val, rg.get_reset()))
-          end
-        end
+    foreach (rglist[i]) begin
+      uvm_reg rg = rglist[i];
+      if (rg == null) continue;
+      rg.read(status, val, .parent(this));
+      `uvm_info("{{ spec.design_name|upper }}_RST", $sformatf("Reg %s = 0x%0h (reset: 0x%0h)",
+                rg.get_name(), val, rg.get_reset()), UVM_MEDIUM)
+      if (val !== rg.get_reset()) begin
+        num_mismatches++;
+        `uvm_error("{{ spec.design_name|upper }}_RST", $sformatf("Reg %s mismatch: got 0x%0h, expected 0x%0h",
+                  rg.get_name(), val, rg.get_reset()))
       end
     end
 
@@ -1563,6 +1568,8 @@ class {{ spec.design_name }}_coverage_seq extends {{ spec.design_name }}_base_se
         cov_baud, baud_list.size(),
         cov_parity, cov_wordlen
       ), UVM_LOW)
+    end else begin
+      `uvm_warning("{{ spec.design_name|upper }}_COV", "sb_handle null — extract_coverage() not supported, scoreboard coverage data unavailable")
     end
   endtask
 
