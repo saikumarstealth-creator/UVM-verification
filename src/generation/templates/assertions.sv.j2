@@ -60,6 +60,48 @@ interface {{ spec.design_name }}_assertions ({{ spec.design_name }}_interface vi
     endproperty
   end endgenerate
 
+  // -------------------------------------------------------------------------
+  // UART Interrupt Assertions
+  // -------------------------------------------------------------------------
+  // Interrupt recovery: IRQ must de-assert within 1 cycle after IIR read
+  // (IIR read is a write to the FIFO or a read of IIR itself)
+  wire irq_read_trigger;
+  assign irq_read_trigger = (vif.wb_stb && vif.wb_we && vif.wb_addr == 3'h2) ||
+                            (vif.wb_stb && !vif.wb_we && vif.wb_addr == 3'h2);
+
+  property irq_recovery;
+    @(posedge vif.{{ spec.clock_reset.clock }})
+    irq_read_trigger |=> vif.irq_n === 1'b1;
+  endproperty
+  assert_irq_recovery: assert property (irq_recovery)
+    else `uvm_error("SVA", "UART: IRQ not de-asserted within 1 cycle of IIR read")
+
+  // Interrupt pending: when an enabled interrupt source is active, IRQ must be low
+  // (Active-low irq_n — asserted when data available, TX empty, line status, etc.)
+  // Simplified: whenever IIR[0] == 0 (interrupt pending), irq_n must be asserted
+  property irq_pending;
+    @(posedge vif.{{ spec.clock_reset.clock }})
+    vif.wb_stb && !vif.wb_we && vif.wb_addr == 3'h2 |-> 
+      (vif.wb_data_i[0] == 1'b0) |=> vif.irq_n === 1'b0;
+  endproperty
+  assert_irq_pending: assert property (irq_pending)
+    else `uvm_error("SVA", "UART: IIR indicates pending but IRQ not asserted")
+
+  // Interrupt priority: IIR[3:1] encoding must reflect 16550 priority:
+  //   1: Line Status (highest)
+  //   2: RX Data Available
+  //   3: TX Holding Register Empty
+  //   4: Modem Status (lowest)
+  // When multiple events are pending, only the highest priority is reported.
+  property irq_priority;
+    @(posedge vif.{{ spec.clock_reset.clock }})
+    vif.wb_stb && !vif.wb_we && vif.wb_addr == 3'h2 |->
+      // IIR[3:1] must be one of: 3'b100 (LS), 3'b010 (RX), 3'b001 (TX), 3'b000 (MS)
+      (vif.wb_data_i[3:1] inside {3'b100, 3'b010, 3'b001, 3'b000});
+  endproperty
+  assert_irq_priority: assert property (irq_priority)
+    else `uvm_error("SVA", "UART: IIR interrupt priority encoding invalid")
+
 {% elif p == "apb" %}
   // -------------------------------------------------------------------------
   // APB Protocol Assertions

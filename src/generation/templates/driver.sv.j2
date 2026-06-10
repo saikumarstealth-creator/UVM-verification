@@ -1,4 +1,6 @@
 // UVM Driver for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 class {{ spec.design_name }}_driver extends uvm_driver #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_driver)

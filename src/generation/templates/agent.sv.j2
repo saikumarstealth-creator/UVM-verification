@@ -1,4 +1,6 @@
 // UVM Agent for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 class {{ spec.design_name }}_agent extends uvm_agent;
   `uvm_component_utils({{ spec.design_name }}_agent)

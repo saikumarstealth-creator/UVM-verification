@@ -29,7 +29,7 @@ from src.simulation.base import CoverageDB
 from src.simulation.icarus import IcarusSimulator
 from src.simulation.stub_sim import StubSimulator
 from src.evaluation.quality_score import QualityScore, compute_quality_score
-from src.evaluation.sv_checker import check_directory as sv_check_directory, summarize as sv_summarize, collect_suggestions
+from src.evaluation.sv_checker import check_directory as sv_check_directory, summarize as sv_summarize, collect_suggestions, try_icarus_compile
 from src.evaluation.cross_file_validator import validate_generated_files
 from src.tracking.experiments import ExperimentTracker
 from src.tracking.logger import setup_logging
@@ -464,6 +464,27 @@ class TBPipeline:
                 if res.issues:
                     for iss in res.issues[:5]:
                         self.logger.debug("  [%s] %s:%d %s", iss.severity.upper(), fname, iss.line, iss.message)
+
+            # 6a2b. Optional Icarus real compilation check (catches undefined UVM macros, etc.)
+            icarus_result = try_icarus_compile(
+                generated,
+                uvm_home=self.cfg.auto_train.uvm_home,
+            )
+            if icarus_result["available"]:
+                icarus_ok = icarus_result["exit_code"] == 0 and not icarus_result["timed_out"]
+                self.logger.info("Icarus compile check: %s (exit=%s, errors=%d, UVM warnings=%d)",
+                                 "PASS" if icarus_ok else "FAIL",
+                                 icarus_result["exit_code"],
+                                 len(icarus_result["errors"]),
+                                 len(icarus_result["warnings"]))
+                if icarus_result["errors"]:
+                    for err in icarus_result["errors"][:10]:
+                        self.logger.warning("  [ICARUS] %s", err)
+                if icarus_result["warnings"]:
+                    for warn in icarus_result["warnings"][:10]:
+                        self.logger.warning("  [ICARUS] %s", warn)
+            else:
+                self.logger.info("Icarus not available — skipping real compilation check")
 
             # Determine sequence quality based on what's generated
             seq_score = 0.85

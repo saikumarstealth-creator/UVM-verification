@@ -33,6 +33,7 @@ class TemplateModel(GenerationModel):
         "test_{name}.sv": "test.sv.j2",
         "compile.f": "compile.f.j2",
         "top_tb.sv": "top_tb.sv.j2",
+        "main.v": "main.v.j2",
         "coverage_collector_{name}.sv": "coverage_collector.sv.j2",
         "sequence_item_{name}.sv": "sequence_item.sv.j2",
         "sequence_{name}.sv": "sequence.sv.j2",
@@ -153,6 +154,7 @@ class TemplateModel(GenerationModel):
             generated[out_name] = str(out_path)
 
         # Protocol checker
+        for out_pattern, template_file in self.PROTOCOL_CHECKER_MAP.items():
             out_name = out_pattern.format(name=name)
             tmpl = env.get_template(template_file)
             content = tmpl.render(spec=spec)

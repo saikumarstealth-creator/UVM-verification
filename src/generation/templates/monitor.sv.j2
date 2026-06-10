@@ -1,4 +1,6 @@
 // UVM Monitor for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 class {{ spec.design_name }}_monitor extends uvm_monitor;
   `uvm_component_utils({{ spec.design_name }}_monitor)

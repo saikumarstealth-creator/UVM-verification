@@ -92,10 +92,10 @@ module top_tb;
     {% endif %}
   );
 
-  // UVM config + launch
+  // UVM config + launch (default test: {{ spec.design_name }}_base_test)
   initial begin
     uvm_config_db#(virtual {{ spec.design_name }}_intf)::set(null, "*", "vif", intf);
-    run_test();
+    run_test("{{ spec.design_name }}_base_test");
   end
 
   initial begin clk = 0; forever #5 clk = ~clk; end

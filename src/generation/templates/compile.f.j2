@@ -1,5 +1,8 @@
 # Compile file for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+# UVM library path — set UVM_HOME environment variable or edit here
 +incdir+.
++incdir+$(UVM_HOME)/src
+-uvmhome $(UVM_HOME)
 {% for f in spec.files|default([]) %}
 ../{{ f }}
 {% else %}

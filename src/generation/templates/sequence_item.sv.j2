@@ -1,5 +1,7 @@
 // UVM Sequence Item for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
 // Enhanced with field automation, serial-level error injection flags, dynamic addr/data widths
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}

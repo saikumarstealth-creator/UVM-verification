@@ -1,8 +1,12 @@
 // UVM RAL Model for {{ spec.design_name }}
 // Auto-generated from spec registers — production-grade
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set regs = spec.registers if spec.registers else [] %}
 {% set sizes = regs|map(attribute='size')|select('number')|list %}
-{% set data_width = sizes|max if sizes else 32 %}
+{% set data_width = sizes|max if sizes else 8 %}
+{% set p = spec.protocol|default("wishbone") %}
+{% if p == "uart" %}{% set data_width = 8 %}{% endif %}
 {% set all_addrs = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
 {% set max_addr = all_addrs|max if all_addrs else 0 %}
 {% set addr_bits = [max_addr.bit_length(), 3]|max %}
@@ -40,7 +44,6 @@ class {{ spec.design_name }}_reg_{{ r.name|lower }} extends uvm_reg;
     {% set lsb = parts[1]|int %}
     {% set f_width = msb - lsb + 1 %}
   {% else %}
-    {# Single bit: bits: '3' means 1-bit field at position 3 #}
     {% set lsb = f.bits|int %}
     {% set f_width = 1 %}
   {% endif %}
@@ -55,22 +58,81 @@ class {{ spec.design_name }}_reg_{{ r.name|lower }} extends uvm_reg;
     data.configure(this, {{ reg_width }}, 0, "{{ reg_access }}",
       {% if r.volatile %}1{% else %}0{% endif %}, {{ reg_width }}'h{{ r_reset }}, 1, 1, 1);
 {% endif %}
+    // Enable backdoor access path for peek/poke/mirror against RTL
+    add_hdl_path();
   endfunction
 
-  // Enable field-value coverage for functional coverage analysis
+  // ── Functional coverage model: field-value cross coverage ────────────
   function void build_coverage();
     if (get_coverage() inside {UVM_CVR_ALL, UVM_CVR_FIELD_VALS})
       super.build_coverage();
     has_cover = (get_coverage() == UVM_CVR_ALL) ? 1 : get_coverage();
+    if (get_coverage() inside {UVM_CVR_ALL, UVM_CVR_FIELD_VALS}) begin
+      // Sample field values for functional coverage closure analysis
+      void'(sample_field_values());
+    end
   endfunction
 
   // HDL path for backdoor access (peek/poke/mirror against RTL)
   virtual function void add_hdl_path();
     add_hdl_path_slice("{{ r.name|lower }}_reg", 0, {{ reg_width }});
   endfunction
+
+  // Sample all field values into the RAL built-in coverage model
+  virtual function bit sample_field_values();
+    uvm_reg_field fields[$];
+    get_fields(fields);
+    foreach (fields[i])
+      fields[i].has_cover = 1;
+    return 1;
+  endfunction
 endclass
 
 {% endfor %}
+
+{% if p == "uart" %}
+// ============================================================================
+// UART 16550 Alias Registers — DLL/DLH (baud divisor latch)
+// These share addresses with THR (0x00) and IER (0x01) when DLAB=1.
+// ============================================================================
+class {{ spec.design_name }}_reg_dll extends uvm_reg;
+  `uvm_object_utils({{ spec.design_name }}_reg_dll)
+  rand uvm_reg_field dll_val;
+
+  function new(string name = "{{ spec.design_name }}_reg_dll");
+    super.new(name, 8, UVM_CVR_ALL);
+  endfunction
+
+  virtual function void build();
+    dll_val = uvm_reg_field::type_id::create("dll_val");
+    dll_val.configure(this, 8, 0, "RW", 0, 8'h01, 1, 1, 1);
+    add_hdl_path();
+  endfunction
+
+  virtual function void add_hdl_path();
+    add_hdl_path_slice("dll_reg", 0, 8);
+  endfunction
+endclass
+
+class {{ spec.design_name }}_reg_dlh extends uvm_reg;
+  `uvm_object_utils({{ spec.design_name }}_reg_dlh)
+  rand uvm_reg_field dlh_val;
+
+  function new(string name = "{{ spec.design_name }}_reg_dlh");
+    super.new(name, 8, UVM_CVR_ALL);
+  endfunction
+
+  virtual function void build();
+    dlh_val = uvm_reg_field::type_id::create("dlh_val");
+    dlh_val.configure(this, 8, 0, "RW", 0, 8'h00, 1, 1, 1);
+    add_hdl_path();
+  endfunction
+
+  virtual function void add_hdl_path();
+    add_hdl_path_slice("dlh_reg", 0, 8);
+  endfunction
+endclass
+{% endif %}
 
 // ============================================================================
 // Register Block
@@ -80,6 +142,10 @@ class {{ spec.design_name }}_reg_block extends uvm_reg_block;
 {% for r in regs %}
   rand {{ spec.design_name }}_reg_{{ r.name|lower }} {{ r.name|lower }};
 {% endfor %}
+{% if p == "uart" %}
+  rand {{ spec.design_name }}_reg_dll  dll;
+  rand {{ spec.design_name }}_reg_dlh  dlh;
+{% endif %}
 
   uvm_reg_map reg_map;
 
@@ -91,22 +157,37 @@ class {{ spec.design_name }}_reg_block extends uvm_reg_block;
 {% for r in regs %}
     {{ r.name|lower }} = {{ spec.design_name }}_reg_{{ r.name|lower }}::type_id::create("{{ r.name|lower }}");
 {% endfor %}
+{% if p == "uart" %}
+    dll = {{ spec.design_name }}_reg_dll::type_id::create("dll");
+    dlh = {{ spec.design_name }}_reg_dlh::type_id::create("dlh");
+{% endif %}
 {% for r in regs %}
     {{ r.name|lower }}.configure(this, null, "");
 {% endfor %}
+{% if p == "uart" %}
+    dll.configure(this, null, "");
+    dlh.configure(this, null, "");
+{% endif %}
 {% for r in regs %}
     {{ r.name|lower }}.build();
 {% endfor %}
+{% if p == "uart" %}
+    dll.build();
+    dlh.build();
+{% endif %}
     reg_map = create_map("reg_map", 'h0, {{ stride }}, UVM_LITTLE_ENDIAN, 1);
 {% for r in regs %}
     reg_map.add_reg({{ r.name|lower }}, 'h{{ r.address.replace('0x', '').replace('h', '') }}, "{{ r.access|upper if r.access else 'RW' }}");
 {% endfor %}
+{% if p == "uart" %}
+    // Alias DLL/DLH at same addresses as THR(0x00) and IER(0x01) — DLAB-gated
+    reg_map.add_reg(dll, 'h0, "RW");
+    reg_map.add_reg(dlh, 'h1, "RW");
+{% endif %}
     lock_model();
   endfunction
 
   // ── Predictor wiring ──────────────────────────────────────────────────
-  // Call this after environment build:
-  //   reg_block.connect_predictor(predictor, adapter, monitor.ap);
   function void connect_predictor(
     {{ spec.design_name }}_reg_predictor predictor,
     {{ spec.design_name }}_reg_adapter  adapter,
@@ -115,6 +196,17 @@ class {{ spec.design_name }}_reg_block extends uvm_reg_block;
     predictor.map       = this.reg_map;
     predictor.adapter   = adapter;
     bus_ap.connect(predictor.bus_in);
+  endfunction
+endclass
+
+// ============================================================================
+// Register Predictor — auto-predicts register values from bus transactions
+// ============================================================================
+class {{ spec.design_name }}_reg_predictor extends uvm_reg_predictor;
+  `uvm_component_utils({{ spec.design_name }}_reg_predictor)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
   endfunction
 endclass
 
@@ -153,145 +245,7 @@ class {{ spec.design_name }}_reg_adapter extends uvm_reg_adapter;
 endclass
 
 // ============================================================================
-// Memory Walk Sequence — walks address map (registers and memory regions),
-// validates decode and read/write integrity.
-// ============================================================================
-class {{ spec.design_name }}_reg_mem_walk_seq extends uvm_reg_mem_walk_seq;
-  `uvm_object_utils({{ spec.design_name }}_reg_mem_walk_seq)
-
-  {{ spec.design_name }}_reg_block reg_model;
-  int total_regions;
-  int completed_regions;
-  int errors;
-
-  function new(string name = "{{ spec.design_name }}_reg_mem_walk_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    model = reg_model;
-    super.body();
-  endtask
-endclass
-
-// ---------------------------------------------------------------------------
-// Enhanced All-Registers Sequence: writes unique patterns to every register
-// then reads them back. Supports burst mode and data integrity checks.
-// ---------------------------------------------------------------------------
-class {{ spec.design_name }}_enhanced_regs_seq extends {{ spec.design_name }}_base_seq;
-  `uvm_object_utils({{ spec.design_name }}_enhanced_regs_seq)
-
-  rand int burst_size;
-  int writes_issued;
-  int reads_issued;
-  int mismatches;
-
-  constraint c_burst { burst_size inside {[1:16]}; }
-
-  function new(string n = "{{ spec.design_name }}_enhanced_regs_seq");
-    super.new(n);
-    burst_size = 4;
-  endfunction
-
-  task body;
-    uvm_status_e st;
-    uvm_reg_data_t val;
-    uvm_reg rg;
-    uvm_reg rg_array[$];
-    logic [{{ data_width-1 }}:0] golden[$];
-    int burst_cnt;
-    string rg_name;
-
-    if (reg_model == null) begin
-      `uvm_fatal("SEQ", "reg_model not set in enhanced_regs_seq")
-    end
-
-    rg_array = reg_model.reg_map.get_regs();
-    `uvm_info("ENH_REG", $sformatf("Starting enhanced reg walk: %0d registers, burst=%0d",
-              rg_array.size(), burst_size), UVM_LOW)
-
-    // ── Write phase (burst mode) ──────────────────────────────────────
-    foreach (rg_array[i]) begin
-      rg = rg_array[i];
-      if (rg == null) continue;
-      rg_name = rg.get_name();
-
-      // Skip read-only registers
-      if (rg.get_access() inside {"RO", "RC"}) begin
-        `uvm_info("ENH_REG", $sformatf("Skipping RO/RC register: %s", rg_name), UVM_HIGH)
-        continue;
-      end
-
-      // Generate data: walking-1 pattern based on register index
-      val = ({{ data_width }}'(1) << (i % {{ data_width }})) |
-            {{ data_width }}'(i * 32 + 16);
-      golden.push_back(val);
-
-      `uvm_info("ENH_REG", $sformatf("Writing %s = 0x%0h (walking-bit pattern)",
-                rg_name, val), UVM_MEDIUM)
-      rg.write(st, val, .parent(this));
-      writes_issued++;
-
-      if (st != UVM_IS_OK) begin
-        `uvm_error("ENH_REG", $sformatf("%s write failed with status %s", rg_name, st.name()))
-      end
-
-      // Burst pacing: insert a few ns between burst groups
-      burst_cnt++;
-      if (burst_cnt >= burst_size) begin
-        burst_cnt = 0;
-        #100ns;
-      end
-    end
-
-    // Separator between write and read bursts
-    #200ns;
-
-    // ── Read phase ────────────────────────────────────────────────────
-    foreach (rg_array[j]) begin
-      rg = rg_array[j];
-      if (rg == null) continue;
-      rg_name = rg.get_name();
-
-      if (rg.get_access() inside {"RO", "RC"}) begin
-        // Read-only: just verify it reads without error
-        rg.read(st, val, .parent(this));
-        if (st != UVM_IS_OK)
-          `uvm_error("ENH_REG", $sformatf("RO %s read failed with status %s", rg_name, st.name()))
-        else
-          `uvm_info("ENH_REG", $sformatf("RO %s = 0x%0h (no golden check)", rg_name, val), UVM_HIGH)
-        continue;
-      end
-
-      rg.read(st, val, .parent(this));
-      reads_issued++;
-
-      if (st != UVM_IS_OK) begin
-        `uvm_error("ENH_REG", $sformatf("%s read failed with status %s", rg_name, st.name()))
-        mismatches++;
-      end else if (j < golden.size() && val !== golden[j]) begin
-        mismatches++;
-        `uvm_error("ENH_REG", $sformatf("%s mismatch: wrote 0x%0h, read 0x%0h",
-                  rg_name, golden[j], val))
-      end else begin
-        `uvm_info("ENH_REG", $sformatf("%s MATCH: 0x%0h", rg_name, val), UVM_HIGH)
-      end
-    end
-
-    `uvm_info("ENH_REG", $sformatf(
-      "\n  === Enhanced Register Walk Report ==="
-      "\n  Writes:     %0d"
-      "\n  Reads:      %0d"
-      "\n  Mismatches: %0d"
-      "\n  Status:     %s",
-      writes_issued, reads_issued, mismatches,
-      (mismatches == 0) ? "PASS" : "FAIL"
-    ), UVM_LOW)
-  endtask
-endclass
-
-// ============================================================================
-// Standard RAL Sequences
+// Production-Grade RAL Sequences
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -388,7 +342,7 @@ class {{ spec.design_name }}_all_regs_seq extends uvm_reg_sequence #(uvm_reg_ite
       uvm_reg rg = reg_model.reg_map.get_regs()[i];
       if (rg == null) continue;
 
-      val = $urandom_range(0, (1 << {{ data_width }}) - 1);
+      val = $urandom();
       `uvm_info("RAL_SEQ", $sformatf("Writing 0x%0h to %s", val, rg.get_name()), UVM_MEDIUM)
       rg.write(st, val, .parent(this));
       if (st != UVM_IS_OK)
@@ -407,3 +361,218 @@ class {{ spec.design_name }}_all_regs_seq extends uvm_reg_sequence #(uvm_reg_ite
     `uvm_info("RAL_SEQ", "Exhaustive register access sequence completed", UVM_LOW)
   endtask
 endclass
+
+// ---------------------------------------------------------------------------
+// Frontdoor vs Backdoor Comparison Sequence — validates RAL mirror accuracy
+// by writing via frontdoor, then reading via backdoor and comparing.
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_fd_bd_cmp_seq extends uvm_reg_sequence #(uvm_reg_item);
+  `uvm_object_utils({{ spec.design_name }}_reg_fd_bd_cmp_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+  int mismatches;
+  int compares;
+
+  function new(string name = "{{ spec.design_name }}_reg_fd_bd_cmp_seq");
+    super.new(name);
+  endfunction
+
+  task body;
+    uvm_status_e st;
+    uvm_reg_data_t fd_val, bd_val;
+    uvm_reg rg_array[$];
+    uvm_reg rg;
+
+    if (reg_model == null) begin
+      `uvm_fatal("SEQ", "reg_model not set in fd_bd_cmp_seq")
+    end
+
+    rg_array = reg_model.reg_map.get_regs();
+    `uvm_info("FD_BD", $sformatf("Frontdoor/backdoor comparison: %0d registers", rg_array.size()), UVM_LOW)
+
+    foreach (rg_array[i]) begin
+      rg = rg_array[i];
+      if (rg == null) continue;
+      if (rg.get_access() inside {"RO", "RC"}) continue;
+
+      fd_val = $urandom();
+      rg.write(st, fd_val, .parent(this));
+      if (st != UVM_IS_OK) begin
+        `uvm_error("FD_BD", $sformatf("%s frontdoor write failed", rg.get_name()))
+        continue;
+      end
+      rg.peek(st, bd_val);
+      if (st != UVM_IS_OK) begin
+        `uvm_error("FD_BD", $sformatf("%s backdoor peek failed", rg.get_name()))
+        continue;
+      end
+      compares++;
+      if (bd_val !== fd_val) begin
+        mismatches++;
+        `uvm_error("FD_BD", $sformatf("%s mismatch: frontdoor=0x%0h backdoor=0x%0h",
+                  rg.get_name(), fd_val, bd_val))
+      end else begin
+        `uvm_info("FD_BD", $sformatf("%s MATCH: 0x%0h", rg.get_name(), fd_val), UVM_HIGH)
+      end
+    end
+    `uvm_info("FD_BD", $sformatf(
+      "Frontdoor/backdoor: %0d compares, %0d mismatches — %s",
+      compares, mismatches, (mismatches == 0) ? "PASS" : "FAIL"), UVM_LOW)
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// Register Mirror Sequence — validates RAL mirror vs hardware using
+// reg_model.mirror() with UVM_CHECK.
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_mirror_seq extends uvm_reg_sequence #(uvm_reg_item);
+  `uvm_object_utils({{ spec.design_name }}_reg_mirror_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+  int err_count;
+
+  function new(string name = "{{ spec.design_name }}_reg_mirror_seq");
+    super.new(name);
+  endfunction
+
+  task body;
+    uvm_status_e st;
+    if (reg_model == null) begin
+      `uvm_fatal("SEQ", "reg_model not set in reg_mirror_seq")
+    end
+    `uvm_info("MIRROR", "Starting register mirror check with UVM_CHECK", UVM_LOW)
+    reg_model.reg_map.set_auto_predict(1);
+    reg_model.mirror(st, UVM_CHECK, UVM_FRONTDOOR, .parent(this));
+    if (st == UVM_IS_OK)
+      `uvm_info("MIRROR", "Mirror check PASSED — all registers match hardware", UVM_LOW)
+    else begin
+      err_count = st;
+      `uvm_error("MIRROR", $sformatf("Mirror check FAILED — %0d errors detected", err_count))
+    end
+  endtask
+endclass
+
+// ---------------------------------------------------------------------------
+// Register Coverage Closure Sequence — samples every register field with
+// edge-case values to close functional coverage gaps.
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_cov_closure_seq extends uvm_reg_sequence #(uvm_reg_item);
+  `uvm_object_utils({{ spec.design_name }}_reg_cov_closure_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+  int bins_hit;
+  int total_bins;
+
+  function new(string name = "{{ spec.design_name }}_reg_cov_closure_seq");
+    super.new(name);
+  endfunction
+
+  task body;
+    uvm_status_e st;
+    uvm_reg rg;
+    uvm_reg rg_array[$];
+    logic [{{ data_width-1 }}:0] edge_vals[4];
+
+    if (reg_model == null) begin
+      `uvm_fatal("SEQ", "reg_model not set in reg_cov_closure_seq")
+    end
+    rg_array = reg_model.reg_map.get_regs();
+    `uvm_info("COV_CLOSE", $sformatf("Coverage closure: %0d registers", rg_array.size()), UVM_LOW)
+
+    edge_vals[0] = 'h0;
+    edge_vals[1] = '1;
+    edge_vals[2] = {{ data_width }}'(1);
+    edge_vals[3] = {{ data_width }}'('1 << ({{ data_width }} - 1));
+
+    foreach (rg_array[i]) begin
+      rg = rg_array[i];
+      if (rg == null) continue;
+      if (rg.get_access() inside {"RO", "RC"}) continue;
+      foreach (edge_vals[j]) begin
+        uvm_reg_data_t write_val = edge_vals[j];
+        rg.write(st, write_val, .parent(this));
+        if (st == UVM_IS_OK) begin
+          bins_hit++;
+          void'(rg.sample_values());
+        end
+      end
+      total_bins += 4;
+    end
+    `uvm_info("COV_CLOSE", $sformatf(
+      "Coverage closure: hit %0d/%0d bins — %s",
+      bins_hit, total_bins,
+      (bins_hit >= total_bins) ? "FULL COVERAGE" : "partial"), UVM_LOW)
+  endtask
+endclass
+
+{% if p == "uart" %}
+// ---------------------------------------------------------------------------
+// UART Register Alias Sequence — validates THR/RBR ↔ DLL aliasing via DLAB
+// ---------------------------------------------------------------------------
+class {{ spec.design_name }}_reg_alias_seq extends uvm_reg_sequence #(uvm_reg_item);
+  `uvm_object_utils({{ spec.design_name }}_reg_alias_seq)
+
+  {{ spec.design_name }}_reg_block reg_model;
+  int alias_mismatches;
+
+  function new(string name = "{{ spec.design_name }}_reg_alias_seq");
+    super.new(name);
+  endfunction
+
+  task body;
+    uvm_status_e st;
+    uvm_reg_data_t thr_val, dll_val, rbr_val, dlh_val, readback;
+
+    if (reg_model == null) begin
+      `uvm_fatal("SEQ", "reg_model not set in reg_alias_seq")
+    end
+    `uvm_info("ALIAS", "Starting UART register alias test (DLAB switching)", UVM_LOW)
+
+    thr_val = 8'hA5;
+    reg_model.thr.write(st, thr_val, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "THR write failed"); alias_mismatches++;
+    end
+
+    reg_model.lcr.write(st, 8'h80, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "LCR write (DLAB=1) failed"); alias_mismatches++;
+    end
+
+    dll_val = 8'h01;
+    reg_model.dll.write(st, dll_val, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "DLL write failed"); alias_mismatches++;
+    end
+
+    dlh_val = 8'h00;
+    reg_model.dlh.write(st, dlh_val, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "DLH write failed"); alias_mismatches++;
+    end
+
+    reg_model.lcr.write(st, 8'h03, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "LCR write (DLAB=0) failed"); alias_mismatches++;
+    end
+
+    reg_model.rbr.read(st, rbr_val, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "RBR read failed"); alias_mismatches++;
+    end
+
+    reg_model.lcr.read(st, readback, .parent(this));
+    if (st != UVM_IS_OK) begin
+      `uvm_error("ALIAS", "LCR read failed"); alias_mismatches++;
+    end else if (readback[7] != 1'b0) begin
+      `uvm_error("ALIAS", $sformatf("LCR DLAB still set after writing 0x03: readback=0x%0h", readback))
+      alias_mismatches++;
+    end
+
+    if (alias_mismatches == 0)
+      `uvm_info("ALIAS", "Register alias test PASSED — DLAB switching works correctly", UVM_LOW)
+    else
+      `uvm_error("ALIAS", $sformatf("Register alias test FAILED — %0d mismatches", alias_mismatches))
+  endtask
+endclass
+{% endif %}

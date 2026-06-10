@@ -2,6 +2,8 @@
 // Holds sub-sequencer handles for each interface in the spec.
 // Virtual sequences reference vsequencer.<name>_seqr to arbitrate across
 // multiple protocol agents.
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {%- set p = spec.protocol|default("wishbone") %}
 {%- set intfs = spec.interfaces if spec.interfaces else [] %}
 class {{ spec.design_name }}_virtual_sequencer extends uvm_sequencer;

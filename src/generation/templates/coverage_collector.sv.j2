@@ -1,4 +1,6 @@
 // UVM Coverage Collector for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set addr_ints = regs|map(attribute='address')|map('replace', '0x', '')|map('replace', 'h', '')|map('int', 16)|list %}
@@ -260,6 +262,22 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
   // Per-register field-level covergroups — auto-generated from YAML spec
   // ---------------------------------------------------------------------------
 {% for r in regs %}
+  // Reserved bit mask: bits not used by any defined field are reserved (must be 0)
+{% set _ns = namespace(all_field_bits=[]) %}
+{% if r.fields %}
+  {% for f in r.fields %}
+    {% if ':' in f.bits %}
+      {% set _parts = f.bits.split(':') %}
+      {% set _msb = _parts[0]|int %}
+      {% set _lsb = _parts[1]|int %}
+      {% for _b in range(_lsb, _msb+1) %}
+        {% set _ns.all_field_bits = _ns.all_field_bits + [_b] %}
+      {% endfor %}
+    {% else %}
+      {% set _ns.all_field_bits = _ns.all_field_bits + [f.bits|int] %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
   covergroup reg_{{ r.name|lower }}_cg with function sample(bit we, bit [{{ data_width-1 }}:0] data);
     option.per_instance = 1;
     cp_access: coverpoint we;
@@ -282,6 +300,15 @@ class {{ spec.design_name }}_coverage_collector extends uvm_subscriber #({{ spec
       bins others = default;
     }
 {% endfor %}
+    // Illegal: reserved bits (outside defined field ranges) are set
+{%- set _reserved_mask_ns = namespace(mask=0) %}
+{%- for _b in _ns.all_field_bits -%}
+{%- set _reserved_mask_ns.mask = _reserved_mask_ns.mask + 2**_b -%}
+{%- endfor -%}
+{%- set _reserved_mask = (2**data_width - 1) - _reserved_mask_ns.mask -%}
+{%- if _reserved_mask != 0 %}
+    illegal_bins reserved_set = { data with ((data & {{ data_width }}'h{{ '%x' % _reserved_mask }}) != 0) };
+{%- endif %}
 {% else %}
     cp_data: coverpoint data {
       bins zero  = {0};

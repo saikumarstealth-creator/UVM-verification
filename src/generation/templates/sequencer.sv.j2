@@ -1,4 +1,6 @@
 // UVM Sequencer for {{ spec.design_name }}
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 class {{ spec.design_name }}_sequencer extends uvm_sequencer #({{ spec.design_name }}_seq_item);
   `uvm_component_utils({{ spec.design_name }}_sequencer)
 

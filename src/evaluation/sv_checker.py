@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -450,3 +450,106 @@ def collect_suggestions(results: Dict[str, SVCheckResult]) -> List[Dict[str, str
                     "files": fname,
                 })
     return suggestions
+
+
+def try_icarus_compile(
+    files: Dict[str, str],
+    top_module: str = "main",
+    uvm_home: Optional[str] = None,
+    timeout: int = 60,
+) -> Dict[str, Any]:
+    """Run iverilog -g2012 on generated files to catch real compilation errors.
+
+    Returns a dict with:
+        - available: bool  (True if iverilog was found)
+        - exit_code: int
+        - stdout: str
+        - stderr: str
+        - timed_out: bool
+        - errors: list of parsed error lines
+        - warnings: list of parsed UVM macro warnings
+    """
+    import subprocess
+    import tempfile
+    import os
+    import shutil
+
+    result: Dict[str, Any] = {
+        "available": False,
+        "exit_code": None,
+        "stdout": "",
+        "stderr": "",
+        "timed_out": False,
+        "errors": [],
+        "warnings": [],
+    }
+
+    iverilog = shutil.which("iverilog")
+    if not iverilog:
+        return result
+
+    result["available"] = True
+
+    tmpdir = tempfile.mkdtemp(prefix="icarus_compile_")
+    try:
+        # Write all files to temp dir
+        compile_f_path = os.path.join(tmpdir, "compile.f")
+        sv_sources = []
+        for fname, content in files.items():
+            fpath = os.path.join(tmpdir, fname)
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            with open(fpath, "w") as f:
+                f.write(content)
+            if fname.endswith((".v", ".sv")):
+                sv_sources.append(fname)
+
+        # Write a compile.f if not already present
+        if "compile.f" not in files:
+            with open(compile_f_path, "w") as f:
+                for src in sv_sources:
+                    f.write(f"{src}\n")
+            iverilog_cmd = [
+                iverilog, "-g2012", "-Wall",
+                f"-I{tmpdir}",
+            ]
+            if uvm_home:
+                iverilog_cmd.append(f"-I{os.path.join(uvm_home, 'src')}")
+            iverilog_cmd.extend(["-o", os.path.join(tmpdir, "simv"), "-c", compile_f_path])
+        else:
+            iverilog_cmd = [
+                iverilog, "-g2012", "-Wall",
+                f"-I{tmpdir}",
+            ]
+            if uvm_home:
+                iverilog_cmd.append(f"-I{os.path.join(uvm_home, 'src')}")
+            iverilog_cmd.extend(["-o", os.path.join(tmpdir, "simv"), "-c", compile_f_path])
+
+        try:
+            proc = subprocess.run(
+                iverilog_cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=tmpdir,
+            )
+            result["exit_code"] = proc.returncode
+            result["stdout"] = proc.stdout
+            result["stderr"] = proc.stderr
+
+            # Parse errors from stderr
+            for line in proc.stderr.splitlines():
+                if "error:" in line.lower() or "syntax error" in line.lower():
+                    result["errors"].append(line)
+                if "warning: macro" in line.lower():
+                    result["warnings"].append(line)
+
+        except subprocess.TimeoutExpired:
+            result["timed_out"] = True
+        except FileNotFoundError:
+            result["available"] = False
+
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    return result

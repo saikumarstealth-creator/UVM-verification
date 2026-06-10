@@ -45,6 +45,7 @@ ALL_SV := $(SV_FILES) $(RTL_FILES)
 ICARUS_FLAGS := -g2012 -Wall -o $(OUT_DIR)/simv \
 	-I$(SRC_DIR) \
 	$(addprefix -I, $(UVM_HOME)/src) \
+	$(UVM_HOME)/src/uvm_pkg.sv \
 	$(addprefix , $(ALL_SV))
 
 .PHONY: compile-icarus run-icarus

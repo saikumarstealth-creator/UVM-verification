@@ -1,5 +1,7 @@
 // UVM Protocol Compliance Checker for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
 // Monitors bus transactions and validates against protocol specification rules.
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 {% set iface = spec.interfaces[0] if spec.interfaces else None %}
 {% set sigs = iface.signals if iface else [] %}

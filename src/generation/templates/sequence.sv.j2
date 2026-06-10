@@ -1,5 +1,7 @@
 // Enhanced UVM Sequences for {{ spec.design_name }} ({{ spec.protocol|default("wishbone", true) }})
 // Includes: RAL-based sequences, register access, protocol-specific tests
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set num_regs = regs|length %}
@@ -1437,78 +1439,6 @@ endclass
 {% endif %}  {# /LCR+THR+LSR check for {{ spec.design_name }}_random_seq and cov_seq #}
 
 // -------------------------------------------------------------------------
-// UART Register HW Reset Sequence — validates reset values via RAL
-// -------------------------------------------------------------------------
-class {{ spec.design_name }}_reg_hw_reset_seq extends uvm_reg_hw_reset_seq;
-  `uvm_object_utils({{ spec.design_name }}_reg_hw_reset_seq)
-
-  {{ spec.design_name }}_reg_block reg_model;
-
-  function new(string name = "{{ spec.design_name }}_reg_hw_reset_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    model = reg_model;
-    super.body();
-  endtask
-endclass
-
-// -------------------------------------------------------------------------
-// UART Register Bit Bash Sequence — validates each bit via RAL
-// -------------------------------------------------------------------------
-class {{ spec.design_name }}_reg_bit_bash_seq extends uvm_reg_bit_bash_seq;
-  `uvm_object_utils({{ spec.design_name }}_reg_bit_bash_seq)
-
-  {{ spec.design_name }}_reg_block reg_model;
-
-  function new(string name = "{{ spec.design_name }}_reg_bit_bash_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    model = reg_model;
-    super.body();
-  endtask
-endclass
-
-// -------------------------------------------------------------------------
-// UART Register Access Sequence — validates RAL read/write for all regs
-// -------------------------------------------------------------------------
-class {{ spec.design_name }}_reg_access_seq extends uvm_reg_access_seq;
-  `uvm_object_utils({{ spec.design_name }}_reg_access_seq)
-
-  {{ spec.design_name }}_reg_block reg_model;
-
-  function new(string name = "{{ spec.design_name }}_reg_access_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    model = reg_model;
-    super.body();
-  endtask
-endclass
-
-// -------------------------------------------------------------------------
-// UART Memory Walk Sequence — validates address decoding
-// -------------------------------------------------------------------------
-class {{ spec.design_name }}_reg_mem_walk_seq extends uvm_reg_mem_walk_seq;
-  `uvm_object_utils({{ spec.design_name }}_reg_mem_walk_seq)
-
-  {{ spec.design_name }}_reg_block reg_model;
-
-  function new(string name = "{{ spec.design_name }}_reg_mem_walk_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    model = reg_model;
-    super.body();
-  endtask
-endclass
-
-// -------------------------------------------------------------------------
 // UART Register Aliasing Sequence — validates register independence
 // -------------------------------------------------------------------------
 class {{ spec.design_name }}_reg_aliasing_seq extends uvm_reg_aliasing_seq;
@@ -1781,6 +1711,47 @@ class {{ spec.design_name }}_seq_lib extends uvm_sequence_library #({{ spec.desi
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_reg_mem_walk_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_reg_aliasing_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_reset_test_seq::get_type());
+    // Advanced UART sequences (guarded by register presence):
+{% if _need_lcr and _need_tx %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_fifo_overflow_seq::get_type());
+{% endif %}
+{% if _need_tx and _need_lcr %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_framing_error_seq::get_type());
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_thr_rbr_alias_seq::get_type());
+{% endif %}
+{% if _need_ier and _need_iir and _need_mcr and _need_tx %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_fifo_trigger_seq::get_type());
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_back2back_intr_seq::get_type());
+{% endif %}
+{% if _need_mcr and _need_tx %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_full_duplex_seq::get_type());
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_concurrent_stress_seq::get_type());
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_random_reset_seq::get_type());
+{% endif %}
+{% if _need_lcr and _need_tx and _need_mcr %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_long_regression_seq::get_type());
+{% endif %}
+{% if _need_tx and _need_ier and _need_lcr %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_baud_divisor_seq::get_type());
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_dlab_switching_seq::get_type());
+{% endif %}
+{% if _need_ier and _need_iir and _need_mcr and _need_tx and _need_lcr %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_interrupt_priority_seq::get_type());
+{% endif %}
+{% if _need_iir and _need_tx %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_fifo_reset_seq::get_type());
+{% endif %}
+{% if '0x06' in _reg_addr_set or '0x6' in _reg_addr_set %}
+  {% if _need_mcr %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_flow_control_seq::get_type());
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_modem_status_seq::get_type());
+  {% endif %}
+{% endif %}
+{% if _need_tx %}
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_uart_illegal_access_seq::get_type());
+{% endif %}
+    // Always generated (no register dependency):
+    {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_coverage_closure_seq::get_type());
   endfunction
 
   function new(string name = "{{ spec.design_name }}_seq_lib");
@@ -3255,6 +3226,69 @@ class {{ spec.design_name }}_coverage_closure_seq extends {{ spec.design_name }}
       `uvm_warning("COV_CLOSE", $sformatf("Coverage closure incomplete: %0d/%0d bins hit", hit_bins, total_bins))
     else
       `uvm_info("COV_CLOSE", "Full coverage closure achieved!", UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Illegal Access Sequence — writes/reads to reserved register addresses
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_uart_illegal_access_seq extends {{ spec.design_name }}_base_seq;
+  `uvm_object_utils({{ spec.design_name }}_uart_illegal_access_seq)
+
+  int illegal_ops;
+  int errors_detected;
+
+  function new(string n = "{{ spec.design_name }}_uart_illegal_access_seq");
+    super.new(n);
+  endfunction
+
+  task body;
+    logic [7:0] readback;
+    logic [{{ addr_bits-1 }}:0] legal_addrs[$];
+    logic [{{ addr_bits-1 }}:0] illegal_addrs[$];
+
+    `uvm_info("UART_ILL", "Starting UART illegal access test", UVM_LOW)
+
+    foreach (reg_model.regs[i]) begin
+      legal_addrs.push_back(reg_model.regs[i].get_address());
+    end
+
+    // Generate illegal addresses: the complement of legal addresses in the
+    // {{ addr_bits }}-bit address space, capped at a reasonable number.
+    for (int a = 0; a < (1 << {{ addr_bits }}); a++) begin
+      if (!(a inside {legal_addrs}))
+        illegal_addrs.push_back({{ addr_bits }}'(a));
+      if (illegal_addrs.size() >= 8) break;
+    end
+
+    if (illegal_addrs.size() == 0) begin
+      `uvm_info("UART_ILL", "No illegal addresses found — address space fully populated", UVM_LOW)
+      return;
+    end
+
+    foreach (illegal_addrs[i]) begin
+      // Write to reserved address
+      write_reg(illegal_addrs[i], 8'hA5);
+      illegal_ops++;
+
+      // Read back — reserved addresses should return 0 or x
+      read_reg(illegal_addrs[i], readback);
+      `uvm_info("UART_ILL", $sformatf("Illegal addr 0x%0h: readback=0x%02h",
+                illegal_addrs[i], readback), UVM_MEDIUM)
+
+      // Verify no corruption of legal register state
+      foreach (legal_addrs[j]) begin
+        logic [7:0] legal_val;
+        read_reg(legal_addrs[j], legal_val);
+        if (legal_val !== 8'h0) begin
+          `uvm_info("UART_ILL", $sformatf("Legal addr 0x%0h intact: 0x%02h",
+                    legal_addrs[j], legal_val), UVM_HIGH)
+        end
+      end
+    end
+
+    `uvm_info("UART_ILL", $sformatf("Illegal access test: %0d operations, %0d errors",
+              illegal_ops, errors_detected), UVM_LOW)
   endtask
 endclass
 

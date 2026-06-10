@@ -1,5 +1,7 @@
 // Enhanced UVM Tests for {{ spec.design_name }}
 // Includes: Base test, Register tests, protocol-specific tests
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 {% set addr_ints = [] %}
 {% for r in spec.registers %}
@@ -991,6 +993,27 @@ class {{ spec.design_name }}_coverage_closure_test extends {{ spec.design_name }
     cc_seq.reg_model = reg_model;
     run_sequence_with_timeout(cc_seq, compute_timeout(9600, 64, 50.0));
     `uvm_info("TEST_CC", "Coverage closure test completed", UVM_LOW)
+  endtask
+endclass
+
+// -------------------------------------------------------------------------
+// UART Illegal Access Test — reserved address write/read verification
+// -------------------------------------------------------------------------
+class {{ spec.design_name }}_uart_illegal_access_test extends {{ spec.design_name }}_base_test;
+  `uvm_component_utils({{ spec.design_name }}_uart_illegal_access_test)
+
+  function new(string n, uvm_component p);
+    super.new(n, p);
+  endfunction
+
+  task run_top_sequence();
+    {{ spec.design_name }}_uart_illegal_access_seq ill_seq;
+    `uvm_info("TEST_ILL", "Starting UART illegal access test", UVM_LOW)
+    ill_seq = {{ spec.design_name }}_uart_illegal_access_seq::type_id::create("ill_seq");
+    if (ill_seq == null) `uvm_fatal("SEQ", "Failed to create illegal_access_seq")
+    ill_seq.reg_model = reg_model;
+    run_sequence_with_timeout(ill_seq, compute_timeout(115200, 4));
+    `uvm_info("TEST_ILL", "UART illegal access test completed", UVM_LOW)
   endtask
 endclass
 

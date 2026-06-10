@@ -1,5 +1,7 @@
 // UART Serial Monitor for {{ spec.design_name }}
 // Monitors uart_tx and uart_rx lines, deserializes data, checks integrity
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 
 class {{ spec.design_name }}_serial_item extends uvm_sequence_item;

@@ -1,5 +1,7 @@
 // Enhanced UVM Scoreboard for {{ spec.design_name }}
 // Features: shadow register model, loopback checking, data integrity, coverage tracking
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 {% set p = spec.protocol|default("wishbone") %}
 {% set regs = spec.registers if spec.registers else [] %}
 {% set num_regs = regs|length %}
@@ -80,6 +82,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
   int interrupt_expected;
   int interrupt_received;
   int interrupt_mismatch;
+  string reg_summary;
   int irq_rx_data;
   int irq_tx_empty;
   int irq_line_status;
@@ -200,6 +203,7 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     inj_tag_queue.delete();
     errors.delete();
     error_msgs.delete();
+    reg_summary = "";
   endfunction
 
   function void write({{ spec.design_name }}_seq_item item);
@@ -700,6 +704,27 @@ class {{ spec.design_name }}_scoreboard extends uvm_scoreboard;
     int unaccounted_break = observed_break_errors - injected_break_errors;
 
     status_pass = check_data_integrity();
+    test_stats.total++;
+    if (status_pass) test_stats.passed++; else test_stats.failed++;
+
+    // Build per-register summary string
+    reg_summary = "";
+    foreach (reg_write_count[i]) begin
+      string line;
+      $sformatf(line, "    [0x%0h]  Writes=%0d  Reads=%0d  Matches=%0d  Mismatches=%0d\n",
+                i, reg_write_count[i], reg_read_count[i],
+                reg_match_count.exists(i) ? reg_match_count[i] : 0,
+                reg_mismatch_count.exists(i) ? reg_mismatch_count[i] : 0);
+      reg_summary = {reg_summary, line};
+    end
+    if (reg_summary == "") reg_summary = "    (no register access recorded)\n";
+
+    // Compute derived metrics
+    if (observed_parity_errors + observed_framing_errors + observed_break_errors > 0) begin
+      error_detection_rate = ((injected_parity_errors + injected_framing_errors + injected_break_errors) * 100) /
+                              (observed_parity_errors + observed_framing_errors + observed_break_errors);
+    end
+    interrupt_mismatch = irq_unexpected;
 
     report_str = $sformatf(
       "\n"

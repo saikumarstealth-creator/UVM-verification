@@ -136,6 +136,7 @@ class AutoTrainConfig(BaseModel):
     sim_timeout: int = Field(default=300, ge=10)
     num_seeds: int = Field(default=3, ge=1, le=20, description="Number of regression seeds per iteration")
     generate_regression_test: bool = True
+    uvm_home: Optional[str] = Field(default=None, description="Path to UVM installation (used for compilation includes)")
 
 
 class MLConfig(BaseModel):
