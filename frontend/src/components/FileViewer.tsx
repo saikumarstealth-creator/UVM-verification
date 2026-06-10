@@ -361,16 +361,16 @@ const FileViewer: React.FC = () => {
           ) : (
             <div className="flex-1 overflow-y-auto py-1" style={{ scrollbarWidth: 'thin' }}>
               {categoryOrder.filter(cat => groupedFiles[cat]).map(category => (
-                <div key={category} className="mb-0.5">
-                  <div className="px-2.5 py-1 text-[9px] font-semibold text-eda-text-tertiary/70 uppercase tracking-wider flex items-center gap-1">
-                    <Hash className="w-2 h-2" /> {category}
-                    <span className="text-[8px] text-eda-text-tertiary/40 ml-auto">{groupedFiles[category].length}</span>
-                  </div>
+                  <div key={category} className="mb-0.5">
+                    <div className="px-2.5 py-1 text-[9px] font-semibold text-eda-text-tertiary/70 uppercase tracking-wider flex items-center gap-1 hover:text-eda-text-secondary transition-colors">
+                      <Hash className="w-2 h-2" /> {category}
+                      <span className="text-[8px] text-eda-text-tertiary/40 ml-auto">{groupedFiles[category].length}</span>
+                    </div>
                   {groupedFiles[category].map(file => {
                     const badge = getFileBadge(file)
                     return (
                       <button key={file} onClick={() => handleFileSelect(file)}
-                        className={`w-full flex items-center gap-1.5 px-2.5 py-1 text-[10px] text-left transition-colors ${
+                        className={`w-full flex items-center gap-1.5 px-2.5 py-1 text-[10px] text-left file-item-hover ${
                           selectedFile === file ? 'bg-eda-accent/10 text-eda-accent border-l-2 border-eda-accent' : 'hover:bg-eda-bg-tertiary/50 border-l-2 border-transparent'
                         }`}>
                         <span className={getFileColor(file)}>{getFileIcon(file)}</span>
@@ -437,9 +437,11 @@ const FileViewer: React.FC = () => {
           )}
 
           {showDashboard && dashboardHtml ? (
-            <iframe srcDoc={dashboardHtml} className="w-full h-full border-0" title="Coverage Dashboard" sandbox="allow-scripts" />
+            <iframe srcDoc={dashboardHtml} className="w-full h-full border-0 animate-fade-in" title="Coverage Dashboard" sandbox="allow-scripts" />
           ) : (
-            renderCode()
+            <div key={selectedFile || 'empty'} className="animate-fade-in h-full">
+              {renderCode()}
+            </div>
           )}
         </div>
       </div>

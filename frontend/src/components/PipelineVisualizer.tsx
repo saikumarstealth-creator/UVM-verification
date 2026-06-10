@@ -66,9 +66,9 @@ const PipelineVisualizer: React.FC = () => {
     return formatDuration(avgMs * remaining)
   }
 
-  const StatusIcon: React.FC<{ status: StepStatus }> = ({ status }) => {
+  const StatusIcon: React.FC<{ status: StepStatus; animate?: boolean }> = ({ status, animate }) => {
     switch (status) {
-      case 'completed': return <CheckCircle2 className="w-4 h-4 text-eda-success" />
+      case 'completed': return <CheckCircle2 className={`w-4 h-4 text-eda-success ${animate ? 'animate-scale-in' : ''}`} />
       case 'active': return <Loader2 className="w-4 h-4 text-eda-accent animate-spin" />
       case 'pending': return <Circle className="w-4 h-4 text-eda-text-tertiary" />
     }
@@ -80,19 +80,20 @@ const PipelineVisualizer: React.FC = () => {
         <div className="flex items-center gap-2">
           <h2 className="text-[11px] font-semibold text-eda-text tracking-wide uppercase">Pipeline</h2>
           {status === 'running' && (
-            <span className="text-[9px] text-eda-text-tertiary font-mono flex items-center gap-1">
+            <span className="text-[9px] text-eda-text-tertiary font-mono flex items-center gap-1 animate-fade-in">
               <Clock className="w-2.5 h-2.5" /> {formatDuration(elapsed)}
             </span>
           )}
         </div>
         <div className="flex items-center gap-2">
           {getEstimatedRemaining() && (
-            <span className="text-[9px] text-eda-text-tertiary font-mono flex items-center gap-1">
+            <span className="text-[9px] text-eda-text-tertiary font-mono flex items-center gap-1 animate-fade-in">
               <Zap className="w-2.5 h-2.5 text-eda-warning" /> ETA: {getEstimatedRemaining()}
             </span>
           )}
-          <div className="w-20 h-1 bg-eda-bg-tertiary rounded-full overflow-hidden">
-            <div className="h-full bg-eda-accent transition-all duration-300 ease-out" style={{ width: `${progress}%` }} />
+          <div className="w-20 h-1 bg-eda-bg-tertiary rounded-full overflow-hidden relative">
+            <div className="h-full bg-eda-accent transition-all duration-500 ease-out" style={{ width: `${progress}%` }} />
+            {status === 'running' && <div className="shimmer-overlay" />}
           </div>
           <span className="text-[9px] font-mono text-eda-text-secondary">{progress}%</span>
         </div>
@@ -105,28 +106,30 @@ const PipelineVisualizer: React.FC = () => {
             const duration = getStepDuration(step.key)
             return (
               <div key={step.key}
-                className={`flex items-start gap-2 p-1.5 rounded-md transition-all ${
-                  stepStatus === 'active' ? 'bg-eda-accent/5' :
-                  stepStatus === 'completed' ? 'bg-eda-success/[0.03]' : ''
+                className={`flex items-start gap-2 p-1.5 rounded-md transition-all duration-300 ${
+                  stepStatus === 'active' ? 'bg-eda-accent/8 step-glow-ring' :
+                  stepStatus === 'completed' ? 'bg-eda-success/[0.04]' : ''
                 }`}>
                 <div className={`mt-0.5 ${stepStatus === 'completed' ? 'text-eda-success' : stepStatus === 'active' ? 'text-eda-accent' : 'text-eda-text-tertiary'}`}>
-                  <StatusIcon status={stepStatus} />
+                  <StatusIcon status={stepStatus} animate={stepStatus === 'completed'} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className={`text-[10px] ${stepStatus === 'completed' ? 'text-eda-text font-medium' : stepStatus === 'active' ? 'text-eda-accent font-medium' : 'text-eda-text-tertiary'}`}>
                       {step.icon}
                     </span>
-                    <span className={`text-[10px] font-medium truncate ${
+                    <span className={`text-[10px] font-medium truncate transition-all duration-300 ${
                       stepStatus === 'completed' ? 'text-eda-text' :
                       stepStatus === 'active' ? 'text-eda-accent' :
                       'text-eda-text-tertiary'
                     }`}>{step.label}</span>
-                    {stepStatus === 'active' && <span className="text-[8px] text-eda-accent animate-pulse">●</span>}
+                    {stepStatus === 'active' && <span className="text-[8px] text-eda-accent animate-pulse-soft">●</span>}
                   </div>
-                  <p className="text-[9px] text-eda-text-tertiary/70 truncate mt-0.5">{step.description}</p>
+                  <p className={`text-[9px] truncate mt-0.5 transition-all duration-300 ${
+                    stepStatus === 'active' ? 'text-eda-text-tertiary' : 'text-eda-text-tertiary/70'
+                  }`}>{step.description}</p>
                   {duration !== null && (
-                    <span className="text-[8px] text-eda-text-tertiary/50 font-mono">{formatDuration(duration)}</span>
+                    <span className="text-[8px] text-eda-text-tertiary/50 font-mono animate-fade-in">{formatDuration(duration)}</span>
                   )}
                 </div>
               </div>
@@ -135,15 +138,15 @@ const PipelineVisualizer: React.FC = () => {
         </div>
       </div>
 
-      <div className="mt-2 pt-2 border-t border-eda-border flex items-center justify-between">
+      <div className="mt-2 pt-2 border-t border-eda-border flex items-center justify-between animate-fade-in">
         <div className="flex items-center gap-1.5">
-          <div className={`w-1.5 h-1.5 rounded-full ${
-            status === 'running' ? 'bg-eda-accent animate-pulse' :
+          <div className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
+            status === 'running' ? 'bg-eda-accent animate-pulse-soft shadow-[0_0_6px_rgba(88,166,255,0.5)]' :
             status === 'completed' ? 'bg-eda-success' :
             status === 'failed' ? 'bg-eda-error' :
             'bg-eda-text-tertiary'
           }`} />
-          <span className={`text-[9px] font-medium capitalize ${
+          <span className={`text-[9px] font-medium capitalize transition-all duration-300 ${
             status === 'running' ? 'text-eda-accent' :
             status === 'completed' ? 'text-eda-success' :
             'text-eda-text-tertiary'
@@ -151,9 +154,9 @@ const PipelineVisualizer: React.FC = () => {
         </div>
         <div className="flex items-center gap-2 text-[9px] text-eda-text-tertiary">
           {message !== 'Ready to generate' && (
-            <span className="truncate max-w-[100px]">{message}</span>
+            <span className="truncate max-w-[100px] animate-fade-in">{message}</span>
           )}
-          <span>{completedSteps.length}/{STEPS.length}</span>
+          <span className="font-mono">{completedSteps.length}/{STEPS.length}</span>
         </div>
       </div>
     </div>

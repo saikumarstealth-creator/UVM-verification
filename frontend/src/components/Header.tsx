@@ -30,12 +30,12 @@ const Header: React.FC = () => {
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-0.5 text-[9px] text-eda-text-tertiary bg-eda-bg-tertiary/30 px-2 py-1 rounded-md border border-eda-border/30">
           <Server className="w-2.5 h-2.5 mr-0.5" />
-          <div className={`w-1.5 h-1.5 rounded-full ${wsColor} mr-0.5`} />
+          <div className={`w-1.5 h-1.5 rounded-full ${wsColor} mr-0.5 ${wsConnected ? 'animate-pulse-soft shadow-[0_0_4px_rgba(63,185,80,0.5)]' : ''}`} />
           {wsLabel}
         </div>
 
         {status !== 'pending' && (
-          <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${
+          <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium animate-scale-in ${
             status === 'running' ? 'bg-eda-accent/15 text-eda-accent' :
             status === 'completed' ? 'bg-eda-success/15 text-eda-success' :
             'bg-eda-error/15 text-eda-error'

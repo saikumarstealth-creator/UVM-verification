@@ -39,13 +39,18 @@ const Console: React.FC = () => {
   const [isMinimized, setIsMinimized] = React.useState(false)
   const [logFilter, setLogFilter] = React.useState<LogFilter>('all')
   const [showFilterMenu, setShowFilterMenu] = React.useState(false)
+  const [prevLogCount, setPrevLogCount] = React.useState(0)
   const consoleRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     if (consoleRef.current) {
-      consoleRef.current.scrollTop = consoleRef.current.scrollHeight
+      consoleRef.current.scrollTo({ top: consoleRef.current.scrollHeight, behavior: 'smooth' })
     }
   }, [logs])
+
+  React.useEffect(() => {
+    setPrevLogCount(logs.length)
+  }, [logs.length])
 
   const getStatusColor = (s: PipelineStatus) => {
     switch (s) {
@@ -185,9 +190,11 @@ const Console: React.FC = () => {
           <div className="py-1">
             {filteredLogs.map((log, i) => {
               const cfg = LOG_LEVEL_CONFIG[log.level]
+              const originalIdx = logs.findIndex(l => l === log)
+              const isNew = originalIdx >= prevLogCount
               return (
-                <div key={i}
-                  className={`flex items-start gap-2 px-3 py-0.5 text-[10px] leading-relaxed hover:bg-white/[0.02] transition-colors ${cfg.color}`}>
+                <div key={`${i}-${log.timestamp}`}
+                  className={`flex items-start gap-2 px-3 py-0.5 text-[10px] leading-relaxed hover:bg-white/[0.02] transition-colors ${cfg.color} ${isNew ? 'animate-slide-up log-entry-new' : ''}`}>
                   <span className="text-[9px] text-eda-text-tertiary/50 w-[60px] shrink-0 text-right select-none">{log.timestamp}</span>
                   <span className={`mt-0.5 ${cfg.bg} rounded-sm px-1 text-[8px] font-semibold uppercase tracking-wider ${cfg.color}`}>
                     {cfg.label}

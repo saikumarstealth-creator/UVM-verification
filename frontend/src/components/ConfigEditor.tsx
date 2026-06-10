@@ -186,7 +186,7 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+      <div className="flex-1 overflow-y-auto tab-content-enter" key={activeTab} style={{ scrollbarWidth: 'thin' }}>
         {activeTab === 'spec' ? (
           <div className="p-3 space-y-3">
             <div>
@@ -208,12 +208,12 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
 
             {specStats && (
               <div className="grid grid-cols-3 gap-1.5">
-                <SpecStatBadge icon={<Layout className="w-3 h-3" />} label="Interfaces" value={specStats.interfaces} color="text-eda-accent" />
-                <SpecStatBadge icon={<Layers className="w-3 h-3" />} label="Registers" value={specStats.registers} color="text-purple-400" />
-                <SpecStatBadge icon={<Hash className="w-3 h-3" />} label="Fields" value={specStats.fields} color="text-pink-400" />
-                <SpecStatBadge icon={<Cpu className="w-3 h-3" />} label="Signals" value={specStats.signals} color="text-eda-warning" />
-                <SpecStatBadge icon={<List className="w-3 h-3" />} label="Sequences" value={specStats.sequences} color="text-eda-success" />
-                <SpecStatBadge icon={<FileText className="w-3 h-3" />} label="Lines" value={config.spec_yaml.split('\n').length} color="text-eda-text-tertiary" />
+                <div className="animate-scale-in" style={{ animationDelay: '0ms' }}><SpecStatBadge icon={<Layout className="w-3 h-3" />} label="Interfaces" value={specStats.interfaces} color="text-eda-accent" /></div>
+                <div className="animate-scale-in" style={{ animationDelay: '50ms' }}><SpecStatBadge icon={<Layers className="w-3 h-3" />} label="Registers" value={specStats.registers} color="text-purple-400" /></div>
+                <div className="animate-scale-in" style={{ animationDelay: '100ms' }}><SpecStatBadge icon={<Hash className="w-3 h-3" />} label="Fields" value={specStats.fields} color="text-pink-400" /></div>
+                <div className="animate-scale-in" style={{ animationDelay: '150ms' }}><SpecStatBadge icon={<Cpu className="w-3 h-3" />} label="Signals" value={specStats.signals} color="text-eda-warning" /></div>
+                <div className="animate-scale-in" style={{ animationDelay: '200ms' }}><SpecStatBadge icon={<List className="w-3 h-3" />} label="Sequences" value={specStats.sequences} color="text-eda-success" /></div>
+                <div className="animate-scale-in" style={{ animationDelay: '250ms' }}><SpecStatBadge icon={<FileText className="w-3 h-3" />} label="Lines" value={config.spec_yaml.split('\n').length} color="text-eda-text-tertiary" /></div>
               </div>
             )}
 
@@ -324,9 +324,9 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
                     <div className="text-[9px] text-eda-text-tertiary">{toggle.desc}</div>
                   </div>
                   <button onClick={() => updateConfig({ [toggle.key]: !(config as any)[toggle.key] })} disabled={isGenerating}
-                    className={`relative w-9 h-4.5 rounded-full transition-colors ${(config as any)[toggle.key] ? 'bg-eda-accent' : 'bg-eda-border'} ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`relative w-9 h-4.5 rounded-full transition-all duration-300 ${(config as any)[toggle.key] ? 'bg-eda-accent shadow-[0_0_6px_rgba(88,166,255,0.4)]' : 'bg-eda-border'} ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                     style={{ height: '18px', width: '36px' }}>
-                    <div className={`absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-transform shadow-sm ${(config as any)[toggle.key] ? 'translate-x-[18px]' : 'translate-x-0.5'}`}
+                    <div className={`absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-all duration-300 shadow-sm ${(config as any)[toggle.key] ? 'translate-x-[18px]' : 'translate-x-0.5'}`}
                       style={{ width: '14px', height: '14px' }} />
                   </button>
                 </div>
@@ -355,7 +355,7 @@ const ConfigEditor: React.FC<{ onGenerate: () => void }> = ({ onGenerate }) => {
           )}
           <button onClick={onGenerate} disabled={isGenerating || !isSpecValid}
             title={!isSpecValid ? 'Fix YAML errors before generating' : ''}
-            className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold bg-eda-accent text-white rounded-md hover:bg-eda-accent/90 active:bg-eda-accent/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm">
+            className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold bg-eda-accent text-white rounded-md hover:bg-eda-accent/90 active:scale-95 active:bg-eda-accent/80 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100 shadow-sm">
             {isGenerating ? (
               <><div className="w-3 h-3 border-1.5 border-white/30 border-t-white rounded-full animate-spin" /> Generating...</>
             ) : (

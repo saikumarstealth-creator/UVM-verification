@@ -1,9 +1,33 @@
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Activity, Gauge, CheckCircle2, XCircle, FileCode, Shield, Signal,
   Bug, TestTube, Brain, ArrowUp, ArrowDown
 } from 'lucide-react'
 import useAppStore from '../store/appStore'
+
+function useAnimatedValue(target: number, duration = 600): number {
+  const [current, setCurrent] = useState(0)
+  const prevTarget = useRef(0)
+
+  useEffect(() => {
+    if (target === prevTarget.current) return
+    prevTarget.current = target
+    const start = performance.now()
+    const from = current
+
+    const raf = setInterval(() => {
+      const elapsed = performance.now() - start
+      const progress = Math.min(elapsed / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setCurrent(from + (target - from) * eased)
+      if (progress >= 1) clearInterval(raf)
+    }, 16)
+
+    return () => clearInterval(raf)
+  }, [target, duration])
+
+  return current
+}
 
 interface MetricDef {
   key: string
@@ -16,7 +40,8 @@ interface MetricDef {
 
 const MetricBar: React.FC<{ label: string; value: number; icon: React.ReactNode; color: string; prevValue?: number }> =
   ({ label, value, icon, color, prevValue }) => {
-    const percentage = Math.min(100, Math.round(value * 100))
+    const animatedValue = useAnimatedValue(value, 500)
+    const percentage = Math.min(100, Math.round(animatedValue * 100))
     const getColor = () => {
       if (percentage >= 90) return 'bg-eda-success'
       if (percentage >= 70) return 'bg-eda-warning'
@@ -26,7 +51,7 @@ const MetricBar: React.FC<{ label: string; value: number; icon: React.ReactNode;
     const trend = prevValue !== undefined ? value - prevValue : 0
 
     return (
-      <div className="space-y-1.5">
+      <div className="space-y-1.5 animate-slide-up">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 min-w-0">
             <span className={`shrink-0 ${color}`}>{icon}</span>
@@ -39,14 +64,14 @@ const MetricBar: React.FC<{ label: string; value: number; icon: React.ReactNode;
                 {Math.abs(Math.round(trend * 100))}%
               </span>
             )}
-            <span className={`text-[10px] font-mono font-semibold ${
+            <span className={`count-up text-[10px] font-mono font-semibold ${
               percentage >= 90 ? 'text-eda-success' :
               percentage >= 70 ? 'text-eda-warning' : 'text-eda-error'
             }`}>{percentage}%</span>
           </div>
         </div>
-        <div className="w-full h-1.5 bg-eda-bg-tertiary rounded-full overflow-hidden">
-          <div className={`h-full transition-all duration-500 ease-out ${getColor()}`} style={{ width: `${percentage}%` }} />
+        <div className="w-full h-1.5 bg-eda-bg-tertiary rounded-full overflow-hidden relative">
+          <div className={`h-full transition-all duration-700 ease-out ${getColor()}`} style={{ width: `${percentage}%` }} />
         </div>
       </div>
     )
@@ -54,20 +79,21 @@ const MetricBar: React.FC<{ label: string; value: number; icon: React.ReactNode;
 
 const MetricCircle: React.FC<{ value: number; label: string; color: string; size?: number }> =
   ({ value, label, color, size = 36 }) => {
-    const percentage = Math.min(100, Math.round(value * 100))
+    const animatedValue = useAnimatedValue(value, 800)
+    const percentage = Math.min(100, Math.round(animatedValue * 100))
     const r = (size - 4) / 2
     const circumference = 2 * Math.PI * r
     const offset = circumference - (percentage / 100) * circumference
 
     return (
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex flex-col items-center gap-1 animate-scale-in">
         <svg width={size} height={size} className="transform -rotate-90">
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#21262d" strokeWidth="3" />
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="3"
             strokeDasharray={circumference} strokeDashoffset={offset}
-            strokeLinecap="round" className="transition-all duration-700 ease-out" />
+            strokeLinecap="round" className="transition-all duration-1000 ease-out" />
         </svg>
-        <span className="text-[9px] font-mono font-bold" style={{ color }}>{percentage}%</span>
+        <span className="count-up text-[9px] font-mono font-bold" style={{ color }}>{percentage}%</span>
         <span className="text-[8px] text-eda-text-tertiary text-center leading-tight">{label}</span>
       </div>
     )
@@ -165,13 +191,13 @@ const MetricsPanel: React.FC = () => {
   ]
 
   return (
-    <div className="bg-eda-bg-secondary border border-eda-border rounded-lg p-3 h-full overflow-y-auto">
+    <div className="bg-eda-bg-secondary border border-eda-border rounded-lg p-3 h-full overflow-y-auto animate-fade-in">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-1.5">
           <Activity className="w-3.5 h-3.5 text-eda-accent" />
           <span className="text-[10px] font-semibold text-eda-text tracking-wide uppercase">Metrics</span>
         </div>
-        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium ${
+        <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium animate-scale-in ${
           metrics.passed ? 'bg-eda-success/15 text-eda-success' : 'bg-eda-error/15 text-eda-error'
         }`}>
           {metrics.passed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <XCircle className="w-2.5 h-2.5" />}
@@ -180,34 +206,38 @@ const MetricsPanel: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-3 gap-3 mb-3">
-        {allMetrics.slice(0, 3).map(m => (
-          <MetricCircle key={m.key} value={m.value} label={m.label} color={m.color} />
+        {allMetrics.slice(0, 3).map((m, idx) => (
+          <div key={m.key} style={{ animationDelay: `${idx * 80}ms` }}>
+            <MetricCircle value={m.value} label={m.label} color={m.color} />
+          </div>
         ))}
-        <div className="flex flex-col items-center justify-center gap-0.5">
+        <div className="flex flex-col items-center justify-center gap-0.5 animate-scale-in">
           <FileCode className="w-4 h-4 text-eda-accent" />
-          <span className="text-sm font-mono font-bold text-eda-text">{metrics.files_generated}</span>
+          <span className="text-sm font-mono font-bold text-eda-text count-up">{metrics.files_generated}</span>
           <span className="text-[8px] text-eda-text-tertiary text-center leading-tight">Files</span>
         </div>
       </div>
 
       <div className="space-y-2.5">
-        {allMetrics.slice(3).map(m => (
-          <MetricBar key={m.key} label={m.label} value={m.value} icon={m.icon} color={m.color.replace('#', 'text-[#') + ']'} prevValue={m.prevValue} />
+        {allMetrics.slice(3).map((m, idx) => (
+          <div key={m.key} style={{ animationDelay: `${idx * 100}ms` }}>
+            <MetricBar key={m.key} label={m.label} value={m.value} icon={m.icon} color={m.color.replace('#', 'text-[#') + ']'} prevValue={m.prevValue} />
+          </div>
         ))}
       </div>
 
       {metrics.test_pass_rate !== undefined && (
-        <div className="mt-2.5 pt-2 border-t border-eda-border">
+        <div className="mt-2.5 pt-2 border-t border-eda-border animate-slide-up">
           <div className="flex items-center justify-between text-[10px]">
             <span className="text-eda-text-tertiary">Test Pass Rate</span>
             <div className="flex items-center gap-1.5">
               <div className="w-14 h-1.5 bg-eda-bg-tertiary rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all ${
+                <div className={`h-full rounded-full transition-all duration-700 ease-out ${
                   metrics.test_pass_rate >= 0.9 ? 'bg-eda-success' :
                   metrics.test_pass_rate >= 0.7 ? 'bg-eda-warning' : 'bg-eda-error'
                 }`} style={{ width: `${Math.round(metrics.test_pass_rate * 100)}%` }} />
               </div>
-              <span className={`font-mono font-semibold ${
+              <span className={`font-mono font-semibold count-up ${
                 metrics.test_pass_rate >= 0.9 ? 'text-eda-success' :
                 metrics.test_pass_rate >= 0.7 ? 'text-eda-warning' : 'text-eda-error'
               }`}>{Math.round(metrics.test_pass_rate * 100)}%</span>

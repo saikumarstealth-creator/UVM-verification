@@ -56,3 +56,63 @@ code, pre, .mono {
   outline: 2px solid #58a6ff;
   outline-offset: 2px;
 }
+
+/* Shimmer overlay for progress bars */
+.shimmer-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+  pointer-events: none;
+}
+
+/* Step glow ring for pipeline */
+.step-glow-ring {
+  position: relative;
+}
+.step-glow-ring::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  animation: glow 2s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* Smooth number count-up */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.count-up {
+  animation: countUp 0.6s ease-out forwards;
+}
+
+/* New log entry highlight */
+@keyframes logHighlight {
+  0% { background-color: rgba(88, 166, 255, 0.12); }
+  100% { background-color: transparent; }
+}
+.log-entry-new {
+  animation: logHighlight 1.5s ease-out forwards;
+}
+
+/* File item hover lift */
+.file-item-hover {
+  transition: transform 0.15s ease-out, background-color 0.15s ease-out;
+}
+.file-item-hover:hover {
+  transform: translateX(2px);
+}
+
+/* Tab content transition */
+.tab-content-enter {
+  animation: fadeIn 0.2s ease-out, slideIn 0.2s ease-out;
+}
