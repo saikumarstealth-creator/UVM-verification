@@ -84,6 +84,8 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
     {{ spec.design_name }}_sequencer seqr;
     if (!uvm_config_db #({{ spec.design_name }}_scoreboard)::get(null, "uvm_test_top.env", "sb", sb_handle))
       `uvm_warning("CFG", $sformatf("Scoreboard handle not found for %s", get_type_name()))
+    if (!uvm_config_db #({{ spec.design_name }}_reg_block)::get(null, "uvm_test_top.env", "reg_model", reg_model))
+      `uvm_info("CFG", $sformatf("reg_model not set via config_db for %s", get_type_name()), UVM_MEDIUM)
     if ($cast(seqr, m_sequencer)) vif = seqr.vif;
   endtask
 
@@ -1207,9 +1209,9 @@ endclass
 class {{ spec.design_name }}_cov_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_cov_seq)
 
-  rand int baud_vals[$];
-  rand int dbits_vals[$];
-  rand int sbits_vals[$];
+  rand int baud_vals[];
+  rand int dbits_vals[];
+  rand int sbits_vals[];
 
   int total_configs;
   int total_tx;
@@ -1377,10 +1379,6 @@ class {{ spec.design_name }}_overrun_seq extends {{ spec.design_name }}_base_seq
       end else begin
         `uvm_warning("OVR_SEQ", "No overrun detected — may need more TX or faster baud")
       end
-    end
-      `uvm_info("OVR_SEQ", $sformatf("Overrun (LSR[1]) detected after %0d TX", tx_count), UVM_LOW)
-    end else begin
-      `uvm_warning("OVR_SEQ", "No overrun detected — may need more TX or faster baud")
     end
 
     // Read RBR to clear overrun condition
@@ -1766,6 +1764,7 @@ endclass
 // =========================================================================
 
 // --- Smoke test: configure + loopback ---
+{% if ('0x04' in _reg_addr_set or '0x4' in _reg_addr_set) and _need_lcr and _need_tx %}
 class {{ spec.design_name }}_smoke_test extends uvm_sequence #({{ spec.design_name }}_seq_item);
   `uvm_object_utils({{ spec.design_name }}_smoke_test)
 
@@ -1790,6 +1789,7 @@ class {{ spec.design_name }}_smoke_test extends uvm_sequence #({{ spec.design_na
     lb_seq.start(m_sequencer);
   endtask
 endclass
+{% endif %}
 
 // --- Full regression ---
 class {{ spec.design_name }}_full_regression extends uvm_sequence #({{ spec.design_name }}_seq_item);
@@ -1848,66 +1848,6 @@ class {{ spec.design_name }}_fifo_overflow_seq extends {{ spec.design_name }}_ba
       `uvm_info("{{ spec.design_name|upper }}_FIFO", $sformatf("FIFO overflow correctly detected: %0d times", overflow_events), UVM_LOW)
     else
       `uvm_warning("{{ spec.design_name|upper }}_FIFO", "No overflow events detected — FIFO may be larger than test data")
-  endtask
-endclass
-
-// -------------------------------------------------------------------------
-// UART Stress Sequence — rapid config changes + continuous traffic
-// -------------------------------------------------------------------------
-class {{ spec.design_name }}_stress_seq extends {{ spec.design_name }}_base_seq;
-  `uvm_object_utils({{ spec.design_name }}_stress_seq)
-
-  rand int stress_iterations;
-
-  constraint c_stress {
-    stress_iterations inside {[5:20]};
-  }
-
-  function new(string n = "{{ spec.design_name }}_stress_seq");
-    super.new(n);
-  endfunction
-
-  task body;
-    int baud_list[5] = '{9600, 19200, 57600, 115200, 1000000};
-    int random_data[$];
-    int total_tx;
-    int total_rx;
-
-    `uvm_info("{{ spec.design_name|upper }}_STRESS", $sformatf("Starting stress test: %0d iterations", stress_iterations), UVM_LOW)
-
-    for (int iter = 0; iter < stress_iterations; iter++) begin
-      {{ spec.design_name }}_config_seq cfg_seq;
-      int chosen_baud = baud_list[$urandom_range(0, 4)];
-      int chosen_bits = 5 + $urandom_range(0, 3);
-      int chosen_stop = 1 + $urandom_range(0, 1);
-
-      cfg_seq = {{ spec.design_name }}_config_seq::type_id::create($sformatf("stress_cfg_%0d", iter));
-      cfg_seq.reg_model = reg_model;
-      cfg_seq.baud_rate = chosen_baud;
-      cfg_seq.data_bits = chosen_bits;
-      cfg_seq.stop_bits = chosen_stop;
-      cfg_seq.parity_en = $urandom;
-      cfg_seq.start(m_sequencer);
-      total_tx++;
-
-      repeat (3) begin
-        {{ spec.design_name }}_tx_seq tx_seq;
-        tx_seq = {{ spec.design_name }}_tx_seq::type_id::create($sformatf("stress_tx_%0d_%0d", iter, total_tx));
-        tx_seq.reg_model = reg_model;
-        tx_seq.num_bytes = 1 + $urandom_range(0, 4);
-        if (!tx_seq.randomize()) begin
-          `uvm_error("{{ spec.design_name|upper }}_STRESS", "TX seq randomization failed")
-        end else begin
-          tx_seq.start(m_sequencer);
-          total_tx++;
-        end
-      end
-      #10us;
-    end
-
-    `uvm_info("{{ spec.design_name|upper }}_STRESS", $sformatf(
-      "Stress test complete: %0d iterations, %0d TX ops",
-      stress_iterations, total_tx), UVM_LOW)
   endtask
 endclass
 

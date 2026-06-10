@@ -183,7 +183,7 @@ class TemplateModel(GenerationModel):
                 seq_name = f"cover_seq_v{cfg.generation.iteration}_{i}.sv"
                 seq_path = seq_dir / seq_name
                 seq_path.write_text(seq_sv, encoding="utf-8")
-                generated[str(seq_path)] = str(seq_path)
+                generated[seq_name] = str(seq_path)
 
         # Regression sequence
         for out_pattern, template_file in self.COVERAGE_SEQ_MAP.items():

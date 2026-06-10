@@ -62,6 +62,20 @@ def _retry_with_backoff(
     raise last_exc  # type: ignore[misc]
 
 
+def _content_dict_to_path_dict(
+    files: Dict[str, str],
+    output_dir: Path,
+) -> Dict[str, str]:
+    """Write a {filename: content} dict to disk and return {filename: path}."""
+    result: Dict[str, str] = {}
+    for fname, content in files.items():
+        out_path = output_dir / fname
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        result[fname] = str(out_path)
+    return result
+
+
 def _validate_spec_dict(spec_dict: Dict[str, Any]) -> None:
     """Validate spec dict has required fields before generation."""
     if not isinstance(spec_dict, dict):
@@ -830,6 +844,18 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             sources.append("llm")
         return sources
 
+    @staticmethod
+    def _ensure_content_dict(files: Dict[str, str]) -> Dict[str, str]:
+        """Convert {filename: path} to {filename: content} if needed."""
+        result: Dict[str, str] = {}
+        for fname, val in files.items():
+            path = Path(val)
+            if path.is_file():
+                result[fname] = path.read_text(encoding="utf-8")
+            else:
+                result[fname] = val
+        return result
+
     def _select_generation_strategy(
         self,
         spec_dict: Dict[str, Any],
@@ -912,14 +938,16 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             retrieval_strategy="similarity_search",
         )
         if best_result.generated_files:
+            source_files_content = self._ensure_content_dict(best_result.generated_files)
             adaptation = self._adapter.adapt(
-                source_spec=best_spec, target_spec=spec_dict, source_files=best_result.generated_files,
+                source_spec=best_spec, target_spec=spec_dict, source_files=source_files_content,
             )
             retrieval_info.adaptation_score = adaptation.overall_score
             if adaptation.is_safe() and adaptation.overall_score >= 0.7:
-                files = adaptation.adapted_files
+                output_dir = Path(config.generation.output_dir) / f"{design_name}_tb"
+                files = _content_dict_to_path_dict(adaptation.adapted_files, output_dir)
                 if self._code_validator:
-                    report = self._code_validator.validate_files(files, design_name)
+                    report = self._code_validator.validate_files(adaptation.adapted_files, design_name)
                     retrieval_info.pre_validation_score = report.avg_score
                     if report.overall_passed or not self._strict_validation:
                         return GenerationResult(
@@ -934,14 +962,16 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if len(search_results) > 1:
             for alt_result in search_results[1:3]:
                 if alt_result.generated_files and alt_result.similarity >= 0.5:
+                    alt_source_files = self._ensure_content_dict(alt_result.generated_files)
                     adaptation = self._adapter.adapt(
                         source_spec=alt_result.spec_dict, target_spec=spec_dict,
-                        source_files=alt_result.generated_files,
+                        source_files=alt_source_files,
                     )
                     if adaptation.is_safe() and adaptation.overall_score >= 0.7:
-                        files = adaptation.adapted_files
+                        output_dir = Path(config.generation.output_dir) / f"{design_name}_tb"
+                        files = _content_dict_to_path_dict(adaptation.adapted_files, output_dir)
                         if self._code_validator:
-                            report = self._code_validator.validate_files(files, design_name)
+                            report = self._code_validator.validate_files(adaptation.adapted_files, design_name)
                             retrieval_info.best_spec_name = alt_result.design_name
                             retrieval_info.best_score = alt_result.similarity
                             retrieval_info.adaptation_score = adaptation.overall_score
@@ -967,22 +997,37 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             gaps = []
             recommended = []
         if gaps:
-            extra_seqs = self._generate_targeted_sequences(spec_dict, recommended, design_name)
+            output_dir = Path(config.generation.output_dir) / f"{design_name}_tb"
+            extra_seqs = self._generate_targeted_sequences(spec_dict, recommended, design_name, output_dir)
             base_result.files.update(extra_seqs)
         base_result.source = GenerationSource.LLM
         base_result.warnings.append(f"Coverage-driven: predicted {len(gaps)} gap(s), added {len(recommended)} targeted sequence(s)")
         return base_result
 
     def _generate_targeted_sequences(
-        self, spec_dict: Dict[str, Any], recommended: List[str], design_name: str,
+        self, spec_dict: Dict[str, Any], recommended: List[str],
+        design_name: str, output_dir: Optional[Path] = None,
     ) -> Dict[str, str]:
-        seqs = {}
+        seqs: Dict[str, str] = {}
         interfaces = spec_dict.get("interfaces", [])
         registers = spec_dict.get("registers", [])
-        for seq_name in recommended:
-            content = self._build_targeted_sequence(seq_name, design_name, interfaces, registers)
-            seqs[f"sequences/{seq_name}.sv"] = content
-        seqs[f"sequences/{design_name}_targeted_seq_lib.sv"] = self._build_seq_lib(design_name, recommended)
+        if output_dir:
+            seq_dir = output_dir / "sequences"
+            seq_dir.mkdir(parents=True, exist_ok=True)
+            for seq_name in recommended:
+                content = self._build_targeted_sequence(seq_name, design_name, interfaces, registers)
+                out_path = seq_dir / f"{seq_name}.sv"
+                out_path.write_text(content, encoding="utf-8")
+                seqs[f"sequences/{seq_name}.sv"] = str(out_path)
+            lib_content = self._build_seq_lib(design_name, recommended)
+            lib_path = seq_dir / f"{design_name}_targeted_seq_lib.sv"
+            lib_path.write_text(lib_content, encoding="utf-8")
+            seqs[f"sequences/{design_name}_targeted_seq_lib.sv"] = str(lib_path)
+        else:
+            for seq_name in recommended:
+                content = self._build_targeted_sequence(seq_name, design_name, interfaces, registers)
+                seqs[f"sequences/{seq_name}.sv"] = content
+            seqs[f"sequences/{design_name}_targeted_seq_lib.sv"] = self._build_seq_lib(design_name, recommended)
         return seqs
 
     def _build_targeted_sequence(
