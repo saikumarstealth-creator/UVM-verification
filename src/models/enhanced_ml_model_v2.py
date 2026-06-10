@@ -155,7 +155,7 @@ class GenerationResult:
     warnings: List[str] = field(default_factory=list)
     latency_ms: float = 0.0
     strategy_used: str = "template"
-    model_version: int = 1
+    model_version: int = 2
 
 
 @dataclass
@@ -382,8 +382,17 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self.last_retrieval: Optional[RetrievalInfo] = None
         self.last_coverage_prediction: Optional[Dict[str, Any]] = None
         self._generation_history: List[Dict[str, Any]] = []
-        self._model_version: int = 1
-        self._changelog: List[str] = []
+        self._model_version: int = 2
+        self._changelog: List[str] = [
+            "v2: hardened all Jinja2 templates — DLAB resolution uses get_reg_by_offset() "
+            "(no hardcoded register names), reset test iterates via get_registers()",
+            "v2: exploration strategies — all 7 enum values exposed in config/UI/tests "
+            "(epsilon_greedy, softmax, ucb, thompson, sac, noisy_net, ppo)",
+            "v2: scoreboard integration — configure_injection()/extract_coverage() guarded "
+            "with null-handle warnings; uvm_config_db override for clk_freq",
+            "v2: RAL model — reg_alias_seq uses offset-based lookup for spec-driven "
+            "combined register names (e.g. RBR_THR)",
+        ]
 
         strategy_map = {
             "epsilon_greedy": ExplorationStrategy.EPSILON_GREEDY,
