@@ -14,7 +14,7 @@ class MLModelConfig:
 
     use_llm: bool = True
     llm_model_name: Optional[str] = None
-    llm_max_tokens: int = 1024
+    llm_max_tokens: int = 4096
     llm_temperature: float = 0.2
     llm_use_few_shot: bool = True
 

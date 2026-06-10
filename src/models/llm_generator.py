@@ -453,7 +453,7 @@ endclass
         spec_dict: Dict[str, Any],
         file_type: str,
         use_few_shot: bool = True,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
         temperature: float = 0.2,
         templates: Optional[Dict[str, str]] = None,
     ) -> LLMGenerationResult:
@@ -470,8 +470,7 @@ endclass
             inputs = self._tokenizer(
                 prompt,
                 return_tensors="pt",
-                truncation=True,
-                max_length=1024,
+                truncation=False,
                 padding=True,
             )
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
@@ -538,7 +537,7 @@ endclass
         spec_dict: Dict[str, Any],
         file_types: List[str],
         use_few_shot: bool = True,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
         temperature: float = 0.2,
         templates: Optional[Dict[str, str]] = None,
     ) -> Dict[str, LLMGenerationResult]:

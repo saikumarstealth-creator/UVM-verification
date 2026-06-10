@@ -122,8 +122,7 @@ class SemanticCodeEncoder:
             inputs = self._tokenizer(
                 text,
                 return_tensors="pt",
-                truncation=True,
-                max_length=512,
+                truncation=False,
                 padding=True,
             )
             inputs = {k: v.to(self._device) for k, v in inputs.items()}
@@ -166,8 +165,7 @@ class SemanticCodeEncoder:
             inputs = self._tokenizer(
                 texts,
                 return_tensors="pt",
-                truncation=True,
-                max_length=512,
+                truncation=False,
                 padding=True,
             )
             inputs = {k: v.to(self._device) for k, v in inputs.items()}

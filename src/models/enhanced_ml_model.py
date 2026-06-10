@@ -504,7 +504,7 @@ class EnhancedMLGenerationModel(GenerationModel):
                     spec_dict=query_dict,
                     file_type=file_type,
                     use_few_shot=True,
-                    max_tokens=1024,
+                    max_tokens=self.config.llm_max_tokens,
                     temperature=0.2,
                 )
 

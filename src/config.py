@@ -151,7 +151,7 @@ class MLConfig(BaseModel):
 
     use_llm: bool = True
     llm_model_name: Optional[str] = None
-    llm_max_tokens: int = Field(default=1024, ge=64, le=4096)
+    llm_max_tokens: int = Field(default=2048, ge=64, le=32768)
     llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_use_few_shot: bool = True
 
