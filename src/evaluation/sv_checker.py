@@ -203,8 +203,30 @@ class SVSyntaxChecker:
 
     def _check_block_structure(self, lines: List[str], result: SVCheckResult) -> None:
         stack: List[Tuple[str, int]] = []
-        re_open = re.compile(r'^\s*(?:virtual\s+)?(?:pure\s+)?(function|task|class|module|interface|package|program|covergroup|checker|primitive|config|generate|specify|table|property|sequence)\b', re.IGNORECASE)
-        re_close = re.compile(r'^\s*end(?:function|task|class|module|interface|package|program|covergroup|checker|primitive|config|generate|specify|table|property|sequence)\b', re.IGNORECASE)
+        # Map open keyword → expected close keyword
+        OPEN_CLOSE_MAP: Dict[str, str] = {
+            "function": "endfunction",
+            "task": "endtask",
+            "class": "endclass",
+            "module": "endmodule",
+            "interface": "endinterface",
+            "package": "endpackage",
+            "program": "endprogram",
+            "covergroup": "endgroup",
+            "checker": "endchecker",
+            "primitive": "endprimitive",
+            "config": "endconfig",
+            "generate": "endgenerate",
+            "specify": "endspecify",
+            "table": "endtable",
+            "property": "endproperty",
+            "sequence": "endsequence",
+        }
+        CLOSE_KEYWORDS = set(OPEN_CLOSE_MAP.values())
+        OPEN_KEYWORDS = set(OPEN_CLOSE_MAP.keys())
+
+        re_open = re.compile(r'^\s*(?:(?:virtual|pure|protected|local|static|extern)(?:\s+(?:virtual|pure|protected|local|static|extern))*\s+)?(' + '|'.join(OPEN_KEYWORDS) + r')\b', re.IGNORECASE)
+        re_close = re.compile(r'\b(end(?:' + '|'.join(k[3:] for k in CLOSE_KEYWORDS if k.startswith("end")) + r')|endgroup)\b', re.IGNORECASE)
         re_begin = re.compile(r'\bbegin\s*(?::\s*\w+)?\s*(?:$|//|/\*)')
         re_end = re.compile(r'^\s*end\s*(?:$|//|/\*)')
 
@@ -221,32 +243,40 @@ class SVSyntaxChecker:
             if stripped.startswith("//") or stripped.startswith("*"):
                 continue
 
-            m = re_open.search(stripped)
-            if m:
-                kw = m.group(1).lower()
+            m_open = re_open.search(stripped)
+            if m_open:
+                kw = m_open.group(1).lower()
                 if kw not in ("virtual", "pure"):
                     stack.append((kw, lineno))
-                continue
 
             m = re_close.search(stripped)
             if m:
-                end_kw = stripped[m.start():].split()[0].lower().lstrip("end")
-                if stack and stack[-1][0] == end_kw:
+                end_token = stripped[m.start():].split()[0].lower()
+                # Find matching open keyword from the close token
+                matched_open = None
+                for k, v in OPEN_CLOSE_MAP.items():
+                    if v == end_token:
+                        matched_open = k
+                        break
+                if matched_open is None:
+                    matched_open = end_token[3:]  # fallback: strip "end" prefix
+                if stack and stack[-1][0] == matched_open:
                     stack.pop()
                 elif not stack:
                     result.issues.append(SVIssue(
-                        lineno, "error", f"Unexpected 'end{end_kw}' without matching open", "BLK001"
+                        lineno, "error", f"Unexpected '{end_token}' without matching open", "BLK001"
                     ))
                 else:
+                    expected_close = OPEN_CLOSE_MAP.get(stack[-1][0], "end" + stack[-1][0])
                     result.issues.append(SVIssue(
                         lineno, "error",
-                        f"Mismatched block: 'end{end_kw}' but expected 'end{stack[-1][0]}' (opened at line {stack[-1][1]})",
+                        f"Mismatched block: '{end_token}' but expected '{expected_close}' (opened at line {stack[-1][1]})",
                         "BLK002"
                     ))
 
             if re_begin.search(stripped) and not stripped.startswith("end"):
                 stack.append(("begin", lineno))
-            if re_end.match(stripped):
+            if re_end.match(stripped) and not any(stripped.startswith(kw) for kw in CLOSE_KEYWORDS):
                 if stack and stack[-1][0] == "begin":
                     stack.pop()
                 elif stack:
