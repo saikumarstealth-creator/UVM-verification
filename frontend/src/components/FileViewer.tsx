@@ -255,7 +255,7 @@ const FileViewer: React.FC = () => {
       const truncated = rawLines.length > FILE_MAX_LINES
 
     return (
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {truncated && (
           <div className="px-3 py-1.5 text-[10px] bg-amber-900/20 text-amber-400 border-b border-amber-800/30">
             File truncated — showing first {FILE_MAX_LINES} of {rawLines.length} lines
@@ -266,7 +266,7 @@ const FileViewer: React.FC = () => {
             Large file ({rawLines.length} lines) — syntax highlighting disabled to save memory
           </div>
         )}
-        <pre className="flex-1 overflow-auto text-[11px] font-mono leading-relaxed" style={{ scrollbarWidth: 'thin' }}>
+        <pre className="flex-1 min-h-0 overflow-auto text-[11px] font-mono leading-relaxed" style={{ scrollbarWidth: 'thin' }}>
           <div className="flex">
             <div className="select-none text-eda-text-tertiary/50 bg-eda-bg/50 pr-2 pl-3 py-3 text-right border-r border-eda-border/20 min-w-[40px] text-[10px]">
               {lines.map((_, i) => {
@@ -439,7 +439,7 @@ const FileViewer: React.FC = () => {
           {showDashboard && dashboardHtml ? (
             <iframe srcDoc={dashboardHtml} className="w-full h-full border-0 animate-fade-in" title="Coverage Dashboard" sandbox="allow-scripts" />
           ) : (
-            <div key={selectedFile || 'empty'} className="animate-fade-in h-full">
+            <div key={selectedFile || 'empty'} className="animate-fade-in flex-1 flex flex-col min-h-0">
               {renderCode()}
             </div>
           )}
