@@ -163,7 +163,7 @@ class MLConfig(BaseModel):
     learning_rate: float = Field(default=0.1, ge=0.001, le=1.0)
     reinforcement_discount: float = Field(default=0.9, ge=0.0, le=1.0)
     exploration_epsilon: float = Field(default=0.05, ge=0.0, le=0.5)
-    exploration_strategy: str = Field(default="ucb", pattern=r"^(epsilon_greedy|softmax|ucb|thompson|sac)$")
+    exploration_strategy: str = Field(default="ucb", pattern=r"^(epsilon_greedy|softmax|ucb|thompson|sac|noisy_net|ppo)$")
     strict_validation: bool = False
 
 

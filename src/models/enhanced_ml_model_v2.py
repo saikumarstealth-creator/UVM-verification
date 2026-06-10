@@ -391,6 +391,8 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "ucb": ExplorationStrategy.UCB,
             "thompson": ExplorationStrategy.THOMPSON_SAMPLING,
             "sac": ExplorationStrategy.SAC,
+            "noisy_net": ExplorationStrategy.NOISY_NET,
+            "ppo": ExplorationStrategy.PPO,
         }
         self._exploration_strategy = strategy_map.get(
             exploration_strategy.lower(), ExplorationStrategy.UCB
@@ -673,7 +675,8 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             from src.config import GenerationConfig, MLConfig
             strategy_name = self._exploration_strategy.value if hasattr(self._exploration_strategy, 'value') else "ucb"
             rev = {"epsilon_greedy": "epsilon_greedy", "softmax": "softmax", "ucb": "ucb",
-                   "thompson_sampling": "thompson", "sac": "sac"}
+                   "thompson_sampling": "thompson", "sac": "sac",
+                   "noisy_net": "noisy_net", "ppo": "ppo"}
             strategy_name = rev.get(strategy_name, "ucb")
             cfg = PipelineConfig(
                 generation=GenerationConfig(templates_dir=self._templates_dir),

@@ -816,10 +816,12 @@ class AdvancedReinforcementLearner:
             ExplorationStrategy.THOMPSON_SAMPLING: self._select_thompson,
             ExplorationStrategy.NOISY_NET: self._select_noisy,
             ExplorationStrategy.SAC: self._select_sac,
+            # PPO delegates to SAC — a full PPO implementation requires
+            # an actor-critic network with clipped surrogate objectives,
+            # which is out of scope for the current RL architecture.
+            ExplorationStrategy.PPO: self._select_sac,
         }
         selector = strategy_map.get(self._exploration_strategy, self._select_ucb)
-        if self._exploration_strategy == ExplorationStrategy.PPO:
-            selector = self._select_sac
 
         result = selector(state, available_sources)
         self._episode_count += 1

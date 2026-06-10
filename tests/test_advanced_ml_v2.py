@@ -163,7 +163,7 @@ class TestModelConstruction:
         assert model is not None
 
     def test_create_with_rl_strategies(self):
-        for strategy in ["epsilon_greedy", "softmax", "ucb", "thompson"]:
+        for strategy in ["epsilon_greedy", "softmax", "ucb", "thompson", "sac", "noisy_net", "ppo"]:
             cfg = PipelineConfig(
                 ml=MLConfig(
                     enabled=True, model_type="v2", exploration_strategy=strategy,
@@ -307,7 +307,7 @@ class TestResilience:
         assert stats["total_generations"] == 0
 
     def test_all_rl_strategies_generate(self, spec_dict):
-        strategies = ["epsilon_greedy", "softmax", "ucb", "thompson"]
+        strategies = ["epsilon_greedy", "softmax", "ucb", "thompson", "sac", "noisy_net", "ppo"]
         for strategy in strategies:
             cfg = PipelineConfig(
                 ml=MLConfig(

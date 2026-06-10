@@ -802,7 +802,10 @@ RL_STRATEGIES = {
     "ucb": "Upper Confidence Bound",
     "softmax": "Softmax (Boltzmann)",
     "epsilon_greedy": "Epsilon-Greedy",
-    "thompson": "Thompson Sampling"
+    "thompson": "Thompson Sampling",
+    "sac": "Soft Actor-Critic (SAC)",
+    "noisy_net": "NoisyNet (parameter noise)",
+    "ppo": "PPO (approximated via SAC)"
 }
 
 if 'last_result' not in st.session_state:
