@@ -286,8 +286,10 @@ endclass
 class {{ spec.design_name }}_random_regs_seq extends {{ spec.design_name }}_base_seq;
   `uvm_object_utils({{ spec.design_name }}_random_regs_seq)
 
-  rand logic [{{ data_width-1 }}:0] write_data[{{ num_regs }}];
+  rand logic [{{ data_width-1 }}:0] write_data[];
   rand bit         pattern_type;
+
+  constraint c_size { write_data.size() == {{ (sorted_regs|rejectattr('name', 'in', ro_regs)|list)|length }}; }
 
   constraint c_patterns {
     if (pattern_type == 0) {
@@ -446,8 +448,13 @@ class {{ spec.design_name }}_config_seq extends {{ spec.design_name }}_base_seq;
     endcase
   endfunction
 
+  protected int clk_freq = 100_000_000;
+
+  function void set_clk_freq(int freq);
+    clk_freq = freq;
+  endfunction
+
   function logic [15:0] get_divisor(int baud);
-    int clk_freq = 100_000_000;
     return (clk_freq / (16 * baud));
   endfunction
 endclass
@@ -1220,14 +1227,10 @@ class {{ spec.design_name }}_cov_seq extends {{ spec.design_name }}_base_seq;
     baud_vals.size() inside {[1:8]};
     dbits_vals.size() inside {[1:4]};
     sbits_vals.size() inside {[1:2]};
-{% if spec.coverage and spec.coverage.coverpoints %}
-{% if spec.coverage.coverpoints.get('baud_rate') %}    foreach (baud_vals[i]) baud_vals[i] inside { {% for b in spec.coverage.coverpoints.baud_rate %}{{ b }}{% if not loop.last %}, {% endif %}{% endfor %} };
-{% endif %}
-{% if spec.coverage.coverpoints.get('data_bits') %}    foreach (dbits_vals[i]) dbits_vals[i] inside { {% for d in spec.coverage.coverpoints.data_bits %}{{ d }}{% if not loop.last %}, {% endif %}{% endfor %} };
-{% endif %}
-{% if spec.coverage.coverpoints.get('stop_bits') %}    foreach (sbits_vals[i]) sbits_vals[i] inside { {% for s in spec.coverage.coverpoints.stop_bits %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %} };
-{% endif %}
-{% endif %}  }
+    foreach (baud_vals[i]) baud_vals[i] inside {9600, 19200, 38400, 57600, 115200, 1000000};
+    foreach (dbits_vals[i]) dbits_vals[i] inside {5, 6, 7, 8};
+    foreach (sbits_vals[i]) sbits_vals[i] inside {1, 2};
+  }
 
   function new(string n = "{{ spec.design_name }}_cov_seq");
     super.new(n);
@@ -1700,6 +1703,7 @@ class {{ spec.design_name }}_seq_lib extends uvm_sequence_library #({{ spec.desi
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_random_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_baud_change_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_coverage_seq::get_type());
+{% if _need_vseq %}
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_virtual_seq::get_type());
 {% endif %}
     // Always generated (use reg_model generically):
@@ -1709,14 +1713,10 @@ class {{ spec.design_name }}_seq_lib extends uvm_sequence_library #({{ spec.desi
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_reg_mem_walk_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_reg_aliasing_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_reset_test_seq::get_type());
-    // Advanced UART sequences (guarded by register presence):
-{% if _need_lcr and _need_tx %}
+    // Advanced UART sequences (guarded by additional register presence):
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_fifo_overflow_seq::get_type());
-{% endif %}
-{% if _need_tx and _need_lcr %}
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_framing_error_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_thr_rbr_alias_seq::get_type());
-{% endif %}
 {% if _need_ier and _need_iir and _need_mcr and _need_tx %}
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_fifo_trigger_seq::get_type());
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_back2back_intr_seq::get_type());
@@ -1745,11 +1745,10 @@ class {{ spec.design_name }}_seq_lib extends uvm_sequence_library #({{ spec.desi
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_modem_status_seq::get_type());
   {% endif %}
 {% endif %}
-{% if _need_tx %}
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_uart_illegal_access_seq::get_type());
-{% endif %}
     // Always generated (no register dependency):
     {{ spec.design_name }}_seq_lib::add_sequence({{ spec.design_name }}_coverage_closure_seq::get_type());
+{% endif %}  {# /_need_lcr and _need_tx #}
   endfunction
 
   function new(string name = "{{ spec.design_name }}_seq_lib");
@@ -1897,9 +1896,38 @@ class {{ spec.design_name }}_long_run_seq extends {{ spec.design_name }}_base_se
       #2us;
     end
 
+    // Wait for all TX to drain, then receive and verify
+    #100us;
+    begin
+      logic [7:0] rx_data[$];
+      int rx_timeout = expected_data.size() * 1000;
+      while (rx_data.size() < expected_data.size() && rx_timeout > 0) begin
+        logic [7:0] lsr_val;
+        read_reg({{ addr_bits }}'h05, lsr_val);
+        if (lsr_val[0]) begin
+          logic [7:0] byte_val;
+          read_reg({{ addr_bits }}'h00, byte_val);
+          rx_data.push_back(byte_val);
+        end
+        @(posedge vif.clk);
+        rx_timeout--;
+      end
+      foreach (expected_data[i]) begin
+        if (i < rx_data.size()) begin
+          if (expected_data[i] !== rx_data[i]) begin
+            errors++;
+            `uvm_error("{{ spec.design_name|upper }}_LONG", $sformatf("Mismatch[%0d]: TX=0x%02h RX=0x%02h", i, expected_data[i], rx_data[i]))
+          end
+        end else begin
+          errors++;
+          `uvm_error("{{ spec.design_name|upper }}_LONG", $sformatf("Missing RX[%0d]: expected 0x%02h not received", i, expected_data[i]))
+        end
+      end
+    end
+
     `uvm_info("{{ spec.design_name|upper }}_LONG", $sformatf(
-      "Long run complete: %0d/%0d bytes TX",
-      tx_completed, total_bytes), UVM_LOW)
+      "Long run complete: %0d/%0d bytes TX, %0d errors",
+      tx_completed, total_bytes, errors), UVM_LOW)
 
     if (errors > 0)
       `uvm_error("{{ spec.design_name|upper }}_LONG", $sformatf("%0d errors during long run test", errors))
@@ -3189,8 +3217,12 @@ class {{ spec.design_name }}_uart_illegal_access_seq extends {{ spec.design_name
 
     `uvm_info("UART_ILL", "Starting UART illegal access test", UVM_LOW)
 
-    foreach (reg_model.regs[i]) begin
-      legal_addrs.push_back(reg_model.regs[i].get_address());
+    begin
+      uvm_reg rglist[$];
+      reg_model.get_registers(rglist);
+      foreach (rglist[i]) begin
+        legal_addrs.push_back(rglist[i].get_address());
+      end
     end
 
     // Generate illegal addresses: the complement of legal addresses in the
