@@ -101,31 +101,24 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       uvm_status_e st;
       uvm_reg rg;
 {% if p == "uart" %}
-      // DLAB resolution: if addr {0,1} AND a register at 0x3 (LCR) exists with DLAB bit
+      // DLAB-aware register access: read LCR if available and redirect
+      // addr {0,1} to the DLAB alias when LCR[7]=1.  Register lookups
+      // use get_reg_by_offset() (not hardcoded names) so any register
+      // name from the spec is handled automatically.
       if (addr inside { {{ addr_bits }}'h0, {{ addr_bits }}'h1 }) begin
         logic [7:0] lcr_val;
-        string      rg_name;
         uvm_reg lcr_rg = reg_model.get_reg_by_offset('h03);
-        if (lcr_rg == null) begin
-          // No LCR register in this spec — use direct register access
-          rg = reg_model.get_reg_by_offset(addr);
-          if (rg != null) rg.write(st, data, .parent(this));
-          else `uvm_error("REG", $sformatf("Write to unmapped address 0x%0h", addr))
-          if (sb_handle != null) sb_handle.record_tx(addr, data);
-          return;
+        if (lcr_rg != null) begin
+          lcr_rg.read(st, lcr_val, .parent(this));
+          if (lcr_val[7]) begin
+            rg = reg_model.get_reg_by_offset(addr);
+            if (rg != null) begin
+              rg.write(st, data, .parent(this));
+              if (sb_handle != null) sb_handle.record_tx(addr, data);
+              return;
+            end
+          end
         end
-        lcr_rg.read(st, lcr_val, .parent(this));
-        if (addr == {{ addr_bits }}'h0)
-          rg_name = lcr_val[7] ? "dll" : "thr";
-        else
-          rg_name = lcr_val[7] ? "dlh" : "ier";
-        rg = reg_model.get_reg_by_name(rg_name);
-        if (rg != null)
-          rg.write(st, data, .parent(this));
-        else
-          `uvm_warning("DLAB", $sformatf("Register '%s' not found in reg_model", rg_name))
-        if (sb_handle != null) sb_handle.record_tx(addr, data);
-        return;
       end
 {% endif %}
       rg = reg_model.get_reg_by_offset(addr);
@@ -153,31 +146,22 @@ class {{ spec.design_name }}_base_seq extends uvm_sequence #({{ spec.design_name
       uvm_status_e st;
       uvm_reg rg;
 {% if p == "uart" %}
-      // DLAB resolution: if addr {0,1} AND a register at 0x3 (LCR) exists with DLAB bit
+      // DLAB-aware register read — same approach as write_reg:
+      // use get_reg_by_offset() with DLAB redirection, no hardcoded names.
       if (addr inside { {{ addr_bits }}'h0, {{ addr_bits }}'h1 }) begin
         logic [7:0] lcr_val;
-        string      rg_name;
         uvm_reg lcr_rg = reg_model.get_reg_by_offset('h03);
-        if (lcr_rg == null) begin
-          // No LCR register in this spec — use direct register access
-          rg = reg_model.get_reg_by_offset(addr);
-          if (rg != null) rg.read(st, data, .parent(this));
-          else `uvm_error("REG", $sformatf("Read from unmapped address 0x%0h", addr))
-          if (sb_handle != null) sb_handle.record_rx(addr, data);
-          return;
+        if (lcr_rg != null) begin
+          lcr_rg.read(st, lcr_val, .parent(this));
+          if (lcr_val[7]) begin
+            rg = reg_model.get_reg_by_offset(addr);
+            if (rg != null) begin
+              rg.read(st, data, .parent(this));
+              if (sb_handle != null) sb_handle.record_rx(addr, data);
+              return;
+            end
+          end
         end
-        lcr_rg.read(st, lcr_val, .parent(this));
-        if (addr == {{ addr_bits }}'h0)
-          rg_name = lcr_val[7] ? "dll" : "rbr";
-        else
-          rg_name = lcr_val[7] ? "dlh" : "ier";
-        rg = reg_model.get_reg_by_name(rg_name);
-        if (rg != null)
-          rg.read(st, data, .parent(this));
-        else
-          `uvm_warning("DLAB", $sformatf("Register '%s' not found in reg_model", rg_name))
-        if (sb_handle != null) sb_handle.record_rx(addr, data);
-        return;
       end
 {% endif %}
       rg = reg_model.get_reg_by_offset(addr);

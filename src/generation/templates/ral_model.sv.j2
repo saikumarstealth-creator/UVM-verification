@@ -522,19 +522,33 @@ class {{ spec.design_name }}_reg_alias_seq extends uvm_reg_sequence #(uvm_reg_it
   task body;
     uvm_status_e st;
     uvm_reg_data_t thr_val, dll_val, rbr_val, dlh_val, readback;
+    uvm_reg thr_rg, rbr_rg, lcr_rg;
 
     if (reg_model == null) begin
       `uvm_fatal("SEQ", "reg_model not set in reg_alias_seq")
     end
     `uvm_info("ALIAS", "Starting UART register alias test (DLAB switching)", UVM_LOW)
 
-    thr_val = 8'hA5;
-    reg_model.thr.write(st, thr_val, .parent(this));
-    if (st != UVM_IS_OK) begin
-      `uvm_error("ALIAS", "THR write failed"); alias_mismatches++;
+    // Lookup spec-driven registers by offset (handles combined RBR_THR naming)
+    thr_rg = reg_model.get_reg_by_offset('h0);
+    rbr_rg = reg_model.get_reg_by_offset('h0);
+    lcr_rg = reg_model.get_reg_by_offset('h3);
+    if (lcr_rg == null) begin
+      `uvm_error("ALIAS", "LCR register not found at 0x03 — cannot test DLAB aliasing")
+      return;
     end
 
-    reg_model.lcr.write(st, 8'h80, .parent(this));
+    thr_val = 8'hA5;
+    if (thr_rg != null) begin
+      thr_rg.write(st, thr_val, .parent(this));
+      if (st != UVM_IS_OK) begin
+        `uvm_error("ALIAS", "THR write failed"); alias_mismatches++;
+      end
+    end else begin
+      `uvm_warning("ALIAS", "No writable register at 0x00 — skipping THR/DLL write test")
+    end
+
+    lcr_rg.write(st, 8'h80, .parent(this));
     if (st != UVM_IS_OK) begin
       `uvm_error("ALIAS", "LCR write (DLAB=1) failed"); alias_mismatches++;
     end
@@ -551,17 +565,24 @@ class {{ spec.design_name }}_reg_alias_seq extends uvm_reg_sequence #(uvm_reg_it
       `uvm_error("ALIAS", "DLH write failed"); alias_mismatches++;
     end
 
-    reg_model.lcr.write(st, 8'h03, .parent(this));
+    lcr_rg.write(st, 8'h03, .parent(this));
     if (st != UVM_IS_OK) begin
       `uvm_error("ALIAS", "LCR write (DLAB=0) failed"); alias_mismatches++;
     end
 
-    reg_model.rbr.read(st, rbr_val, .parent(this));
-    if (st != UVM_IS_OK) begin
-      `uvm_error("ALIAS", "RBR read failed"); alias_mismatches++;
+    if (rbr_rg != null) begin
+      rbr_rg.read(st, rbr_val, .parent(this));
+      if (st != UVM_IS_OK) begin
+        `uvm_error("ALIAS", "RBR read failed"); alias_mismatches++;
+      end else if (rbr_val != thr_val) begin
+        `uvm_error("ALIAS", $sformatf("RBR readback mismatch: expected 0x%0h, got 0x%0h", thr_val, rbr_val))
+        alias_mismatches++;
+      end
+    end else begin
+      `uvm_warning("ALIAS", "No readable register at 0x00 — skipping RBR readback check")
     end
 
-    reg_model.lcr.read(st, readback, .parent(this));
+    lcr_rg.read(st, readback, .parent(this));
     if (st != UVM_IS_OK) begin
       `uvm_error("ALIAS", "LCR read failed"); alias_mismatches++;
     end else if (readback[7] != 1'b0) begin
