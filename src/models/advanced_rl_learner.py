@@ -442,8 +442,6 @@ class AdvancedReinforcementLearner:
             logger.info("Neural Q-network enabled")
 
         self._sac_entropy_coef = sac_entropy_coef
-        self._entropy: Dict[str, float] = defaultdict(lambda: math.log(3))
-
         self._use_cosine_decay = use_cosine_decay
         self._cosine_t_max = cosine_t_max
 
@@ -826,6 +824,25 @@ class AdvancedReinforcementLearner:
         result = selector(state, available_sources)
         self._episode_count += 1
         return result
+
+    def reset_learning(self, hard: bool = False) -> None:
+        """Re-engage learning after convergence lock.
+
+        Args:
+            hard: If True, also wipe Q-tables and replay buffer.
+        """
+        self._converged = False
+        self._plateau_count = 0
+        if hard:
+            self._q_values.clear()
+            self._q_values_q2.clear()
+            self._state_values.clear()
+            self._replay_buffer.clear()
+            self._action_stats.clear()
+            self._best_actions.clear()
+            self._total_updates = 0
+            self._episode_count = 0
+        logger.info("RL learner %s (converged=False)", "hard-reset" if hard else "unconverged")
 
     def replay_experiences(self, batch_size: int = 32) -> int:
         if len(self._replay_buffer) < batch_size:

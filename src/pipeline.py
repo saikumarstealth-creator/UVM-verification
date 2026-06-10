@@ -611,11 +611,29 @@ class TBPipeline:
                         try:
                             cov_feat = SpecFeatures.from_spec(design_spec)
                             actual_cov = sim_result.coverage_pct / 100.0
-                            if hasattr(self.model, '_coverage_predictor') and self.model._coverage_predictor:
-                                self.model._coverage_predictor.update_online(cov_feat.to_array(), actual_cov)
+                            cov_pred = getattr(self.model, '_coverage_predictor', None)
+                            if cov_pred is not None:
+                                cov_pred.update_online(cov_feat.to_array(), actual_cov)
                                 self.logger.info("Coverage predictor updated with real data: %.1f%%", sim_result.coverage_pct)
+                                # Periodically retrain on accumulated real data
+                                if len(cov_pred._training_data) >= 50 and len(cov_pred._training_data) % 50 < 10:
+                                    X_real = np.array([d[0] for d in cov_pred._training_data])
+                                    y_real = np.array([d[1] for d in cov_pred._training_data])
+                                    cov_pred.train_real(list(zip(X_real, y_real)))
+                                    self.logger.info("Coverage predictor retrained on %d real samples", len(cov_pred._training_data))
                         except Exception as e:
-                            self.logger.warning("Coverage predictor online update skipped: %s", e)
+                            self.logger.warning("Coverage predictor update skipped: %s", e)
+
+                    # 6d2. Feed simulation coverage back into RL learner
+                    if sim_result and sim_result.coverage_pct is not None:
+                        try:
+                            rl_reward = sim_result.coverage_pct / 100.0
+                            learn_fn = getattr(self.model, 'learn', None)
+                            if learn_fn is not None:
+                                learn_fn({"passed": sim_result.passed, "coverage_pct": sim_result.coverage_pct}, reward=rl_reward)
+                                self.logger.info("RL learner updated with simulation reward: %.3f", rl_reward)
+                        except Exception as e:
+                            self.logger.warning("RL learn skipped: %s", e)
 
                     # Update metrics with simulation data
                     eval_metrics.update(self.metrics_calc.coverage_gap_metrics(self.coverage_analysis))

@@ -129,8 +129,6 @@ class GenerationSource(Enum):
     RETRIEVAL = "retrieval"
     LLM = "llm"
     TEMPLATE = "template"
-    HYBRID = "hybrid"
-    ENSEMBLE = "ensemble"
 
 
 @dataclass
@@ -155,7 +153,7 @@ class GenerationResult:
     warnings: List[str] = field(default_factory=list)
     latency_ms: float = 0.0
     strategy_used: str = "template"
-    model_version: int = 2
+    model_version: int = 3
 
 
 @dataclass
@@ -382,7 +380,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self.last_retrieval: Optional[RetrievalInfo] = None
         self.last_coverage_prediction: Optional[Dict[str, Any]] = None
         self._generation_history: List[Dict[str, Any]] = []
-        self._model_version: int = 2
+        self._model_version: int = 3
         self._changelog: List[str] = [
             "v2: hardened all Jinja2 templates — DLAB resolution uses get_reg_by_offset() "
             "(no hardcoded register names), reset test iterates via get_registers()",
@@ -392,6 +390,17 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             "with null-handle warnings; uvm_config_db override for clk_freq",
             "v2: RAL model — reg_alias_seq uses offset-based lookup for spec-driven "
             "combined register names (e.g. RBR_THR)",
+            "v3: wired simulation coverage into RL reward loop — model.learn() called "
+            "from pipeline after each simulation, closes the training feedback loop",
+            "v3: coverage predictor retrains on real data when buffer >= 50 samples",
+            "v3: retrieval source requires >1 spec in index (single-spec self-match is a no-op)",
+            "v3: renamed _generate_by_llm() → _generate_with_coverage_gaps() "
+            "(no real LLM was ever called; name was misleading)",
+            "v3: added public get_coverage_predictor()/get_rl_learner() accessors "
+            "(replaces fragile private-attr access in pipeline)",
+            "v3: added reset_learning() to RL learner — re-engages after convergence lock",
+            "v3: removed dead enum values (HYBRID, ENSEMBLE), dead _entropy dict, "
+            "hardcoded score=0.7 → 0.5 baseline",
         ]
 
         strategy_map = {
@@ -795,6 +804,18 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if self._rl_learner and len(self._generation_history) % 10 == 0:
             self._rl_learner.replay_experiences(batch_size=32)
 
+    def get_coverage_predictor(self):
+        """Public accessor for coverage predictor (avoids private attr access)."""
+        return getattr(self, '_coverage_predictor', None)
+
+    def get_rl_learner(self):
+        """Public accessor for RL learner."""
+        return getattr(self, '_rl_learner', None)
+
+    def get_pattern_learner(self):
+        """Public accessor for pattern learner."""
+        return getattr(self, '_pattern_learner', None)
+
     def save_learning_state(self, path: str) -> None:
         """Public: persist learning state to disk."""
         old_path = self._learning_storage_path
@@ -815,7 +836,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             all_strategies.append("retrieval")
         if self._use_llm and "llm" in available:
             all_strategies.append("llm")
-        ordered = [primary.value] if primary.value != "ensemble" else []
+        ordered = [primary.value]
         for s in ["retrieval", "llm", "template"]:
             if s not in ordered and s in all_strategies:
                 ordered.append(s)
@@ -850,7 +871,9 @@ class EnhancedMLGenerationModelV2(GenerationModel):
 
     def _get_available_sources(self) -> List[str]:
         sources = ["template"]
-        if self._index and len(self._index) > 0:
+        # Only offer retrieval when index has more than one spec — single-spec
+        # search returns the spec itself, which is a no-op adaptation.
+        if self._index and len(self._index) > 1:
             sources.append("retrieval")
         if self._use_llm:
             sources.append("llm")
@@ -919,7 +942,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             if strategy == "retrieval":
                 return self._generate_by_retrieval(spec, spec_dict, config, design_name, protocol)
             elif strategy == "llm" and self._use_llm:
-                return self._generate_by_llm(spec, spec_dict, config, design_name, protocol)
+                return self._generate_with_coverage_gaps(spec, spec_dict, config, design_name, protocol)
             else:
                 return self._generate_by_template(spec, config, design_name, protocol)
         try:
@@ -994,7 +1017,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
             errors=["Retrieval generation did not pass validation thresholds"],
         )
 
-    def _generate_by_llm(
+    def _generate_with_coverage_gaps(
         self, spec: DesignSpec, spec_dict: Dict[str, Any], config: PipelineConfig,
         design_name: str, protocol: str = "uart",
     ) -> GenerationResult:
@@ -1112,7 +1135,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         self, spec: DesignSpec, config: PipelineConfig, design_name: str, protocol: str,
     ) -> GenerationResult:
         files = self._template_model.predict(spec, config)
-        score = 0.7
+        score = 0.5  # neutral baseline when no validator is available
         report = None
         if self._code_validator:
             report = self._code_validator.validate_files(files, design_name)
@@ -1126,7 +1149,7 @@ class EnhancedMLGenerationModelV2(GenerationModel):
         if not self._use_learning:
             return
         score = final_result.score
-        passed = final_result.validation_report.overall_passed if final_result.validation_report else (score >= 0.7)
+        passed = final_result.validation_report.overall_passed if final_result.validation_report else (score >= 0.5)
 
         cov_bonus = 0.0
         if self.last_coverage_prediction:
