@@ -1,0 +1,67 @@
+design_name: uart
+protocol: uart
+
+interfaces:
+  - name: bus_if
+    signals:
+      - name: wb_cyc
+        direction: input
+      - name: wb_stb
+        direction: input
+      - name: wb_we
+        direction: input
+      - name: wb_addr
+        direction: input
+        width: 3
+      - name: wb_data_o
+        direction: output
+        width: 8
+      - name: wb_data_i
+        direction: input
+        width: 8
+      - name: wb_ack
+        direction: output
+      - name: uart_tx
+        direction: output
+      - name: uart_rx
+        direction: input
+      - name: cts_n
+        direction: input
+      - name: rts_n
+        direction: output
+      - name: uart_intr
+        direction: output
+
+  - name: i2c_if
+    signals:
+      - name: scl
+        direction: inout
+      - name: sda
+        direction: inout
+
+registers:
+  - name: I2C_CTRL
+    address: '0x0000'
+    fields:
+      - name: ENABLE
+        bit_offset: 0
+        bit_width: 1
+        access: RW
+        reset: 0
+      - name: START
+        bit_offset: 1
+        bit_width: 1
+        access: WO
+        reset: 0
+
+  - name: I2C_STATUS
+    address: '0x0004'
+    fields:
+      - name: BUSY
+        bit_offset: 0
+        bit_width: 1
+        access: RO
+        reset: 0
+
+  - name: SLAVE_ADDR
+    address: '0x0008'
