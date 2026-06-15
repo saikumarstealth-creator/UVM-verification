@@ -47,6 +47,13 @@ class FieldDef(BaseModel):
             if "width" in data:
                 w = data.pop("width")
                 data.setdefault("bits", str(w) if isinstance(w, int) else w)
+            if "bits" not in data:
+                bo = data.pop("bit_offset", None)
+                bw = data.pop("bit_width", None)
+                if bo is not None:
+                    bo = int(bo)
+                    bw = int(bw) if bw is not None else 1
+                    data["bits"] = str(bo) if bw == 1 else f"{bo + bw - 1}:{bo}"
             if "reset" in data and isinstance(data["reset"], (int, float)):
                 val = int(data["reset"])
                 data["reset"] = str(val) if val == 0 else f"'h{val:X}" if val > 9 else str(val)
